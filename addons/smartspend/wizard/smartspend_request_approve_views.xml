@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="smartspend_request_approve_view_form" model="ir.ui.view">
+        <field name="name">smartspend.request.approve.form</field>
+        <field name="model">smartspend.request.approve</field>
+        <field name="arch" type="xml">
+            <form string="Approve Purchase Request">
+                <p class="text-muted">
+                    Add a note if there is anything the requester should know. It is
+                    optional — leaving it blank still approves the request.
+                </p>
+                <group>
+                    <field name="request_ids" widget="many2many_tags" readonly="1"/>
+                    <field name="note" placeholder="e.g. Approved against the Q3 budget — order against the Primus rate card."/>
+                </group>
+                <footer>
+                    <button name="action_confirm" type="object" string="Approve"
+                            class="btn-primary" data-hotkey="q"/>
+                    <button string="Discard" class="btn-secondary" special="cancel" data-hotkey="x"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+</odoo>

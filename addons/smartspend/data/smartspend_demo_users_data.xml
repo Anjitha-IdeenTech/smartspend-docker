@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Four sign-ins, one per portal, so the module can be seen the way each
+         role actually sees it. Only admin held a SmartSpend group until now,
+         which meant every screen was reviewed with every right — and a menu a
+         requester never gets looks exactly like one they do.
+
+         These are the accounts the portal's landing screen signs in with: the
+         role is read from the groups below, not chosen from a dropdown.
+
+         noupdate: passwords and group edits made after install are the point of
+         a demo login, and an upgrade must not undo them. -->
+    <data noupdate="1">
+
+        <record id="user_demo_requester" model="res.users">
+            <field name="name">Demo Requester</field>
+            <field name="login">requester@smartspend.demo</field>
+            <field name="password">requester</field>
+            <field name="group_ids" eval="[Command.link(ref('smartspend.group_smartspend_user'))]"/>
+        </record>
+
+        <record id="user_demo_buyer" model="res.users">
+            <field name="name">Demo SCM Buyer</field>
+            <field name="login">buyer@smartspend.demo</field>
+            <field name="password">buyer</field>
+            <field name="group_ids" eval="[Command.link(ref('smartspend.group_smartspend_buyer'))]"/>
+        </record>
+
+        <record id="user_demo_manager" model="res.users">
+            <field name="name">Demo Procurement Manager</field>
+            <field name="login">manager@smartspend.demo</field>
+            <field name="password">manager</field>
+            <field name="group_ids" eval="[Command.link(ref('smartspend.group_smartspend_manager'))]"/>
+        </record>
+
+        <!-- The external supplier portal. Holds the vendor group only, so the
+             payload the portal reads back says "Vendor" and lands the account
+             on the quoting screen rather than a requester's inbox. -->
+        <record id="user_demo_vendor" model="res.users">
+            <field name="name">Demo Vendor</field>
+            <field name="login">vendor@smartspend.demo</field>
+            <field name="password">vendor</field>
+            <field name="group_ids" eval="[Command.link(ref('smartspend.group_smartspend_vendor'))]"/>
+        </record>
+
+        <!-- Full-access account for driving the demo and fixing things live.
+             Settings + technical rights on the Odoo side, Procurement Manager on
+             the SmartSpend side — which implies buyer and requester, so it reads
+             every request under the "all requests" record rule and can approve,
+             source, order and reset the demo data. -->
+        <record id="user_demo_admin" model="res.users">
+            <field name="name">SmartSpend Admin</field>
+            <field name="login">admin@smartspend.demo</field>
+            <field name="password">admin</field>
+            <field name="group_ids" eval="[
+                Command.link(ref('smartspend.group_smartspend_manager')),
+                Command.link(ref('base.group_system')),
+                Command.link(ref('base.group_erp_manager')),
+                Command.link(ref('base.group_partner_manager')),
+            ]"/>
+        </record>
+
+
+        <!-- Finance signatories. They carry the manager group because the
+             portal's decide endpoint is gated on it — the designation is what
+             decides *which* step is theirs, the group only lets them act at
+             all. -->
+        <record id="user_demo_finance" model="res.users">
+            <field name="name">Priya Nair (Finance Head)</field>
+            <field name="login">finance@smartspend.demo</field>
+            <field name="password">finance</field>
+            <field name="group_ids" eval="[Command.link(ref('smartspend.group_smartspend_manager'))]"/>
+        </record>
+
+        <record id="user_demo_cfo" model="res.users">
+            <field name="name">Rajesh Menon (CFO)</field>
+            <field name="login">cfo@smartspend.demo</field>
+            <field name="password">cfo</field>
+            <field name="group_ids" eval="[Command.link(ref('smartspend.group_smartspend_manager'))]"/>
+        </record>
+
+        <!-- Put faces on the approval chain. Assigned here rather than in the
+             workflow data because that file loads first, before these accounts
+             exist.
+
+             Deliberately excluded: the requester (they raise the requests, and
+             letting them hold an approver designation would let them sign their
+             own) and the vendor (an external supplier must never approve
+             internal spend).
+
+             The admin account co-holds every designation on purpose: with the
+             strict rule (only holders sign), a demo driven from one login would
+             otherwise stall at the first level it does not hold. The named
+             holder is still listed first, so the portal's "sign in as" hint
+             points at the right person rather than the override. -->
+        <record id="smartspend.designation_reporting_manager" model="smartspend.designation">
+            <field name="user_ids" eval="[
+                Command.link(ref('user_demo_manager')),
+                Command.link(ref('user_demo_admin')),
+            ]"/>
+        </record>
+        <!-- Held by the manager, not the buyer. The portal's decide endpoint
+             is gated on the manager group, so a buyer holding this designation
+             could be routed a signature it is refused permission to give —
+             deadlocking the request. Sourcing stays the buyer's job. -->
+        <record id="smartspend.designation_dept_head" model="smartspend.designation">
+            <field name="user_ids" eval="[
+                Command.link(ref('user_demo_manager')),
+                Command.link(ref('user_demo_admin')),
+            ]"/>
+        </record>
+        <record id="smartspend.designation_finance_opex_head" model="smartspend.designation">
+            <field name="user_ids" eval="[
+                Command.link(ref('user_demo_finance')),
+                Command.link(ref('user_demo_admin')),
+            ]"/>
+        </record>
+        <record id="smartspend.designation_finance_capex_head" model="smartspend.designation">
+            <field name="user_ids" eval="[
+                Command.link(ref('user_demo_finance')),
+                Command.link(ref('user_demo_admin')),
+            ]"/>
+        </record>
+        <record id="smartspend.designation_cfo" model="smartspend.designation">
+            <field name="user_ids" eval="[
+                Command.link(ref('user_demo_cfo')),
+                Command.link(ref('user_demo_admin')),
+            ]"/>
+        </record>
+
+    </data>
+</odoo>

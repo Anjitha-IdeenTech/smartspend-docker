@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="1">
+
+        <!-- Branches, departments and categories the portal offers in its
+             dropdowns. Editable in SmartSpend ▸ Configuration from here on. -->
+        <record id="branch_bangalore" model="smartspend.branch">
+            <field name="name">Bangalore Office</field>
+            <field name="code">BLR</field>
+            <field name="city">Bangalore</field>
+            <field name="sequence">10</field>
+        </record>
+        <record id="branch_kochi" model="smartspend.branch">
+            <field name="name">Kochi Head Office</field>
+            <field name="code">COK</field>
+            <field name="city">Kochi</field>
+            <field name="sequence">20</field>
+        </record>
+        <record id="branch_mumbai" model="smartspend.branch">
+            <field name="name">Mumbai Office</field>
+            <field name="code">BOM</field>
+            <field name="city">Mumbai</field>
+            <field name="sequence">30</field>
+        </record>
+        <record id="branch_delhi" model="smartspend.branch">
+            <field name="name">Delhi Office</field>
+            <field name="code">DEL</field>
+            <field name="city">New Delhi</field>
+            <field name="sequence">40</field>
+        </record>
+        <record id="branch_chennai" model="smartspend.branch">
+            <field name="name">Chennai Office</field>
+            <field name="code">MAA</field>
+            <field name="city">Chennai</field>
+            <field name="sequence">50</field>
+        </record>
+        <record id="branch_hyderabad" model="smartspend.branch">
+            <field name="name">Hyderabad Office</field>
+            <field name="code">HYD</field>
+            <field name="city">Hyderabad</field>
+            <field name="sequence">60</field>
+        </record>
+
+        <record id="department_it" model="smartspend.department">
+            <field name="name">IT &amp; Infrastructure</field>
+            <field name="code">ITI</field>
+            <field name="sequence">10</field>
+        </record>
+        <record id="department_operations" model="smartspend.department">
+            <field name="name">Operations</field>
+            <field name="code">OPS</field>
+            <field name="sequence">20</field>
+        </record>
+        <record id="department_facilities" model="smartspend.department">
+            <field name="name">Facilities</field>
+            <field name="code">FAC</field>
+            <field name="sequence">30</field>
+        </record>
+        <record id="department_marketing" model="smartspend.department">
+            <field name="name">Marketing</field>
+            <field name="code">MKT</field>
+            <field name="sequence">40</field>
+        </record>
+        <record id="department_finance" model="smartspend.department">
+            <field name="name">Finance</field>
+            <field name="code">FIN</field>
+            <field name="sequence">50</field>
+        </record>
+        <record id="department_rnd" model="smartspend.department">
+            <field name="name">R&amp;D</field>
+            <field name="code">RND</field>
+            <field name="sequence">60</field>
+        </record>
+
+        <record id="category_it_hardware" model="smartspend.expense.category">
+            <field name="name">IT Hardware &amp; Laptops</field>
+            <field name="expense_type">capex</field>
+            <field name="sequence">10</field>
+        </record>
+        <record id="category_datacenter" model="smartspend.expense.category">
+            <field name="name">Datacenter Equipment</field>
+            <field name="expense_type">capex</field>
+            <field name="sequence">20</field>
+        </record>
+        <record id="category_software" model="smartspend.expense.category">
+            <field name="name">Software Licenses</field>
+            <field name="expense_type">opex</field>
+            <field name="sequence">30</field>
+        </record>
+        <record id="category_furniture" model="smartspend.expense.category">
+            <field name="name">Office Furniture</field>
+            <field name="expense_type">capex</field>
+            <field name="sequence">40</field>
+        </record>
+        <record id="category_services" model="smartspend.expense.category">
+            <field name="name">Professional Services</field>
+            <field name="expense_type">opex</field>
+            <field name="sequence">50</field>
+        </record>
+        <record id="category_mro" model="smartspend.expense.category">
+            <field name="name">MRO Supplies</field>
+            <field name="expense_type">opex</field>
+            <field name="sequence">60</field>
+        </record>
+
+    </data>
+</odoo>

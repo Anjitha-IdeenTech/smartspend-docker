@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- The two ways back into SmartSpend from an order: the request it was
+         raised from, and the rate contract its prices came from. -->
+    <record id="purchase_order_view_form_smartspend" model="ir.ui.view">
+        <field name="name">purchase.order.form.smartspend</field>
+        <field name="model">purchase.order</field>
+        <field name="inherit_id" ref="purchase.purchase_order_form"/>
+        <field name="arch" type="xml">
+
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button class="oe_stat_button" name="action_view_smartspend_request"
+                        type="object" icon="fa-file-text-o"
+                        invisible="not smartspend_request_id">
+                    <div class="o_field_widget o_stat_info">
+                        <span class="o_stat_value"><field name="smartspend_request_ref"/></span>
+                        <span class="o_stat_text">Purchase Request</span>
+                    </div>
+                </button>
+                <button class="oe_stat_button" name="action_view_smartspend_contract"
+                        type="object" icon="fa-handshake-o"
+                        invisible="not smartspend_contract_id">
+                    <div class="o_field_widget o_stat_info">
+                        <span class="o_stat_value"><field name="smartspend_contract_ref"/></span>
+                        <span class="o_stat_text">Rate Contract</span>
+                    </div>
+                </button>
+            </xpath>
+
+            <xpath expr="//group[@name='other_info']" position="inside">
+                <field name="smartspend_request_id" readonly="1"
+                       invisible="not smartspend_request_id"/>
+                <field name="smartspend_contract_id"
+                       options="{'no_create': True}"
+                       domain="[('state', '=', 'active')]"/>
+            </xpath>
+
+        </field>
+    </record>
+
+    <record id="purchase_order_view_list_smartspend" model="ir.ui.view">
+        <field name="name">purchase.order.list.smartspend</field>
+        <field name="model">purchase.order</field>
+        <field name="inherit_id" ref="purchase.purchase_order_tree"/>
+        <field name="arch" type="xml">
+            <field name="origin" position="after">
+                <field name="smartspend_request_id" string="Purchase Request" optional="hide"/>
+                <field name="smartspend_contract_id" string="Rate Contract" optional="hide"/>
+            </field>
+        </field>
+    </record>
+
+    <record id="purchase_order_view_search_smartspend" model="ir.ui.view">
+        <field name="name">purchase.order.search.smartspend</field>
+        <field name="model">purchase.order</field>
+        <field name="inherit_id" ref="purchase.view_purchase_order_filter"/>
+        <field name="arch" type="xml">
+            <field name="origin" position="after">
+                <field name="smartspend_request_id"/>
+                <field name="smartspend_contract_id"/>
+            </field>
+
+            <filter name="my_purchases" position="before">
+                <filter name="from_smartspend" string="From SmartSpend"
+                        domain="[('smartspend_request_id', '!=', False)]"/>
+                <filter name="on_rate_contract" string="On a Rate Contract"
+                        domain="[('smartspend_contract_id', '!=', False)]"/>
+                <separator/>
+            </filter>
+
+            <filter name="representative" position="after">
+                <filter name="group_smartspend_contract" string="Rate Contract"
+                        domain="[]" context="{'group_by': 'smartspend_contract_id'}"/>
+            </filter>
+        </field>
+    </record>
+
+</odoo>

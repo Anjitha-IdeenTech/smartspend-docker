@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- A worked approval matrix: the same request routes to a different set of
+         signatories depending on expense type and value.
+
+         Everyday spend (up to Rs 20 lakh) takes ONE signature — the reporting
+         manager. That is deliberately the whole demo path: a chain that needs
+         three people across three logins made a two-minute walkthrough into a
+         puzzle. Finance and the CFO are configured and real, they just sit
+         above the threshold where a business would actually want them.
+
+         noupdate: an administrator is meant to edit these, and an upgrade must
+         not put their changes back. -->
+    <data noupdate="1">
+
+        <record id="designation_reporting_manager" model="smartspend.designation">
+            <field name="name">Reporting Manager</field>
+            <field name="code">RPT-MGR</field>
+            <field name="sequence">10</field>
+        </record>
+        <record id="designation_dept_head" model="smartspend.designation">
+            <field name="name">Department Head</field>
+            <field name="code">DEPT-HEAD</field>
+            <field name="sequence">20</field>
+        </record>
+        <record id="designation_finance_opex_head" model="smartspend.designation">
+            <field name="name">Finance OpEx Head</field>
+            <field name="code">FIN-OPEX-HEAD</field>
+            <field name="sequence">30</field>
+        </record>
+        <record id="designation_finance_capex_head" model="smartspend.designation">
+            <field name="name">Finance CapEx Head</field>
+            <field name="code">FIN-CAPEX-HEAD</field>
+            <field name="sequence">40</field>
+        </record>
+        <record id="designation_cfo" model="smartspend.designation">
+            <field name="name">Chief Financial Officer</field>
+            <field name="code">CFO</field>
+            <field name="sequence">50</field>
+        </record>
+
+        <!-- OpEx, any department, up to ₹2,00,000 — one signature. -->
+        <record id="workflow_opex_low" model="smartspend.workflow">
+            <field name="document_type">purchase_request</field>
+            <field name="workflow_type">procurement</field>
+            <field name="expense_type">opex</field>
+            <field name="amount_from">0</field>
+            <field name="amount_to">2000000</field>
+            <field name="sequence">10</field>
+            <field name="approver_ids" eval="[
+                Command.create({'sequence': 1, 'designation_id': ref('designation_reporting_manager')}),
+            ]"/>
+        </record>
+
+        <!-- OpEx above ₹2,00,000 — finance joins. -->
+        <record id="workflow_opex_high" model="smartspend.workflow">
+            <field name="document_type">purchase_request</field>
+            <field name="workflow_type">accounting</field>
+            <field name="expense_type">opex</field>
+            <field name="amount_from">2000001</field>
+            <field name="amount_to">999999999</field>
+            <field name="sequence">10</field>
+            <field name="approver_ids" eval="[
+                Command.create({'sequence': 1, 'designation_id': ref('designation_reporting_manager')}),
+                Command.create({'sequence': 2, 'designation_id': ref('designation_finance_opex_head')}),
+            ]"/>
+        </record>
+
+        <!-- CapEx up to ₹5,00,000 — manager, then the CapEx head. -->
+        <record id="workflow_capex_low" model="smartspend.workflow">
+            <field name="document_type">purchase_request</field>
+            <field name="workflow_type">accounting</field>
+            <field name="expense_type">capex</field>
+            <field name="amount_from">0</field>
+            <field name="amount_to">2000000</field>
+            <field name="sequence">10</field>
+            <field name="approver_ids" eval="[
+                Command.create({'sequence': 1, 'designation_id': ref('designation_reporting_manager')}),
+            ]"/>
+        </record>
+
+        <!-- CapEx above ₹5,00,000 — the CFO signs last. -->
+        <record id="workflow_capex_high" model="smartspend.workflow">
+            <field name="document_type">purchase_request</field>
+            <field name="workflow_type">management</field>
+            <field name="expense_type">capex</field>
+            <field name="amount_from">2000001</field>
+            <field name="amount_to">999999999</field>
+            <field name="sequence">10</field>
+            <field name="approver_ids" eval="[
+                Command.create({'sequence': 1, 'designation_id': ref('designation_reporting_manager')}),
+                Command.create({'sequence': 2, 'designation_id': ref('designation_finance_capex_head')}),
+                Command.create({'sequence': 3, 'designation_id': ref('designation_cfo')}),
+            ]"/>
+        </record>
+
+        <!-- A narrower rule that beats the two OpEx ones above for its own
+             department, whatever the value: IT infrastructure spend always goes
+             past the department head. -->
+        <record id="workflow_it_department" model="smartspend.workflow">
+            <field name="active" eval="False"/>
+            <field name="document_type">purchase_request</field>
+            <field name="workflow_type">procurement</field>
+            <field name="department_id" ref="smartspend.department_it"/>
+            <field name="amount_from">0</field>
+            <field name="amount_to">999999999</field>
+            <field name="sequence">10</field>
+            <field name="approver_ids" eval="[
+                Command.create({'sequence': 1, 'designation_id': ref('designation_reporting_manager')}),
+                Command.create({'sequence': 2, 'designation_id': ref('designation_dept_head')}),
+                Command.create({'sequence': 3, 'designation_id': ref('designation_finance_capex_head')}),
+            ]"/>
+        </record>
+
+    </data>
+</odoo>

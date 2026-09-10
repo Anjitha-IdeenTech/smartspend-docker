@@ -1,0 +1,47 @@
+# The SmartSpend backup, running as a self-contained stack.
+#
+# Deliberately on non-default ports: the original smartspend-backend stack is
+# still up on 8069 and a native Odoo on 8019, and neither should be disturbed.
+name: smartspend-backup
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: odoo
+      POSTGRES_PASSWORD: odoo
+    ports: ["5433:5432"]
+    volumes:
+      - backup-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "odoo"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Reuses the image already built for the original stack: odoo:19 plus the SDK.
+  web:
+    image: smartspend-backend-web:latest
+    depends_on:
+      db: { condition: service_healthy }
+    ports: ["8079:8069"]
+    volumes:
+      - backup-filestore:/var/lib/odoo
+      - ./config:/etc/odoo:ro
+      - ./addons:/mnt/extra-addons
+    restart: unless-stopped
+
+  # The built demo, served as static files. The browser calls Odoo directly on
+  # 8079, which the module's controllers allow (cors='*').
+  ui:
+    image: nginx:alpine
+    ports: ["8090:80"]
+    volumes:
+      - ./site:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: unless-stopped
+
+volumes:
+  backup-db:
+  backup-filestore:

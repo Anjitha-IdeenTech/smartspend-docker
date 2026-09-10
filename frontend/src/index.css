@@ -1,0 +1,495 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+  SmartSpend — "Aurora Glass" theme (violet + pink).
+
+  Built to the client's reference: a clean near-white canvas carrying two soft
+  aurora blooms — vivid violet on the left, pink/magenta on the right — with
+  frosted-glass panels floating over the wash, bold near-black headings, and
+  solid near-black primary buttons. The brand accent is a single violet; the
+  banners and stat tiles run a violet → fuchsia → pink sweep so the colour
+  combo covers the screen rather than sitting only on the tiles.
+
+  All colors are stored as raw RGB channels (e.g. "124 58 237") so Tailwind
+  utilities can apply opacity modifiers, e.g. bg-brand/10, border-line2/60.
+  In config each token is wrapped as rgb(var(--token) / <alpha-value>).
+
+  Accent tokens are tuned deep enough that colored TEXT and icons stay legible
+  on the light canvas; the app derives the soft tinted *fills* from the same
+  token via /10 /15 opacity.
+*/
+
+:root {
+  font-family: 'Plus Jakarta Sans', 'Inter', sans-serif;
+
+  /* ---- The brand gradient, in one place ----
+     Reference order: violet → purple → fuchsia → pink. Everything solid and
+     colored in the app (banners, stat tiles) is a slice of this sweep. */
+  --brand-violet: 139  92 246;   /* #8B5CF6 */
+  --brand-purple: 147  51 234;   /* #9333EA */
+  --brand-fuchsia:192  38 211;   /* #C026D3 */
+  --brand-pink:   236  72 153;   /* #EC4899 */
+
+  /* Near-black ink used for the primary (bg-brand) buttons — flat, like the
+     reference "Free Trial" / "Search" pills. */
+  --ink-btn:       20  20  27;   /* #14141B */
+
+  /*
+    The app canvas — a near-flat, soft cool-purple-tinted off-white. Low
+    gradient by design (this is the calm/minimal purple theme): just a gentle
+    vertical wash, no decorative blooms. Painted on <body> and .login-aurora.
+  */
+  --canvas-aurora:
+    linear-gradient(160deg, #F4F3FA 0%, #F7F6FC 55%, #F3F2F9 100%);
+
+  /* Light canvas + white surfaces */
+  --bg-app:        247 248 253;   /* #F7F8FD cool near-white  */
+  --bg-surface:    255 255 255;   /* #FFFFFF card             */
+  --bg-secondary:  242 243 250;   /* #F2F3FA cool inset       */
+  --bg-raised:     233 235 247;   /* #E9EBF7 hover / raised   */
+  --border-color:  226 228 242;   /* #E2E4F2 cool hairline    */
+  --border-strong: 206 210 234;   /* #CED2EA stronger line    */
+  --text-primary:   22  22  32;   /* #161620 near-black       */
+  --text-secondary: 92  94 114;   /* #5C5E72 body             */
+  --text-faint:    150 152 172;   /* #9698AC muted            */
+  --onbrand:       255 255 255;   /* text on colored fills    */
+
+  /* Muted, refined accents — slate-violet + slate-blue, nothing bright */
+  --accent-budget:     99  86 168;   /* #6356A8 muted slate-violet */
+  --accent-savings:    22 138 120;   /* #168A78 muted teal-green   */
+  --accent-expenses:  200  70  92;   /* #C8465C muted rose         */
+  --accent-approvals: 176 122  46;   /* #B07A2E muted amber        */
+  --accent-analytics:  93 121 190;   /* #5D79BE muted slate-blue   */
+  --accent-alerts:    200  70  92;   /* #C8465C muted rose alert   */
+
+  /* raw decorative colors — pale holographic blue + purple */
+  --glow-brand: 139 148 236;      /* #8B94EC pale blue-violet */
+  --glow-gold:  196 181 253;      /* #C4B5FD pale purple      */
+
+  /*
+    Holographic gradients — a pale, pearlescent blue → lilac → purple sweep
+    used for the iridescent glass edges/sheen. Light shades only.
+    - holo-sheen: the iridescent wash laid over frosted card surfaces.
+    - holo-light: paler still, for text/edges sitting on a glass surface.
+  */
+  --holo-sheen: linear-gradient(115deg, #C7D2FE 0%, #DDD6FE 34%, #E9D5FF 62%, #C7D2FE 100%);
+  --holo-light: linear-gradient(100deg, #FFFFFF 0%, #DCE4FF 26%, #ECE4FF 50%, #F0E6FF 74%, #FFFFFF 100%);
+}
+
+.dark {
+  /* Dark theme — deep plum canvas, same violet → pink identity.
+     Currently dormant: App.tsx forces the light theme (see `darkMode`). */
+  --canvas-aurora:
+    radial-gradient( 90% 70% at  6%  0%, rgba(139,  92, 246, 0.18) 0%, transparent 60%),
+    radial-gradient( 90% 72% at 94% 100%, rgba(236,  72, 153, 0.18) 0%, transparent 62%),
+    linear-gradient(150deg, #140B22 0%, #1B1030 50%, #201038 100%);
+
+  --bg-app:         20  11  34;      /* #140B22 */
+  --bg-surface:     33  22  52;      /* #211634 card         */
+  --bg-secondary:   42  28  66;      /* #2A1C42 inset panel  */
+  --bg-raised:      58  40  90;      /* #3A285A hover/raised */
+  --border-color:   58  44  86;      /* #3A2C56 hairline     */
+  --border-strong:  86  64 128;      /* #564080 strong line  */
+  --text-primary:  245 240 255;      /* #F5F0FF */
+  --text-secondary:196 184 220;      /* #C4B8DC */
+  --text-faint:    150 134 180;      /* #9686B4 */
+  --onbrand:       255 255 255;
+
+  --ink-btn:       245 240 255;      /* light pill on dark   */
+
+  --accent-budget:    167 139 250;   /* #A78BFA */
+  --accent-savings:    52 211 153;   /* #34D399 */
+  --accent-expenses:  251 113 133;   /* #FB7185 */
+  --accent-approvals: 251 191  36;   /* #FBBF24 */
+  --accent-analytics: 129 140 248;   /* #818CF8 */
+  --accent-alerts:    244 114 182;   /* #F472B6 */
+
+  --glow-brand: 167 139 250;
+  --glow-gold:  244 114 182;
+}
+
+/* Larger base type for readability — scales every rem-based size ~6%. */
+html {
+  font-size: 17px;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  background-color: rgb(var(--bg-app));
+  background-image: var(--canvas-aurora);
+  background-attachment: fixed;
+  color: rgb(var(--text-primary));
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/*
+  Floating aurora blobs — large, heavily blurred, multi-hue radial gradients.
+  Rendered behind the app on the two decorative divs in App.tsx. Effective
+  opacity lands around 10–15% after the blur + the divs' own opacity-60.
+  Glow 1 is the violet (left) bloom, glow 2 the purple (right) bloom.
+*/
+.ambient-glow-1 { background: none; }   /* blooms off — low-gradient theme */
+.dark .ambient-glow-1 {
+  background:
+    radial-gradient(closest-side at 40% 40%, rgba(139, 92, 246, 0.22), transparent),
+    radial-gradient(closest-side at 62% 55%, rgba(167, 139, 250, 0.18), transparent);
+}
+
+.ambient-glow-2 { background: none; }   /* blooms off — low-gradient theme */
+.dark .ambient-glow-2 {
+  background:
+    radial-gradient(closest-side at 55% 55%, rgba(236, 72, 153, 0.22), transparent),
+    radial-gradient(closest-side at 66% 66%, rgba(192, 38, 211, 0.18), transparent);
+}
+
+/* Frosted glass panels */
+.glass-panel {
+  background: rgb(var(--bg-surface) / 0.72);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow: 0 20px 50px rgba(76, 29, 149, 0.12);
+  border-radius: 22px;
+}
+.dark .glass-panel {
+  background: rgb(var(--bg-surface) / 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+}
+
+/* Premium card hover — soft brand lift */
+.glow-card { transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.25s; }
+.glow-card:hover {
+  transform: translateY(-4px);
+  border-color: rgb(var(--accent-budget) / 0.45);
+  box-shadow: 0 28px 60px rgba(76, 29, 149, 0.18);
+}
+.dark .glow-card:hover {
+  box-shadow: 0 28px 60px rgba(0, 0, 0, 0.5);
+}
+
+/*
+  Primary solid fills render as flat near-black pills, matching the reference
+  "Free Trial" / "Search" buttons. Opacity variants (bg-brand/10, /20 …) are
+  separate classes and keep their flat violet tint, so this only sets the solid
+  fill.
+*/
+.bg-brand {
+  background-image: none;
+  background-color: rgb(var(--ink-btn));   /* flat near-black, no sheen */
+}
+.dark .bg-brand { background-image: none; background-color: rgb(var(--ink-btn)); color: #201038; }
+
+/* Holographic shimmer: slides an oversized gradient across the element */
+@keyframes holoShift { to { background-position: 220% center; } }
+
+/* Aurora blobs breathe/drift so the backdrop feels alive */
+@keyframes auroraDrift {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50%      { transform: translate(6%, 4%) scale(1.13); }
+}
+
+/*
+  Frost every solid surface into glass (cards, sidebar, chat bar) so the canvas
+  wash reads faintly through each panel. The bg-surface/NN opacity variants
+  (header, hero image panel, selectable rows) are separate classes and keep
+  their own tuned values, so this only upgrades the plain solid surfaces.
+*/
+.bg-surface {
+  background-color: rgb(var(--bg-surface));   /* solid white, flat */
+}
+.dark .bg-surface {
+  background-color: rgb(var(--bg-surface) / 0.7);
+}
+
+/*
+  Brand-tinted cards — scoped to card surfaces only (elements that have BOTH
+  `bg-surface` and `rounded-2xl`), so the sidebar / header / chat bar are not
+  affected. Adds a faint glass sheen + a soft edge: violet glow down one side,
+  pink down the other, matching the reference blooms.
+*/
+.bg-surface.rounded-2xl {
+  border: 1px solid rgb(var(--border-color));
+  background-image: none;
+  box-shadow: 0 1px 2px rgba(80, 70, 140, 0.05), 0 8px 22px -16px rgba(80, 70, 140, 0.12);
+}
+.bg-surface.rounded-2xl:hover {
+  border-color: rgb(var(--accent-budget) / 0.4);
+  box-shadow: 0 1px 2px rgba(80, 70, 140, 0.06), 0 14px 30px -18px rgba(80, 70, 140, 0.16);
+  transform: translateY(-2px);
+}
+.dark .bg-surface.rounded-2xl {
+  background-image:
+    linear-gradient(135deg,
+      rgba(139,  92, 246, 0.14) 0%,
+      rgba(167, 139, 250, 0.10) 34%,
+      rgba(236,  72, 153, 0.12) 68%,
+      rgba(139,  92, 246, 0.11) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 0 0 1px rgba(120, 90, 170, 0.4),
+    -12px 0 32px -12px rgba(139,  92, 246, 0.45),
+     12px 0 32px -12px rgba(236,  72, 153, 0.45),
+    0 22px 48px rgba(0, 0, 0, 0.42);
+}
+.dark .bg-surface.rounded-2xl:hover {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 0 0 1px rgba(167, 139, 250, 0.65),
+    -16px 0 42px -10px rgba(139,  92, 246, 0.6),
+     16px 0 42px -10px rgba(236,  72, 153, 0.6),
+    0 32px 64px rgba(0, 0, 0, 0.55);
+  transform: translateY(-3px);
+  animation: holoShift 6s linear infinite;
+}
+
+/*
+  Heading highlight — one flat brand colour (violet). Gradient type read badly
+  at heading sizes; a single solid colour keeps the brand hue and lets the
+  letterforms stay letterforms.
+*/
+.holo-text {
+  color: rgb(var(--accent-budget));
+}
+
+/* The pale iridescent variant only ever sits on a gradient banner, where it
+   has room to shimmer without hurting legibility */
+.holo-text-light {
+  background-image: var(--holo-light);
+  background-size: 260% auto;
+  -webkit-background-clip: text;
+          background-clip: text;
+  -webkit-text-fill-color: transparent;
+          color: transparent;
+  animation: holoShift 5s linear infinite;
+}
+
+/*
+  ===== The app canvas =====
+  Used by the app shell AND the login page, so every screen carries the same
+  wash the tiles are cut from.
+*/
+.login-aurora {
+  background-color: rgb(var(--bg-app));
+  background-image: var(--canvas-aurora);
+}
+/* Login mesh disabled — flat, low-gradient theme. */
+.login-sweep { display: none; }
+/* login: a single very-faint purple bloom for a hint of depth (near-flat) */
+.login-wash {
+  background: radial-gradient(closest-side at 80% 35%, rgba(99, 86, 168, 0.06), transparent);
+}
+@keyframes spinSlow { to { transform: rotate(360deg); } }
+
+/*
+  ===== Spotlight tiles =====
+  Gradient stat tiles + request tiles, cut from the violet → fuchsia → pink
+  sweep. Each tile takes a `--tint` (status colour, as raw RGB channels) and
+  derives its glow, spine and hover halo from it, so the set reads as one
+  system instead of six unrelated colours.
+*/
+
+/* Gradient count tile — the brand sweep as a slab, luminous status accent */
+.stat-tile {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-radius: 16px;
+  background-color: rgb(var(--bg-surface));
+  border: 1px solid rgb(var(--border-color));
+  box-shadow: 0 1px 2px rgba(80, 70, 140, 0.05), 0 8px 22px -16px rgba(80, 70, 140, 0.12);
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s ease, border-color 0.25s ease;
+}
+/*
+  Status-tinted corner bloom — a soft wash of the tile's --tint in the top
+  corner, the only real colour on the otherwise white glass card.
+*/
+.stat-tile::before {
+  content: '';
+  position: absolute;
+  top: -46px; right: -34px;
+  width: 128px; height: 128px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgb(var(--tint) / 0.20), transparent 68%);
+  filter: blur(20px);
+  z-index: 0;
+}
+.stat-tile > * { position: relative; z-index: 1; }
+/* the diagonal white sheen is dropped on the calm light card */
+.stat-tile::after { display: none; }
+.stat-tile:hover {
+  transform: translateY(-2px);
+  border-color: rgb(var(--tint) / 0.4);
+  box-shadow:
+    0 1px 2px rgba(80, 70, 140, 0.06),
+    0 14px 28px -18px rgb(var(--tint) / 0.2);
+}
+
+/* Share-of-total meter along the bottom of a stat tile — single colour */
+.stat-meter {
+  height: 3px;
+  border-radius: 99px;
+  background: rgb(var(--tint));
+  transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Request tile — frosted card with a status spine and a tinted hover halo */
+.req-tile {
+  position: relative;
+  overflow: hidden;
+  border-radius: 18px;
+  background: rgb(var(--bg-surface));
+  border: 1px solid rgb(var(--border-color));
+  box-shadow: 0 1px 2px rgba(80, 70, 140, 0.05);
+  transition: border-color 0.2s ease;
+}
+.req-tile::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 4px;
+  background: rgb(var(--tint));
+}
+.req-tile::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(120% 90% at 0% 0%, rgb(var(--tint) / 0.15), transparent 62%);
+  transition: opacity 0.28s ease;
+}
+.req-tile:hover {
+  border-color: rgb(var(--tint) / 0.55);
+}
+.req-tile:hover::after { opacity: 1; }
+.dark .req-tile { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3); }
+
+/*
+  Panel hero — the gradient banner heading a scene, the same sweep as the stat
+  tiles. Pitched a touch deeper than the tiles so a banner and the tiles beneath
+  it stay distinguishable.
+*/
+.panel-hero {
+  position: relative;
+  overflow: hidden;
+  border-radius: 18px;
+  background-color: rgb(var(--accent-budget) / 0.07);   /* flat pale purple banner */
+  border: 1px solid rgb(var(--accent-budget) / 0.16);
+  box-shadow: 0 1px 2px rgba(80, 70, 140, 0.05);
+}
+.panel-hero::before { display: none; }
+.panel-hero::after { display: none; }
+
+/* Glass chip used on gradient surfaces (hero + stat tiles) */
+.glass-chip {
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/*
+  Controls living inside a .panel-hero (now a light glass banner). Quiet light
+  chips by default; a solid violet fill with white text when selected.
+*/
+.hero-ctl {
+  background: rgb(var(--bg-secondary));
+  border: 1px solid rgb(var(--border-color));
+  color: rgb(var(--text-secondary));
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.hero-ctl:hover { background: rgb(var(--bg-raised)); }
+.hero-ctl-on {
+  background: rgb(var(--accent-budget));
+  border-color: rgb(var(--accent-budget));
+  color: #fff;
+}
+.hero-ctl-on:hover { background: rgb(var(--accent-budget)); }
+
+/* Respect reduced-motion: keep the colour, drop the movement */
+@media (prefers-reduced-motion: reduce) {
+  .bg-brand,
+  .holo-text-light,
+  .ambient-glow-1,
+  .ambient-glow-2,
+  .login-sweep,
+  .login-wash { animation: none !important; }
+
+  /* Tiles keep their colour and depth, but stop moving */
+  .stat-tile:hover,
+  .req-tile:hover { transform: none; }
+  .stat-tile::after { display: none; }
+}
+
+/* Buttons: subtle lift + soft shadow on the primary action buttons */
+button.bg-brand:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 30px rgba(20, 20, 27, 0.3);
+}
+
+/*
+  Universal hover feedback for buttons & tab controls — a soft violet "shade"
+  that blends with the theme, plus a gentle press on click. Primary (bg-brand)
+  buttons keep their own hover above.
+*/
+button:not(:disabled) {
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease,
+              background-color 0.2s ease, border-color 0.2s ease, filter 0.2s ease;
+}
+button:not(:disabled):not(.bg-brand):hover {
+  box-shadow: 0 6px 18px rgba(124, 58, 237, 0.18);
+}
+button:not(:disabled):active {
+  transform: scale(0.98);
+}
+
+/* Inputs: soft violet focus glow (purely visual — no size/layout change) */
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: rgb(124 58 237) !important;
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.2);
+}
+
+/* Tables: quiet zebra striping + soft violet row hover */
+tbody tr { transition: background-color 0.2s ease; }
+tbody tr:nth-child(even) { background-color: rgb(var(--bg-secondary) / 0.5); }
+tbody tr:hover { background-color: rgb(var(--accent-budget) / 0.07); }
+
+/* Global transitions for theme-affected properties (250ms, spec) */
+*, *::before, *::after {
+  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, box-shadow, transform, opacity;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 250ms;
+}
+
+/* Custom soundwave animation */
+@keyframes wave {
+  0%, 100% { transform: scaleY(0.3); }
+  50%      { transform: scaleY(1.2); }
+}
+
+/* fadeIn transitions */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fadeIn { animation: fadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+
+.delay-75  { animation-delay: 75ms; }
+.delay-100 { animation-delay: 100ms; }
+.delay-150 { animation-delay: 150ms; }
+.delay-200 { animation-delay: 200ms; }
+.delay-300 { animation-delay: 300ms; }
+.delay-400 { animation-delay: 400ms; }

@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="1">
+
+        <!-- ==================================================== Vendors -->
+        <record id="partner_primus" model="res.partner">
+            <field name="name">Primus Technologies</field>
+            <field name="is_company" eval="True"/>
+            <field name="supplier_rank">1</field>
+            <field name="city">Bangalore</field>
+        </record>
+
+        <record id="partner_apex" model="res.partner">
+            <field name="name">Apex Systems</field>
+            <field name="is_company" eval="True"/>
+            <field name="supplier_rank">1</field>
+            <field name="city">Kochi</field>
+        </record>
+
+        <record id="partner_powergrid" model="res.partner">
+            <field name="name">PowerGrid Solutions</field>
+            <field name="is_company" eval="True"/>
+            <field name="supplier_rank">1</field>
+            <field name="city">Mumbai</field>
+        </record>
+
+        <!-- ============================================= Rate contracts -->
+        <!-- Rates match the price book the SmartSpend portal quotes from, so a
+             request raised in the portal maps onto a contract line here. -->
+        <record id="contract_it_hardware" model="smartspend.contract">
+            <field name="partner_id" ref="partner_primus"/>
+            <field name="category">IT Hardware</field>
+            <field name="state">active</field>
+            <field name="date_start" eval="(datetime.today() - relativedelta(months=6)).strftime('%Y-%m-%d')"/>
+            <field name="date_end" eval="(datetime.today() + relativedelta(months=6)).strftime('%Y-%m-%d')"/>
+            <field name="lead_time">5 Days</field>
+            <field name="warranty">3 Years On-Site</field>
+            <field name="payment_terms">Net-30</field>
+            <field name="notes" type="html">
+                <p>Annual rate agreement for end-user computing. Rates hold for the
+                   full validity window; volumes above 50 units per line are
+                   re-negotiated.</p>
+            </field>
+        </record>
+
+        <record id="contract_it_hardware_line_laptop" model="smartspend.contract.line">
+            <field name="contract_id" ref="contract_it_hardware"/>
+            <field name="sequence">10</field>
+            <field name="product_name">Dell Latitude 5440 Laptop</field>
+            <field name="min_qty">5</field>
+            <field name="price_unit">70000</field>
+        </record>
+        <record id="contract_it_hardware_line_dock" model="smartspend.contract.line">
+            <field name="contract_id" ref="contract_it_hardware"/>
+            <field name="sequence">20</field>
+            <field name="product_name">USB-C Docking Station</field>
+            <field name="min_qty">5</field>
+            <field name="price_unit">8500</field>
+        </record>
+        <record id="contract_it_hardware_line_monitor" model="smartspend.contract.line">
+            <field name="contract_id" ref="contract_it_hardware"/>
+            <field name="sequence">30</field>
+            <field name="product_name">24" Full-HD Monitor</field>
+            <field name="min_qty">5</field>
+            <field name="price_unit">11000</field>
+        </record>
+        <record id="contract_it_hardware_line_kbm" model="smartspend.contract.line">
+            <field name="contract_id" ref="contract_it_hardware"/>
+            <field name="sequence">40</field>
+            <field name="product_name">Wireless Keyboard &amp; Mouse Combo</field>
+            <field name="min_qty">10</field>
+            <field name="price_unit">2200</field>
+        </record>
+        <record id="contract_it_hardware_line_backpack" model="smartspend.contract.line">
+            <field name="contract_id" ref="contract_it_hardware"/>
+            <field name="sequence">50</field>
+            <field name="product_name">Laptop Backpack</field>
+            <field name="min_qty">10</field>
+            <field name="price_unit">1800</field>
+        </record>
+        <record id="contract_it_hardware_line_headset" model="smartspend.contract.line">
+            <field name="contract_id" ref="contract_it_hardware"/>
+            <field name="sequence">60</field>
+            <field name="product_name">Noise-Cancelling Headset</field>
+            <field name="min_qty">5</field>
+            <field name="price_unit">3400</field>
+        </record>
+        <record id="contract_it_hardware_line_licence" model="smartspend.contract.line">
+            <field name="contract_id" ref="contract_it_hardware"/>
+            <field name="sequence">70</field>
+            <field name="product_name">MS Office 365 Business License</field>
+            <field name="min_qty">10</field>
+            <field name="price_unit">8200</field>
+        </record>
+
+        <record id="contract_furniture" model="smartspend.contract">
+            <field name="partner_id" ref="partner_apex"/>
+            <field name="category">Office Furniture</field>
+            <field name="state">active</field>
+            <field name="date_start" eval="(datetime.today() - relativedelta(months=3)).strftime('%Y-%m-%d')"/>
+            <field name="date_end" eval="(datetime.today() + relativedelta(months=9)).strftime('%Y-%m-%d')"/>
+            <field name="lead_time">3 Days</field>
+            <field name="warranty">2 Years</field>
+            <field name="payment_terms">Net-45</field>
+        </record>
+
+        <record id="contract_furniture_line_chair" model="smartspend.contract.line">
+            <field name="contract_id" ref="contract_furniture"/>
+            <field name="sequence">10</field>
+            <field name="product_name">Ergonomic Office Chair</field>
+            <field name="min_qty">5</field>
+            <field name="price_unit">8000</field>
+        </record>
+        <record id="contract_furniture_line_desk" model="smartspend.contract.line">
+            <field name="contract_id" ref="contract_furniture"/>
+            <field name="sequence">20</field>
+            <field name="product_name">Height-Adjustable Desk</field>
+            <field name="min_qty">5</field>
+            <field name="price_unit">12500</field>
+        </record>
+        <record id="contract_furniture_line_cabinet" model="smartspend.contract.line">
+            <field name="contract_id" ref="contract_furniture"/>
+            <field name="sequence">30</field>
+            <field name="product_name">Storage Pedestal Cabinet</field>
+            <field name="min_qty">5</field>
+            <field name="price_unit">9500</field>
+        </record>
+
+        <record id="contract_datacenter" model="smartspend.contract">
+            <field name="partner_id" ref="partner_powergrid"/>
+            <field name="category">Datacenter Equipment</field>
+            <field name="state">active</field>
+            <field name="date_start" eval="(datetime.today() - relativedelta(months=2)).strftime('%Y-%m-%d')"/>
+            <field name="date_end" eval="(datetime.today() + relativedelta(months=10)).strftime('%Y-%m-%d')"/>
+            <field name="lead_time">8 Days</field>
+            <field name="warranty">3 Years</field>
+            <field name="payment_terms">Net-30</field>
+        </record>
+
+        <record id="contract_datacenter_line_rack" model="smartspend.contract.line">
+            <field name="contract_id" ref="contract_datacenter"/>
+            <field name="sequence">10</field>
+            <field name="product_name">19-Inch Data Server Rack</field>
+            <field name="min_qty">1</field>
+            <field name="price_unit">120000</field>
+        </record>
+        <record id="contract_datacenter_line_switch" model="smartspend.contract.line">
+            <field name="contract_id" ref="contract_datacenter"/>
+            <field name="sequence">20</field>
+            <field name="product_name">48-Port Network Switch</field>
+            <field name="min_qty">1</field>
+            <field name="price_unit">45000</field>
+        </record>
+        <record id="contract_datacenter_line_ups" model="smartspend.contract.line">
+            <field name="contract_id" ref="contract_datacenter"/>
+            <field name="sequence">30</field>
+            <field name="product_name">Rack-Mount UPS 5kVA</field>
+            <field name="min_qty">1</field>
+            <field name="price_unit">38000</field>
+        </record>
+        <record id="contract_datacenter_line_patch" model="smartspend.contract.line">
+            <field name="contract_id" ref="contract_datacenter"/>
+            <field name="sequence">40</field>
+            <field name="product_name">CAT-6A Patch Panel</field>
+            <field name="min_qty">2</field>
+            <field name="price_unit">4500</field>
+        </record>
+
+    </data>
+</odoo>

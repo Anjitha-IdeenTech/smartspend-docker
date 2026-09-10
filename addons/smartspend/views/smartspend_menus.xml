@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <menuitem id="menu_smartspend_root"
+              name="SmartSpend"
+              sequence="55"
+              groups="smartspend.group_smartspend_user"
+              web_icon="smartspend,static/description/icon.png"/>
+
+    <menuitem id="menu_smartspend_requests"
+              name="Requests"
+              parent="menu_smartspend_root"
+              sequence="10"/>
+
+    <menuitem id="menu_smartspend_request_all"
+              name="Purchase Requests"
+              parent="menu_smartspend_requests"
+              action="smartspend_request_action"
+              sequence="10"/>
+
+    <menuitem id="menu_smartspend_request_to_approve"
+              name="To Approve"
+              parent="menu_smartspend_requests"
+              action="smartspend_request_action_to_approve"
+              groups="smartspend.group_smartspend_manager"
+              sequence="20"/>
+
+    <menuitem id="menu_smartspend_contracts"
+              name="Rate Contracts"
+              parent="menu_smartspend_root"
+              sequence="20"/>
+
+    <menuitem id="menu_smartspend_contract_all"
+              name="Rate Contracts"
+              parent="menu_smartspend_contracts"
+              action="smartspend_contract_action"
+              sequence="10"/>
+
+    <menuitem id="menu_smartspend_budgets"
+              name="Budgets"
+              parent="menu_smartspend_root"
+              sequence="25"/>
+
+    <menuitem id="menu_smartspend_budget_all"
+              name="Budgets"
+              parent="menu_smartspend_budgets"
+              action="smartspend_budget_action"
+              sequence="10"/>
+
+    <menuitem id="menu_smartspend_orders"
+              name="Purchase Orders"
+              parent="menu_smartspend_root"
+              groups="smartspend.group_smartspend_buyer"
+              sequence="30"/>
+
+    <menuitem id="menu_smartspend_order_all"
+              name="Purchase Orders"
+              parent="menu_smartspend_orders"
+              action="purchase.purchase_form_action"
+              sequence="10"/>
+
+    <menuitem id="menu_smartspend_order_rfq"
+              name="Requests for Quotation"
+              parent="menu_smartspend_orders"
+              action="purchase.purchase_rfq"
+              sequence="20"/>
+
+
+    <menuitem id="menu_smartspend_config"
+              name="Configuration"
+              parent="menu_smartspend_root"
+              groups="smartspend.group_smartspend_manager"
+              sequence="90"/>
+
+    <menuitem id="menu_smartspend_config_branches"
+              name="Branches"
+              parent="menu_smartspend_config"
+              action="smartspend_branch_action"
+              sequence="10"/>
+
+    <menuitem id="menu_smartspend_config_departments"
+              name="Departments"
+              parent="menu_smartspend_config"
+              action="smartspend_department_action"
+              sequence="20"/>
+
+    <menuitem id="menu_smartspend_config_categories"
+              name="Expense Categories"
+              parent="menu_smartspend_config"
+              action="smartspend_expense_category_action"
+              sequence="30"/>
+
+    <!-- Who signs what: the approval matrix and the designations it routes to. -->
+    <menuitem id="menu_smartspend_config_workflows"
+              name="Approval Workflows"
+              parent="menu_smartspend_config"
+              action="smartspend_workflow_action"
+              sequence="40"/>
+
+    <menuitem id="menu_smartspend_config_designations"
+              name="Designations"
+              parent="menu_smartspend_config"
+              action="smartspend_designation_action"
+              sequence="50"/>
+
+</odoo>

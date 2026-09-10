@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ================================================== Branch -->
+    <record id="smartspend_branch_view_list" model="ir.ui.view">
+        <field name="name">smartspend.branch.list</field>
+        <field name="model">smartspend.branch</field>
+        <field name="arch" type="xml">
+            <list string="Branches" editable="bottom">
+                <field name="sequence" widget="handle"/>
+                <field name="name"/>
+                <field name="code"/>
+                <field name="city"/>
+                <field name="partner_id"/>
+                <field name="request_count" string="Requests" readonly="1"/>
+                <field name="company_id" groups="base.group_multi_company"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="smartspend_branch_view_form" model="ir.ui.view">
+        <field name="name">smartspend.branch.form</field>
+        <field name="model">smartspend.branch</field>
+        <field name="arch" type="xml">
+            <form string="Branch">
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button class="oe_stat_button" name="action_view_requests"
+                                type="object" icon="fa-file-text-o" invisible="request_count == 0">
+                            <field name="request_count" widget="statinfo" string="Requests"/>
+                        </button>
+                    </div>
+                    <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active"/>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1><field name="name" placeholder="e.g. Bangalore Office"/></h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="code"/>
+                            <field name="city"/>
+                            <field name="active" invisible="1"/>
+                        </group>
+                        <group>
+                            <field name="partner_id"/>
+                            <field name="company_id" groups="base.group_multi_company"/>
+                        </group>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="smartspend_branch_action" model="ir.actions.act_window">
+        <field name="name">Branches</field>
+        <field name="res_model">smartspend.branch</field>
+        <field name="view_mode">list,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Add your first branch</p>
+            <p>Sites a purchase request can be raised for. The portal offers exactly this list.</p>
+        </field>
+    </record>
+
+    <!-- ================================================== Department -->
+    <record id="smartspend_department_view_list" model="ir.ui.view">
+        <field name="name">smartspend.department.list</field>
+        <field name="model">smartspend.department</field>
+        <field name="arch" type="xml">
+            <list string="Departments" editable="bottom">
+                <field name="sequence" widget="handle"/>
+                <field name="name"/>
+                <field name="code"/>
+                <field name="manager_id" widget="many2one_avatar_user"/>
+                <field name="analytic_account_id" optional="show"/>
+                <field name="request_count" string="Requests" readonly="1"/>
+                <field name="company_id" groups="base.group_multi_company"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="smartspend_department_view_form" model="ir.ui.view">
+        <field name="name">smartspend.department.form</field>
+        <field name="model">smartspend.department</field>
+        <field name="arch" type="xml">
+            <form string="Department">
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button class="oe_stat_button" name="action_view_requests"
+                                type="object" icon="fa-file-text-o" invisible="request_count == 0">
+                            <field name="request_count" widget="statinfo" string="Requests"/>
+                        </button>
+                    </div>
+                    <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active"/>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1><field name="name" placeholder="e.g. IT &amp; Infrastructure"/></h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="code"/>
+                            <field name="active" invisible="1"/>
+                        </group>
+                        <group>
+                            <field name="manager_id" widget="many2one_avatar_user"/>
+                            <field name="analytic_account_id" options="{'no_create': True}"/>
+                            <field name="company_id" groups="base.group_multi_company"/>
+                        </group>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="smartspend_department_action" model="ir.actions.act_window">
+        <field name="name">Departments</field>
+        <field name="res_model">smartspend.department</field>
+        <field name="view_mode">list,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Add your first department</p>
+            <p>Departments raise requests and carry the budget they are checked against.</p>
+        </field>
+    </record>
+
+    <!-- ================================================== Expense category -->
+    <record id="smartspend_expense_category_view_list" model="ir.ui.view">
+        <field name="name">smartspend.expense.category.list</field>
+        <field name="model">smartspend.expense.category</field>
+        <field name="arch" type="xml">
+            <list string="Expense Categories" editable="bottom">
+                <field name="sequence" widget="handle"/>
+                <field name="name"/>
+                <field name="expense_type"/>
+                <field name="product_category_id"/>
+                <field name="request_count" string="Requests" readonly="1"/>
+                <field name="company_id" groups="base.group_multi_company"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="smartspend_expense_category_view_form" model="ir.ui.view">
+        <field name="name">smartspend.expense.category.form</field>
+        <field name="model">smartspend.expense.category</field>
+        <field name="arch" type="xml">
+            <form string="Expense Category">
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button class="oe_stat_button" name="action_view_requests"
+                                type="object" icon="fa-file-text-o" invisible="request_count == 0">
+                            <field name="request_count" widget="statinfo" string="Requests"/>
+                        </button>
+                    </div>
+                    <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active"/>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1><field name="name" placeholder="e.g. IT Hardware &amp; Laptops"/></h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="expense_type"/>
+                            <field name="active" invisible="1"/>
+                        </group>
+                        <group>
+                            <field name="product_category_id"/>
+                            <field name="company_id" groups="base.group_multi_company"/>
+                        </group>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="smartspend_expense_category_action" model="ir.actions.act_window">
+        <field name="name">Expense Categories</field>
+        <field name="res_model">smartspend.expense.category</field>
+        <field name="view_mode">list,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Add your first expense category</p>
+            <p>Categories decide whether spend is CapEx or OpEx, and which budget answers for it.</p>
+        </field>
+    </record>
+
+</odoo>

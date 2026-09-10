@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ============================== Designations ============================== -->
+    <record id="smartspend_designation_view_list" model="ir.ui.view">
+        <field name="name">smartspend.designation.list</field>
+        <field name="model">smartspend.designation</field>
+        <field name="arch" type="xml">
+            <list string="Designations" editable="bottom">
+                <field name="sequence" widget="handle"/>
+                <field name="name"/>
+                <field name="code"/>
+                <field name="user_ids" widget="many2many_tags"/>
+                <field name="company_id" groups="base.group_multi_company"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="smartspend_designation_action" model="ir.actions.act_window">
+        <field name="name">Designations</field>
+        <field name="res_model">smartspend.designation</field>
+        <field name="view_mode">list,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Name the roles that sign</p>
+            <p>Workflows route approvals to a designation rather than a person, so
+               the chain keeps working when somebody changes job.</p>
+        </field>
+    </record>
+
+    <!-- ================================ Workflows ================================ -->
+    <record id="smartspend_workflow_view_list" model="ir.ui.view">
+        <field name="name">smartspend.workflow.list</field>
+        <field name="model">smartspend.workflow</field>
+        <field name="arch" type="xml">
+            <list string="Workflows">
+                <field name="name" string="Reference"/>
+                <field name="document_type"/>
+                <field name="workflow_type"/>
+                <field name="department_id"/>
+                <field name="expense_type"/>
+                <field name="category_id" string="Expense Category"/>
+                <field name="amount_from" sum="From"/>
+                <field name="amount_to" sum="To"/>
+                <field name="company_id" groups="base.group_multi_company"/>
+                <field name="branch_id"/>
+                <field name="approver_count" string="Approvers"/>
+                <field name="currency_id" column_invisible="1"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="smartspend_workflow_view_form" model="ir.ui.view">
+        <field name="name">smartspend.workflow.form</field>
+        <field name="model">smartspend.workflow</field>
+        <field name="arch" type="xml">
+            <form string="Approval Workflow">
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button class="oe_stat_button" name="action_view_requests"
+                                type="object" icon="fa-file-text-o">
+                            <span class="o_stat_text">Requests</span>
+                        </button>
+                    </div>
+                    <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger"
+                            invisible="active"/>
+                    <div class="oe_title">
+                        <h1><field name="name" readonly="1"/></h1>
+                    </div>
+                    <group>
+                        <group string="Applies to">
+                            <field name="company_id" options="{'no_create': True}"/>
+                            <field name="branch_id" options="{'no_create': True}"
+                                   placeholder="All branches"/>
+                            <field name="department_id" options="{'no_create': True}"
+                                   placeholder="All departments"/>
+                            <field name="category_id" options="{'no_create': True}"
+                                   placeholder="All expense categories"/>
+                            <field name="expense_type" placeholder="Both CapEx and OpEx"/>
+                        </group>
+                        <group string="Routing">
+                            <field name="document_type"/>
+                            <field name="workflow_type"/>
+                            <field name="amount_from"/>
+                            <field name="amount_to"/>
+                            <field name="sequence"/>
+                            <field name="specificity" readonly="1"
+                                   help="How many criteria this rule pins down. When two workflows both match a request, the more specific one wins."/>
+                            <field name="active" invisible="1"/>
+                            <field name="currency_id" invisible="1"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Approve Users" name="approvers">
+                            <field name="approver_ids">
+                                <list editable="bottom">
+                                    <field name="sequence" string="Order"/>
+                                    <field name="designation_id" options="{'no_create': False}"/>
+                                    <field name="branch_id" options="{'no_create': True}"/>
+                                    <field name="department_id" options="{'no_create': True}"/>
+                                    <field name="company_id" column_invisible="1"/>
+                                </list>
+                            </field>
+                            <p class="text-muted mt-2">
+                                Signed in this order. A request only reaches Approved once
+                                every line here has signed.
+                            </p>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="smartspend_workflow_view_search" model="ir.ui.view">
+        <field name="name">smartspend.workflow.search</field>
+        <field name="model">smartspend.workflow</field>
+        <field name="arch" type="xml">
+            <search string="Workflows">
+                <field name="name" string="Reference"/>
+                <field name="department_id"/>
+                <field name="category_id"/>
+                <field name="branch_id"/>
+                <filter name="purchase_request" string="Purchase Request"
+                        domain="[('document_type', '=', 'purchase_request')]"/>
+                <filter name="purchase_order" string="Purchase Order"
+                        domain="[('document_type', '=', 'purchase_order')]"/>
+                <separator/>
+                <filter name="capex" string="CapEx" domain="[('expense_type', '=', 'capex')]"/>
+                <filter name="opex" string="OpEx" domain="[('expense_type', '=', 'opex')]"/>
+                <separator/>
+                <filter name="archived" string="Archived" domain="[('active', '=', False)]"/>
+                <group>
+                    <filter name="group_document" string="Document"
+                            context="{'group_by': 'document_type'}"/>
+                    <filter name="group_workflow" string="Workflow Type"
+                            context="{'group_by': 'workflow_type'}"/>
+                    <filter name="group_department" string="Department"
+                            context="{'group_by': 'department_id'}"/>
+                    <filter name="group_branch" string="Branch"
+                            context="{'group_by': 'branch_id'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="smartspend_workflow_action" model="ir.actions.act_window">
+        <field name="name">Workflows</field>
+        <field name="res_model">smartspend.workflow</field>
+        <field name="view_mode">list,form</field>
+        <field name="context">{'search_default_group_document': 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Set up an approval chain</p>
+            <p>A workflow says who signs a request, for a given company, branch,
+               department, expense category and value. The most specific matching
+               workflow wins, and its approvers are copied onto the request when it
+               is submitted.</p>
+        </field>
+    </record>
+
+</odoo>

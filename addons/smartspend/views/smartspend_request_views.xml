@@ -1,0 +1,399 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ================================================== List -->
+    <record id="smartspend_request_view_list" model="ir.ui.view">
+        <field name="name">smartspend.request.list</field>
+        <field name="model">smartspend.request</field>
+        <field name="arch" type="xml">
+            <list string="Purchase Requests"
+                  decoration-info="state == 'sourcing'"
+                  decoration-warning="state in ('to_approve', 'clarification')"
+                  decoration-success="state in ('approved', 'po_confirmed', 'paid')"
+                  decoration-muted="state in ('rejected', 'cancelled')">
+                <field name="name"/>
+                <field name="request_date"/>
+                <field name="user_id" widget="many2one_avatar_user"/>
+                <field name="create_uid" string="Created by" widget="many2one_avatar_user" optional="hide"/>
+                <field name="delivery_date" string="Needed By" optional="hide"/>
+                <field name="product_name" string="Product"/>
+                <field name="department_id" string="Department" optional="show"/>
+                <field name="branch_id" string="Branch" optional="show"/>
+                <field name="category_id" string="Category" optional="hide"/>
+                <field name="budget_id" optional="hide"/>
+                <field name="urgency" widget="badge"
+                       decoration-danger="urgency == 'high'"
+                       decoration-warning="urgency == 'medium'"/>
+                <field name="vendor_name" string="Vendor" optional="show"/>
+                <field name="sourcing_method" string="Contract Method" optional="show"/>
+                <field name="contract_id" string="Rate Contract" optional="show"/>
+                <field name="purchase_order_count" string="POs" optional="hide"/>
+                <field name="total_cost" sum="Estimated Cost" widget="monetary"/>
+                <field name="savings" sum="Savings" widget="monetary" optional="hide"/>
+                <field name="currency_id" column_invisible="1"/>
+                <field name="state" widget="badge"
+                       decoration-info="state == 'sourcing'"
+                       decoration-warning="state in ('to_approve', 'clarification')"
+                       decoration-success="state in ('approved', 'po_confirmed', 'paid')"
+                       decoration-danger="state == 'rejected'"
+                       decoration-muted="state == 'cancelled'"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- ================================================== Kanban -->
+    <record id="smartspend_request_view_kanban" model="ir.ui.view">
+        <field name="name">smartspend.request.kanban</field>
+        <field name="model">smartspend.request</field>
+        <field name="arch" type="xml">
+            <kanban class="o_kanban_mobile" sample="1" quick_create="false">
+                <field name="currency_id"/>
+                <templates>
+                    <t t-name="card">
+                        <div class="d-flex align-items-baseline">
+                            <field name="name" class="fw-bolder fs-5 me-2"/>
+                            <field name="total_cost" widget="monetary" class="fw-bolder ms-auto flex-shrink-0"/>
+                        </div>
+                        <field name="product_name" class="text-muted"/>
+                        <div class="d-flex flex-wrap gap-1 mt-1 text-nowrap">
+                            <field name="department_id"/>
+                            <field name="branch_id"/>
+                        </div>
+                        <footer class="align-items-end">
+                            <div class="d-flex flex-wrap gap-1 text-nowrap">
+                                <field name="user_id" widget="many2one_avatar_user"/>
+                                <field name="activity_ids" widget="kanban_activity"/>
+                            </div>
+                            <field name="state" widget="label_selection"
+                                   options="{'classes': {'draft': 'default', 'rejected': 'danger', 'to_approve': 'warning', 'clarification': 'warning', 'sourcing': 'info', 'approved': 'success', 'po_confirmed': 'success', 'paid': 'success', 'cancelled': 'default'}}"
+                                   class="ms-auto"/>
+                        </footer>
+                    </t>
+                </templates>
+            </kanban>
+        </field>
+    </record>
+
+    <!-- ================================================== Form -->
+    <record id="smartspend_request_view_form" model="ir.ui.view">
+        <field name="name">smartspend.request.form</field>
+        <field name="model">smartspend.request</field>
+        <field name="arch" type="xml">
+            <form string="Purchase Request">
+                <header>
+                    <button name="action_submit" type="object" string="Submit for Approval"
+                            class="oe_highlight" invisible="state not in ('draft', 'cancelled')"/>
+                    <button name="action_approve" type="object" string="Approve"
+                            class="oe_highlight" invisible="state not in ('to_approve', 'clarification')"
+                            groups="smartspend.group_smartspend_manager"/>
+                    <button name="action_request_clarification" type="object" string="Need for Information"
+                            invisible="state != 'to_approve'"
+                            groups="smartspend.group_smartspend_manager"/>
+                    <button name="action_reject" type="object" string="Reject"
+                            invisible="state not in ('to_approve', 'clarification')"
+                            groups="smartspend.group_smartspend_manager"/>
+                    <button name="action_check_contract" type="object" string="Check Rate Contract"
+                            invisible="state in ('rejected', 'paid')"/>
+                    <button name="action_apply_contract_rates" type="object" string="Apply Contract Rates"
+                            invisible="not has_contract or state in ('rejected', 'paid')"/>
+                    <button name="action_start_sourcing" type="object" string="Start Sourcing"
+                            invisible="state not in ('approved', 'to_approve')"/>
+                    <!-- Offered until an order is standing: the portal can mark a
+                         request PO Confirmed on its own, and that request still
+                         needs one — as does a request whose order was cancelled. -->
+                    <button name="action_create_purchase_order" type="object" string="Create Purchase Order"
+                            class="oe_highlight"
+                            invisible="purchase_order_live_count &gt; 0 or state in ('draft', 'rejected')"
+                            groups="smartspend.group_smartspend_buyer"/>
+                    <field name="purchase_order_live_count" invisible="1"/>
+                    <!-- For requests that reached Paid before the bill was raised
+                         automatically: they never crossed the transition that
+                         raises it, so it has to be asked for. -->
+                    <button name="action_post_bill_payment" type="object"
+                            string="Post Bill &amp; Payment"
+                            invisible="not settlement_pending or state != 'paid'"
+                            groups="smartspend.group_smartspend_buyer"/>
+                    <field name="settlement_pending" invisible="1"/>
+                    <button name="action_cancel" type="object" string="Cancel Request"
+                            invisible="state in ('draft', 'cancelled', 'po_confirmed', 'paid')"/>
+                    <button name="action_reset_draft" type="object" string="Reset to Draft"
+                            invisible="state in ('draft', 'paid')"/>
+                    <field name="state" widget="statusbar"
+                           statusbar_visible="draft,to_approve,sourcing,approved,po_confirmed,paid"/>
+                </header>
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button class="oe_stat_button" name="action_view_purchase_orders"
+                                type="object" icon="fa-shopping-cart"
+                                invisible="purchase_order_count == 0">
+                            <field name="purchase_order_count" widget="statinfo" string="Purchase Orders"/>
+                        </button>
+                        <button class="oe_stat_button" name="action_view_contract"
+                                type="object" icon="fa-handshake-o"
+                                invisible="not has_contract">
+                            <div class="o_field_widget o_stat_info">
+                                <span class="o_stat_value"><field name="contract_reference"/></span>
+                                <span class="o_stat_text"><field name="contract_match_label"/></span>
+                            </div>
+                        </button>
+                        <button class="oe_stat_button" name="action_view_attachments"
+                                type="object" icon="fa-paperclip"
+                                invisible="attachment_count == 0">
+                            <field name="attachment_count" widget="statinfo" string="Files"/>
+                        </button>
+                        <field name="has_contract" invisible="1"/>
+                    </div>
+                    <widget name="web_ribbon" title="Rejected" bg_color="text-bg-danger"
+                            invisible="state != 'rejected'"/>
+                    <widget name="web_ribbon" title="Cancelled" bg_color="text-bg-secondary"
+                            invisible="state != 'cancelled'"/>
+                    <div class="oe_title">
+                        <h1><field name="name" readonly="1"/></h1>
+                    </div>
+                    <group>
+                        <group string="Request">
+                            <field name="user_id" widget="many2one_avatar_user"/>
+                            <!-- Creator and requester are not the same thing: a
+                                 buyer may raise a request for somebody else. -->
+                            <field name="create_uid" string="Created by"
+                                   widget="many2one_avatar_user" invisible="not delegated"/>
+                            <field name="delegated" invisible="1"/>
+                            <field name="request_date"/>
+                            <field name="delivery_date"/>
+                            <field name="urgency"/>
+                            <field name="category_id" string="Expense Category" options="{'no_create': True}"/>
+                            <field name="expense_category" string="Category (unmatched)" invisible="category_id"/>
+                            <field name="expense_type"/>
+                            <field name="company_id" groups="base.group_multi_company"/>
+                            <field name="currency_id"/>
+                            <field name="analytic_account_id"/>
+                        </group>
+                        <group string="Sourcing">
+                            <field name="department_id" string="Department" options="{'no_create': True}"/>
+                            <field name="department" string="Department (unmatched)" invisible="department_id"/>
+                            <field name="branch_id" string="Branch" options="{'no_create': True}"/>
+                            <field name="location" string="Branch (unmatched)" invisible="branch_id"/>
+                            <field name="buyer_ref"/>
+                            <!-- Always readable: it is how this spend goes to market
+                                 when no rate card covers it, and a buyer needs to see
+                                 (and change) that on any request, matched or not. -->
+                            <field name="sourcing_method"/>
+                            <field name="partner_id"/>
+                            <field name="vendor_name"/>
+                        </group>
+                    </group>
+                    <group>
+                        <group string="Rate Contract">
+                            <field name="contract_id"
+                                   options="{'no_create': True}"
+                                   domain="[('is_running', '=', True)]"/>
+                            <field name="contract_partner_id" invisible="not has_contract"/>
+                            <field name="contract_coverage" invisible="not has_contract"/>
+                            <!-- The terms being bought under, not just the rate. -->
+                            <field name="contract_category" invisible="not contract_category"/>
+                            <field name="contract_lead_time" invisible="not contract_lead_time"/>
+                            <field name="contract_warranty" invisible="not contract_warranty"/>
+                            <field name="contract_payment_terms" invisible="not contract_payment_terms"/>
+                            <field name="contract_date_end" invisible="not contract_date_end"/>
+                            <div colspan="2" class="alert alert-info mb-0" role="alert"
+                                 invisible="not contract_id or has_contract">
+                                This agreement does not price any of the requested items —
+                                run <b>Check Rate Contract</b> to find one that does.
+                            </div>
+                        </group>
+                        <group string="Budget">
+                            <field name="budget_id"/>
+                            <field name="budget_available" widget="monetary" invisible="not budget_id"/>
+                            <div colspan="2" class="alert alert-warning mb-0" role="alert"
+                                 invisible="not budget_breach">
+                                <field name="budget_breach" invisible="1"/>
+                                This request costs more than its budget has left.
+                            </div>
+                            <div colspan="2" class="text-muted fst-italic" invisible="budget_id">
+                                No running budget covers this department, branch and category.
+                            </div>
+                        </group>
+                        <group string="Value">
+                            <field name="total_cost" widget="monetary"/>
+                            <field name="contract_value" widget="monetary" invisible="not contract_id"/>
+                            <field name="contract_savings" widget="monetary" invisible="not contract_id"/>
+                            <field name="savings" widget="monetary"/>
+                        </group>
+                        <group string="Order Release" invisible="not purchase_order_count">
+                            <field name="po_released"/>
+                            <field name="po_acknowledged"/>
+                        </group>
+                        <group string="Audit" invisible="not submitted_on and not cancelled_on">
+                            <field name="submitted_by_id" invisible="not submitted_on"/>
+                            <field name="submitted_on" invisible="not submitted_on"/>
+                            <field name="cancelled_by_id" invisible="not cancelled_on"/>
+                            <field name="cancelled_on" invisible="not cancelled_on"/>
+                            <field name="cancel_reason" invisible="not cancel_reason"/>
+                        </group>
+                    </group>
+                    <group string="Description">
+                        <field name="description" nolabel="1" colspan="2"
+                               placeholder="What is needed, and why."/>
+                    </group>
+                    <notebook>
+                        <page string="Items" name="items">
+                            <field name="line_ids">
+                                <list editable="bottom">
+                                    <field name="sequence" widget="handle"/>
+                                    <field name="product_name"/>
+                                    <field name="description" optional="show"/>
+                                    <field name="product_id" optional="hide"/>
+                                    <field name="product_category_id" optional="hide"/>
+                                    <field name="product_qty"/>
+                                    <field name="product_uom_id" optional="show"
+                                           options="{'no_create': True}"/>
+                                    <field name="price_unit" widget="monetary"/>
+                                    <field name="on_contract" string="On Contract" optional="show"/>
+                                    <field name="contract_price" widget="monetary" optional="show"/>
+                                    <field name="subtotal" widget="monetary" sum="Total"/>
+                                    <field name="notes" optional="hide"/>
+                                    <field name="currency_id" column_invisible="1"/>
+                                    <field name="company_id" column_invisible="1"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Vendor Bids" name="bids">
+                            <field name="bid_ids">
+                                <list editable="bottom">
+                                    <field name="vendor_name"/>
+                                    <field name="partner_id" optional="hide"/>
+                                    <field name="price" widget="monetary"/>
+                                    <field name="lead_time"/>
+                                    <field name="warranty"/>
+                                    <field name="bid_status"/>
+                                    <field name="currency_id" column_invisible="1"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Timeline" name="timeline">
+                            <field name="history_ids" readonly="1">
+                                <list>
+                                    <field name="event_date"/>
+                                    <field name="title"/>
+                                    <field name="description"/>
+                                    <field name="user_id" widget="many2one_avatar_user"/>
+                                    <field name="state_from" optional="show"/>
+                                    <field name="state_to" optional="show"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Clarifications" name="clarifications">
+                            <field name="comment_ids">
+                                <list editable="bottom">
+                                    <field name="comment_date"/>
+                                    <field name="role"/>
+                                    <field name="text"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Documents" name="documents">
+                            <!-- Names the portal reported, and the files themselves.
+                                 The portal uploads nothing today; a file added here
+                                 or dropped on the chatter is the same ir.attachment. -->
+                            <field name="document_ids">
+                                <list editable="bottom">
+                                    <field name="name"/>
+                                    <field name="attachment_id"/>
+                                </list>
+                            </field>
+                            <separator string="Attached Files"/>
+                            <field name="attachment_ids" widget="many2many_binary"/>
+                        </page>
+                        <page string="Internal Notes" name="notes">
+                            <field name="notes" nolabel="1"
+                                   placeholder="Working notes for the buyer and the approver."/>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <!-- ================================================== Search -->
+    <record id="smartspend_request_view_search" model="ir.ui.view">
+        <field name="name">smartspend.request.search</field>
+        <field name="model">smartspend.request</field>
+        <field name="arch" type="xml">
+            <search string="Purchase Requests">
+                <field name="name" string="Request"
+                       filter_domain="['|', '|', ('name', 'ilike', self), ('product_name', 'ilike', self), ('line_ids.product_name', 'ilike', self)]"/>
+                <field name="user_id"/>
+                <field name="department_id"/>
+                <field name="branch_id"/>
+                <field name="category_id"/>
+                <field name="partner_id"/>
+                <field name="contract_id"/>
+                <field name="budget_id"/>
+                <filter name="my_requests" string="My Requests" domain="[('user_id', '=', uid)]"/>
+                <separator/>
+                <filter name="to_approve" string="Pending Approval" domain="[('state', '=', 'to_approve')]"/>
+                <filter name="clarification" string="Needs Clarification" domain="[('state', '=', 'clarification')]"/>
+                <filter name="sourcing" string="Sourcing" domain="[('state', '=', 'sourcing')]"/>
+                <filter name="approved" string="Approved" domain="[('state', '=', 'approved')]"/>
+                <filter name="cancelled" string="Cancelled" domain="[('state', '=', 'cancelled')]"/>
+                <separator/>
+                <filter name="urgent" string="High Urgency" domain="[('urgency', '=', 'high')]"/>
+                <separator/>
+                <filter name="direct" string="Negotiation" domain="[('sourcing_method', '=', 'direct')]"/>
+                <filter name="rfq" string="Multi RFQ" domain="[('sourcing_method', '=', 'rfq')]"/>
+                <filter name="auction" string="Bidding" domain="[('sourcing_method', '=', 'auction')]"/>
+                <filter name="with_contract" string="On a Rate Contract" domain="[('contract_id', '!=', False)]"/>
+                <filter name="without_contract" string="No Rate Contract" domain="[('contract_id', '=', False)]"/>
+                <filter name="capex" string="CapEx" domain="[('expense_type', '=', 'capex')]"/>
+                <filter name="opex" string="OpEx" domain="[('expense_type', '=', 'opex')]"/>
+                <separator/>
+                <filter name="filter_request_date" string="Requested On" date="request_date"/>
+                <group>
+                    <filter name="group_state" string="Status" context="{'group_by': 'state'}"/>
+                    <filter name="group_user" string="Requester" context="{'group_by': 'user_id'}"/>
+                    <filter name="group_department" string="Department" context="{'group_by': 'department_id'}"/>
+                    <filter name="group_location" string="Branch" context="{'group_by': 'branch_id'}"/>
+                    <filter name="group_category" string="Expense Category" context="{'group_by': 'category_id'}"/>
+                    <filter name="group_expense_type" string="CapEx / OpEx" context="{'group_by': 'expense_type'}"/>
+                    <filter name="group_sourcing" string="Contract Method" context="{'group_by': 'sourcing_method'}"/>
+                    <filter name="group_contract" string="Rate Contract" context="{'group_by': 'contract_id'}"/>
+                    <filter name="group_date" string="Requested On" context="{'group_by': 'request_date'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- ================================================== Action -->
+    <record id="smartspend_request_action" model="ir.actions.act_window">
+        <field name="name">Purchase Requests</field>
+        <field name="res_model">smartspend.request</field>
+        <field name="view_mode">list,kanban,form</field>
+        <field name="search_view_id" ref="smartspend_request_view_search"/>
+        <field name="context">{'search_default_group_state': 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                No purchase request yet
+            </p>
+            <p>
+                Requests raised in the SmartSpend portal land here, with their
+                items, vendor bids and matched rate contract.
+            </p>
+        </field>
+    </record>
+
+    <record id="smartspend_request_action_to_approve" model="ir.actions.act_window">
+        <field name="name">To Approve</field>
+        <field name="res_model">smartspend.request</field>
+        <field name="view_mode">list,kanban,form</field>
+        <field name="search_view_id" ref="smartspend_request_view_search"/>
+        <field name="domain">[('state', 'in', ('to_approve', 'clarification'))]</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Nothing waiting on you
+            </p>
+            <p>Requests submitted for approval show up here.</p>
+        </field>
+    </record>
+
+</odoo>

@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="smartspend_budget_view_list" model="ir.ui.view">
+        <field name="name">smartspend.budget.list</field>
+        <field name="model">smartspend.budget</field>
+        <field name="arch" type="xml">
+            <list string="Budgets"
+                  decoration-danger="available_amount &lt; 0"
+                  decoration-warning="consumed_percent &gt;= 80 and available_amount &gt;= 0"
+                  decoration-muted="state == 'closed'">
+                <field name="name"/>
+                <field name="department_id"/>
+                <field name="branch_id" optional="show"/>
+                <field name="category_id" optional="show"/>
+                <field name="date_start"/>
+                <field name="date_end"/>
+                <field name="allocated_amount" sum="Allocated" widget="monetary"/>
+                <field name="committed_amount" widget="monetary" optional="show"/>
+                <field name="ordered_amount" widget="monetary" optional="show"/>
+                <field name="available_amount" widget="monetary"/>
+                <field name="consumed_percent" string="Used (%)" widget="progressbar"/>
+                <field name="currency_id" column_invisible="1"/>
+                <field name="state" widget="badge"
+                       decoration-success="state == 'confirmed'"
+                       decoration-muted="state == 'closed'"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="smartspend_budget_view_form" model="ir.ui.view">
+        <field name="name">smartspend.budget.form</field>
+        <field name="model">smartspend.budget</field>
+        <field name="arch" type="xml">
+            <form string="Budget">
+                <header>
+                    <button name="action_confirm" type="object" string="Confirm"
+                            class="oe_highlight" invisible="state != 'draft'"/>
+                    <button name="action_close" type="object" string="Close"
+                            invisible="state != 'confirmed'"/>
+                    <button name="action_reset_draft" type="object" string="Reset to Draft"
+                            invisible="state == 'draft'"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,confirmed,closed"/>
+                </header>
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button class="oe_stat_button" name="action_view_requests"
+                                type="object" icon="fa-file-text-o" invisible="request_count == 0">
+                            <field name="request_count" widget="statinfo" string="Requests"/>
+                        </button>
+                    </div>
+                    <widget name="web_ribbon" title="Over Budget" bg_color="text-bg-danger"
+                            invisible="available_amount &gt;= 0"/>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1><field name="name" placeholder="e.g. IT &amp; Infrastructure — FY26"/></h1>
+                    </div>
+                    <group>
+                        <group string="Scope">
+                            <field name="department_id" options="{'no_create': True}"/>
+                            <field name="branch_id" options="{'no_create': True}"/>
+                            <field name="category_id" options="{'no_create': True}"/>
+                            <span class="text-muted fst-italic" colspan="2">
+                                Leave a line empty to cover every value of it.
+                            </span>
+                        </group>
+                        <group string="Period">
+                            <field name="date_start"/>
+                            <field name="date_end"/>
+                            <field name="is_running"/>
+                            <field name="company_id" groups="base.group_multi_company"/>
+                            <field name="currency_id" invisible="1"/>
+                        </group>
+                    </group>
+                    <group>
+                        <group string="Envelope">
+                            <field name="allocated_amount" widget="monetary"/>
+                            <field name="committed_amount" widget="monetary"/>
+                            <field name="ordered_amount" widget="monetary"/>
+                        </group>
+                        <group string="Position">
+                            <field name="consumed_amount" widget="monetary"/>
+                            <field name="available_amount" widget="monetary"
+                                   decoration-danger="available_amount &lt; 0"/>
+                            <field name="consumed_percent" widget="progressbar"/>
+                        </group>
+                    </group>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="smartspend_budget_view_search" model="ir.ui.view">
+        <field name="name">smartspend.budget.search</field>
+        <field name="model">smartspend.budget</field>
+        <field name="arch" type="xml">
+            <search string="Budgets">
+                <field name="name"/>
+                <field name="department_id"/>
+                <field name="branch_id"/>
+                <field name="category_id"/>
+                <filter name="running" string="Running" domain="[('is_running', '=', True)]"/>
+                <filter name="draft" string="Draft" domain="[('state', '=', 'draft')]"/>
+                <separator/>
+                <filter name="overspent" string="Over Budget" domain="[('available_amount', '&lt;', 0)]"/>
+                <group>
+                    <filter name="group_department" string="Department" context="{'group_by': 'department_id'}"/>
+                    <filter name="group_branch" string="Branch" context="{'group_by': 'branch_id'}"/>
+                    <filter name="group_category" string="Category" context="{'group_by': 'category_id'}"/>
+                    <filter name="group_state" string="Status" context="{'group_by': 'state'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="smartspend_budget_action" model="ir.actions.act_window">
+        <field name="name">Budgets</field>
+        <field name="res_model">smartspend.budget</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="smartspend_budget_view_search"/>
+        <field name="context">{'search_default_running': 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Set your first budget</p>
+            <p>
+                Every incoming request is matched against the narrowest budget
+                covering its department, branch and category — and flagged before
+                it reaches an approver if it would break it.
+            </p>
+        </field>
+    </record>
+
+</odoo>

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="smartspend_request_cancel_view_form" model="ir.ui.view">
+        <field name="name">smartspend.request.cancel.form</field>
+        <field name="model">smartspend.request.cancel</field>
+        <field name="arch" type="xml">
+            <form string="Cancel Purchase Request">
+                <p class="text-muted">
+                    The request is kept, with everything on it. Say why it is being
+                    withdrawn — the reason is recorded on its timeline.
+                </p>
+                <group>
+                    <field name="request_ids" widget="many2many_tags" readonly="1"/>
+                    <field name="reason" placeholder="e.g. Ordered under an existing contract instead."/>
+                </group>
+                <footer>
+                    <button name="action_confirm" type="object" string="Cancel Request"
+                            class="btn-primary" data-hotkey="q"/>
+                    <button string="Keep It" class="btn-secondary" special="cancel" data-hotkey="x"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+</odoo>

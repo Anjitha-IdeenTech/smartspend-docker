@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="module_category_smartspend" model="ir.module.category">
+        <field name="name">SmartSpend</field>
+        <field name="description">Access to the SmartSpend procurement copilot.</field>
+        <field name="sequence">20</field>
+    </record>
+
+    <record id="res_groups_privilege_smartspend" model="res.groups.privilege">
+        <field name="name">SmartSpend</field>
+        <field name="sequence">20</field>
+        <field name="category_id" ref="module_category_smartspend"/>
+        <field name="placeholder">No access</field>
+    </record>
+
+    <record id="group_smartspend_user" model="res.groups">
+        <field name="name">Requester</field>
+        <field name="sequence">10</field>
+        <field name="privilege_id" ref="res_groups_privilege_smartspend"/>
+        <field name="implied_ids" eval="[Command.link(ref('base.group_user'))]"/>
+        <field name="comment">Raise purchase requests and follow their own ones.</field>
+    </record>
+
+    <!-- A buyer sources requests and raises the orders, so they carry the Odoo
+         purchase role as well; a requester deliberately does not. -->
+    <record id="group_smartspend_buyer" model="res.groups">
+        <field name="name">SCM Buyer</field>
+        <field name="sequence">20</field>
+        <field name="privilege_id" ref="res_groups_privilege_smartspend"/>
+        <field name="implied_ids" eval="[
+            Command.link(ref('group_smartspend_user')),
+            Command.link(ref('purchase.group_purchase_user')),
+        ]"/>
+        <field name="comment">Source every request, maintain rate contracts and raise purchase orders.</field>
+    </record>
+
+    <record id="group_smartspend_manager" model="res.groups">
+        <field name="name">Procurement Manager</field>
+        <field name="sequence">30</field>
+        <field name="privilege_id" ref="res_groups_privilege_smartspend"/>
+        <field name="implied_ids" eval="[
+            Command.link(ref('group_smartspend_buyer')),
+            Command.link(ref('purchase.group_purchase_manager')),
+        ]"/>
+        <field name="user_ids" eval="[Command.link(ref('base.user_root')), Command.link(ref('base.user_admin'))]"/>
+        <field name="comment">Approve requests, and reset the demo data through the portal API.</field>
+    </record>
+
+    <!-- An external supplier signing in to quote. It implies the requester group
+         only so the portal API authenticates and the record rules apply; it
+         grants nothing of its own, and the "own requests" rule below means a
+         vendor account reads no other company's requests. -->
+    <record id="group_smartspend_vendor" model="res.groups">
+        <field name="name">Vendor (External)</field>
+        <field name="sequence">5</field>
+        <field name="privilege_id" ref="res_groups_privilege_smartspend"/>
+        <field name="implied_ids" eval="[Command.link(ref('group_smartspend_user'))]"/>
+        <field name="comment">External supplier: quote against RFQs shared with them.</field>
+    </record>
+
+    <!-- A requester sees the requests they raised; buyers and managers see all. -->
+    <record id="rule_smartspend_request_own" model="ir.rule">
+        <field name="name">SmartSpend: own purchase requests</field>
+        <field name="model_id" ref="model_smartspend_request"/>
+        <field name="domain_force">[('user_id', '=', user.id)]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_user'))]"/>
+    </record>
+
+    <record id="rule_smartspend_request_all" model="ir.rule">
+        <field name="name">SmartSpend: all purchase requests</field>
+        <field name="model_id" ref="model_smartspend_request"/>
+        <field name="domain_force">[(1, '=', 1)]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_buyer'))]"/>
+    </record>
+
+    <!-- The child records inherit the visibility of the request they hang off.
+         Without these, a requester who may only see their own requests could
+         still read every line, bid and timeline entry in the database. -->
+    <record id="rule_smartspend_request_line_own" model="ir.rule">
+        <field name="name">SmartSpend: own request lines</field>
+        <field name="model_id" ref="model_smartspend_request_line"/>
+        <field name="domain_force">[('request_id.user_id', '=', user.id)]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_user'))]"/>
+    </record>
+    <record id="rule_smartspend_request_line_all" model="ir.rule">
+        <field name="name">SmartSpend: all request lines</field>
+        <field name="model_id" ref="model_smartspend_request_line"/>
+        <field name="domain_force">[(1, '=', 1)]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_buyer'))]"/>
+    </record>
+
+    <record id="rule_smartspend_request_bid_own" model="ir.rule">
+        <field name="name">SmartSpend: own request bids</field>
+        <field name="model_id" ref="model_smartspend_request_bid"/>
+        <field name="domain_force">[('request_id.user_id', '=', user.id)]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_user'))]"/>
+    </record>
+    <record id="rule_smartspend_request_bid_all" model="ir.rule">
+        <field name="name">SmartSpend: all request bids</field>
+        <field name="model_id" ref="model_smartspend_request_bid"/>
+        <field name="domain_force">[(1, '=', 1)]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_buyer'))]"/>
+    </record>
+
+    <record id="rule_smartspend_request_history_own" model="ir.rule">
+        <field name="name">SmartSpend: own request timeline</field>
+        <field name="model_id" ref="model_smartspend_request_history"/>
+        <field name="domain_force">[('request_id.user_id', '=', user.id)]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_user'))]"/>
+    </record>
+    <record id="rule_smartspend_request_history_all" model="ir.rule">
+        <field name="name">SmartSpend: all request timelines</field>
+        <field name="model_id" ref="model_smartspend_request_history"/>
+        <field name="domain_force">[(1, '=', 1)]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_buyer'))]"/>
+    </record>
+
+    <record id="rule_smartspend_request_comment_own" model="ir.rule">
+        <field name="name">SmartSpend: own clarifications</field>
+        <field name="model_id" ref="model_smartspend_request_comment"/>
+        <field name="domain_force">[('request_id.user_id', '=', user.id)]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_user'))]"/>
+    </record>
+    <record id="rule_smartspend_request_comment_all" model="ir.rule">
+        <field name="name">SmartSpend: all clarifications</field>
+        <field name="model_id" ref="model_smartspend_request_comment"/>
+        <field name="domain_force">[(1, '=', 1)]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_buyer'))]"/>
+    </record>
+
+    <record id="rule_smartspend_request_document_own" model="ir.rule">
+        <field name="name">SmartSpend: own request documents</field>
+        <field name="model_id" ref="model_smartspend_request_document"/>
+        <field name="domain_force">[('request_id.user_id', '=', user.id)]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_user'))]"/>
+    </record>
+    <record id="rule_smartspend_request_document_all" model="ir.rule">
+        <field name="name">SmartSpend: all request documents</field>
+        <field name="model_id" ref="model_smartspend_request_document"/>
+        <field name="domain_force">[(1, '=', 1)]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_buyer'))]"/>
+    </record>
+
+    <record id="rule_smartspend_request_company" model="ir.rule">
+        <field name="name">SmartSpend: request multi-company</field>
+        <field name="model_id" ref="model_smartspend_request"/>
+        <field name="domain_force">['|', ('company_id', '=', False), ('company_id', 'in', company_ids)]</field>
+        <field name="global" eval="True"/>
+    </record>
+
+    <record id="rule_smartspend_contract_company" model="ir.rule">
+        <field name="name">SmartSpend: contract multi-company</field>
+        <field name="model_id" ref="model_smartspend_contract"/>
+        <field name="domain_force">['|', ('company_id', '=', False), ('company_id', 'in', company_ids)]</field>
+        <field name="global" eval="True"/>
+    </record>
+
+</odoo>
