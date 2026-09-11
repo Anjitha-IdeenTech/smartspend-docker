@@ -3579,6 +3579,24 @@ export default function App() {
                   <FileSpreadsheet className="h-5 w-5" />
                 </button>
               )}
+
+              {/* Signing out is how you change role, so it has to be reachable
+                  folded too. Pushed to the foot of the rail, where it sits when
+                  the sidebar is open. */}
+              <button
+                onClick={async () => {
+                  setActiveScene(1);
+                  await signOut();
+                  setLoginEmail("");
+                  setLoginPassword("");
+                  setAuthError("");
+                }}
+                title="Sign out"
+                aria-label="Sign out"
+                className="mt-auto grid h-10 w-10 place-items-center rounded-xl border border-borderTheme bg-secondary text-textSecondary hover:text-primary transition-all"
+              >
+                <PanelLeftClose className="h-4 w-4" />
+              </button>
             </aside>
           )}
 
