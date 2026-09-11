@@ -2667,12 +2667,28 @@ export default function App() {
   // Master Data Console rows (#16). Odoo's feed when it answers, the same
   // fallback lists the dropdowns use otherwise — so the console and the request
   // form can never show different records.
-  const branchRows = masterData?.branches.length
+  /**
+   * Records created in this console.
+   *
+   * Held here rather than written to Odoo: there is no portal endpoint that
+   * creates master data, and the demo needs to show a master being added
+   * without a backend behind it. The panel says so, the same way the workflow
+   * editor does — a console that silently discards what you typed is worse
+   * than one that admits where it kept it.
+   */
+  const [addedMasters, setAddedMasters] = useState<{
+    products: MasterProduct[]; categories: MasterCategory[];
+    branches: { name: string; code: string; city: string }[];
+    vendors: MasterVendor[]; companies: Company[];
+  }>({ products: [], categories: [], branches: [], vendors: [], companies: [] });
+  // Which master is being added to, and what has been typed so far.
+  const [masterForm, setMasterForm] = useState<{ kind: string; values: Record<string, string> } | null>(null);
+  const branchRows = [...addedMasters.branches, ...(masterData?.branches.length
     ? masterData.branches.map(b => ({ name: b.name, code: b.code || '—', city: b.city || '—' }))
     : FALLBACK_BRANCHES.map((n, i) => ({
         name: n, code: `BR-${String(i + 1).padStart(3, '0')}`,
         city: n.replace(/\s+(Head\s+)?Office$/i, ''),
-      }));
+      })))];
   const departmentRows = masterData?.departments.length
     ? masterData.departments.map(d => ({ name: d.name, code: d.code || '—', approver: d.approver || 'Not set' }))
     : FALLBACK_DEPARTMENTS.map((n, i) => ({ name: n, code: `DEP-${String(i + 1).padStart(3, '0')}`, approver: 'Reporting Manager' }));
@@ -2717,8 +2733,6 @@ export default function App() {
         };
       })
     : MASTER_CATEGORIES;
-
-
   // SCM Buyer Portal Local States
   const [scmTab, setScmTab] = useState<'requests' | 'bidding' | 'discovery'>('requests');
   const [discoveredVendors, setDiscoveredVendors] = useState<Array<{ name: string; category: string; rating: number; score: number; registered: boolean; id?: string }>>([]);
@@ -2739,7 +2753,95 @@ export default function App() {
   const [draftToast, setDraftToast] = useState<string>("");
   // Two-step guard on the destructive reset, so it can never be a stray click.
   const [resetArmed, setResetArmed] = useState<boolean>(false);
-  const vendorRows: MasterVendor[] = [...promotedVendors, ...MASTER_VENDORS];
+  const vendorRows: MasterVendor[] = [...addedMasters.vendors, ...promotedVendors, ...MASTER_VENDORS];
+  const productRows: MasterProduct[] = [...addedMasters.products, ...MASTER_PRODUCTS];
+  const companyRows: Company[] = [...addedMasters.companies, ...COMPANIES];
+  const allCategoryRows: MasterCategory[] = [...addedMasters.categories, ...categoryRows];
+
+  /**
+   * What each master asks for when adding a record.
+   *
+   * One spec instead of six forms: the fields differ, the panel does not, so a
+   * new master needs a row here rather than another dialog.
+   */
+  const MASTER_FORMS: Record<string, { label: string; fields: { k: string; l: string; type?: 'number'; opts?: string[] }[] }> = {
+    products: { label: 'product', fields: [
+      { k: 'name', l: 'Product name' },
+      { k: 'code', l: 'Code' },
+      { k: 'category', l: 'Category', opts: allCategoryRows.map(c => c.name) },
+      { k: 'uom', l: 'Unit', opts: ['Unit', 'Set', 'Licence', 'Box', 'Service'] },
+      { k: 'contract', l: 'Contract rate (₹)', type: 'number' },
+      { k: 'vendor', l: 'Vendor', opts: vendorRows.map(v => v.name) },
+    ]},
+    categories: { label: 'expense category', fields: [
+      { k: 'name', l: 'Category name' },
+      { k: 'expenseType', l: 'Expense type', opts: ['CapEx', 'OpEx'] },
+      { k: 'glCode', l: 'GL code' },
+      { k: 'limit', l: 'Approval limit (₹)', type: 'number' },
+      { k: 'owner', l: 'Owning department', opts: departmentRows.map(d => d.name) },
+    ]},
+    branches: { label: 'branch', fields: [
+      { k: 'name', l: 'Branch name' },
+      { k: 'code', l: 'Code' },
+      { k: 'city', l: 'City' },
+    ]},
+    vendors: { label: 'vendor', fields: [
+      { k: 'name', l: 'Vendor name' },
+      { k: 'category', l: 'Category', opts: allCategoryRows.map(c => c.name) },
+      { k: 'code', l: 'Vendor code' },
+      { k: 'terms', l: 'Payment terms', opts: ['Net 15', 'Net 30', 'Net 45', 'Advance 20% / Net 30'] },
+      { k: 'rating', l: 'Rating (0–5)', type: 'number' },
+      { k: 'since', l: 'Vendor since' },
+    ]},
+    company: { label: 'company', fields: [
+      { k: 'name', l: 'Registered name' },
+      { k: 'short', l: 'Short name' },
+      { k: 'gstin', l: 'GSTIN' },
+      { k: 'cin', l: 'CIN' },
+      { k: 'state', l: 'Registered state' },
+    ]},
+  };
+
+  /** Store what was typed, as the row shape that master renders. */
+  const saveMasterRecord = () => {
+    if (!masterForm) return;
+    const v = masterForm.values;
+    const name = (v.name || '').trim();
+    if (!name) return;
+    const num = (x?: string) => Number(x) || 0;
+    setAddedMasters(prev => {
+      switch (masterForm.kind) {
+        case 'products': return { ...prev, products: [{
+          code: (v.code || `PRD-NEW-${prev.products.length + 1}`).trim(), name,
+          category: v.category || allCategoryRows[0]?.name || '—', uom: v.uom || 'Unit',
+          contract: num(v.contract), vendor: v.vendor || '—',
+          onContract: num(v.contract) > 0,
+        }, ...prev.products] };
+        case 'categories': return { ...prev, categories: [{
+          name, expenseType: v.expenseType || 'OpEx', glCode: v.glCode || '—',
+          limit: num(v.limit), owner: v.owner || '—',
+        }, ...prev.categories] };
+        case 'branches': return { ...prev, branches: [{
+          name, code: (v.code || `BR-NEW-${prev.branches.length + 1}`).trim(),
+          city: v.city || name.replace(/\s+(Head\s+)?Office$/i, ''),
+        }, ...prev.branches] };
+        case 'vendors': return { ...prev, vendors: [{
+          name, category: v.category || allCategoryRows[0]?.name || '—',
+          rating: Math.min(5, num(v.rating)), code: (v.code || `VEN-NEW-${prev.vendors.length + 1}`).trim(),
+          terms: v.terms || 'Net 30', since: v.since || String(new Date().getFullYear()),
+          status: 'Active', origin: 'Onboarded',
+        }, ...prev.vendors] };
+        case 'company': return { ...prev, companies: [{
+          name, short: v.short || name, gstin: v.gstin || '—', cin: v.cin || '—',
+          state: v.state || '—', branches: [],
+        }, ...prev.companies] };
+        default: return prev;
+      }
+    });
+    setMasterForm(null);
+  };
+
+
   const pendingDrafts = AI_DRAFT_VENDORS.filter(d => !draftDecisions[d.id]);
 
   /** Promote an AI-discovered draft into the approved vendor master. */
@@ -7057,8 +7159,8 @@ export default function App() {
                     title="Master Data"
                     subtitle="The reference records every request, contract and purchase order is built on."
                     stats={[
-                      { label: 'Products', value: String(MASTER_PRODUCTS.length) },
-                      { label: 'Categories', value: String(categoryRows.length) },
+                      { label: 'Products', value: String(productRows.length) },
+                      { label: 'Categories', value: String(allCategoryRows.length) },
                       { label: 'Vendors', value: String(vendorRows.length) },
                       { label: 'Branches', value: String(branchRows.length) },
                     ]}
@@ -7068,10 +7170,10 @@ export default function App() {
                   <div className="p-2 rounded-2xl bg-surface border border-borderTheme shadow-sm">
                     <div className="flex items-center gap-1.5 overflow-x-auto">
                       {([
-                        { key: 'products', label: 'Products', icon: Package, count: MASTER_PRODUCTS.length },
-                        { key: 'categories', label: 'Expense Categories', icon: Layers, count: categoryRows.length },
+                        { key: 'products', label: 'Products', icon: Package, count: productRows.length },
+                        { key: 'categories', label: 'Expense Categories', icon: Layers, count: allCategoryRows.length },
                         { key: 'workflow', label: 'Workflow', icon: Activity, count: configuredWorkflows.length || MASTER_WORKFLOW.length },
-                        { key: 'company', label: 'Companies', icon: Landmark, count: COMPANIES.length },
+                        { key: 'company', label: 'Companies', icon: Landmark, count: companyRows.length },
                         { key: 'branches', label: 'Branches', icon: Building2, count: branchRows.length },
                         { key: 'vendors', label: 'Vendors', icon: Handshake, count: vendorRows.length },
                       ] as const).map(t => {
@@ -7110,6 +7212,17 @@ export default function App() {
                           className="w-full bg-surface border border-borderTheme rounded-xl pl-9 pr-3 py-2 text-xs text-textPrimary focus:outline-none focus:border-brand"
                         />
                       </div>
+                      {/* One button for every master: which one it adds to
+                          follows the open tab, so a new master needs a field
+                          spec rather than another control. */}
+                      {MASTER_FORMS[mastersTab] && (
+                        <button
+                          onClick={() => setMasterForm({ kind: mastersTab, values: {} })}
+                          className="px-3 py-2 rounded-xl bg-brand text-onbrand text-xs font-bold hover:brightness-110 transition-all"
+                        >
+                          New {MASTER_FORMS[mastersTab].label}
+                        </button>
+                      )}
                       <span className="text-[11px] text-textFaint">
                         {masterData ? 'Live from Odoo' : 'Offline fallback list — Odoo not reachable'}
                       </span>
@@ -7129,7 +7242,7 @@ export default function App() {
                             </tr>
                           </thead>
                           <tbody>
-                            {MASTER_PRODUCTS
+                            {productRows
                               .filter(p => `${p.code} ${p.name} ${p.category} ${p.vendor}`.toLowerCase().includes(masterSearch.toLowerCase()))
                               .map(p => (
                                 <tr key={p.code} className="border-t border-borderTheme hover:bg-secondary/60 transition-colors">
@@ -7161,7 +7274,7 @@ export default function App() {
                   {/* ---------- EXPENSE CATEGORIES ---------- */}
                   {mastersTab === 'categories' && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {categoryRows
+                      {allCategoryRows
                         .filter(c => `${c.name} ${c.expenseType} ${c.glCode}`.toLowerCase().includes(masterSearch.toLowerCase()))
                         .map(c => {
                           const capex = /cap/i.test(c.expenseType);
@@ -7326,7 +7439,7 @@ export default function App() {
                   {/* ---------- COMPANY ---------- */}
                   {mastersTab === 'company' && (
                     <div className="space-y-4">
-                      {COMPANIES
+                      {companyRows
                         .filter(c => `${c.name} ${c.gstin} ${c.cin} ${c.state}`
                           .toLowerCase().includes(masterSearch.toLowerCase()))
                         .map((c, i) => (
@@ -7380,6 +7493,70 @@ export default function App() {
                         A request is raised for a branch, so its company — and the GSTIN on its
                         purchase order and goods receipt — follows from that branch.
                       </p>
+                    </div>
+                  )}
+
+                  {/* Adding a record to whichever master is open. One panel
+                      for all of them; the fields come from MASTER_FORMS. */}
+                  {masterForm && MASTER_FORMS[masterForm.kind] && (
+                    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 backdrop-blur-sm p-4 sm:p-8">
+                      <div className="w-full max-w-lg rounded-2xl bg-surface border border-borderTheme shadow-xl my-auto">
+                        <div className="flex items-center justify-between px-6 py-4 border-b border-borderTheme">
+                          <h3 className="font-outfit font-extrabold text-lg text-textPrimary">
+                            New {MASTER_FORMS[masterForm.kind].label}
+                          </h3>
+                          <button onClick={() => setMasterForm(null)}
+                                  className="p-1.5 rounded-lg text-textFaint hover:text-textPrimary hover:bg-secondary transition-all">
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+
+                        <div className="px-6 py-5 space-y-4">
+                          {MASTER_FORMS[masterForm.kind].fields.map(f => (
+                            <div key={f.k}>
+                              <label className="text-[10px] font-bold uppercase tracking-wider text-textFaint block mb-1.5">
+                                {f.l}
+                              </label>
+                              {f.opts ? (
+                                <select
+                                  value={masterForm.values[f.k] ?? ''}
+                                  onChange={e => setMasterForm({ ...masterForm, values: { ...masterForm.values, [f.k]: e.target.value } })}
+                                  className="w-full text-sm px-3 py-2 bg-secondary border border-borderTheme rounded-lg text-textPrimary focus:outline-none focus:border-brand"
+                                >
+                                  <option value="">Choose…</option>
+                                  {f.opts.map(o => <option key={o} value={o}>{o}</option>)}
+                                </select>
+                              ) : (
+                                <input
+                                  type={f.type === 'number' ? 'number' : 'text'}
+                                  value={masterForm.values[f.k] ?? ''}
+                                  onChange={e => setMasterForm({ ...masterForm, values: { ...masterForm.values, [f.k]: e.target.value } })}
+                                  className="w-full text-sm px-3 py-2 bg-secondary border border-borderTheme rounded-lg text-textPrimary focus:outline-none focus:border-brand"
+                                />
+                              )}
+                            </div>
+                          ))}
+                          <p className="text-[11px] text-textFaint bg-secondary/60 border border-borderTheme rounded-lg px-3 py-2">
+                            Saved in this browser for the demo. Odoo's master data is unchanged —
+                            set it there under Configuration.
+                          </p>
+                        </div>
+
+                        <div className="flex justify-end gap-2 px-6 py-4 border-t border-borderTheme">
+                          <button onClick={() => setMasterForm(null)}
+                                  className="px-4 py-2 rounded-lg border border-borderTheme bg-secondary text-xs font-bold text-textSecondary hover:text-textPrimary transition-all">
+                            Cancel
+                          </button>
+                          <button
+                            onClick={saveMasterRecord}
+                            disabled={!(masterForm.values.name || '').trim()}
+                            title={!(masterForm.values.name || '').trim() ? 'A name is required' : undefined}
+                            className="px-4 py-2 rounded-lg bg-brand text-onbrand text-xs font-bold hover:brightness-110 disabled:opacity-50 transition-all"
+                          >
+                            Save {MASTER_FORMS[masterForm.kind].label}
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   )}
 
