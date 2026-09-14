@@ -3622,37 +3622,6 @@ export default function App() {
                 </button>
               </form>
 
-              <div className="space-y-4 pt-4 border-t border-borderTheme/50">
-                <div className="relative flex pb-2 items-center">
-                  <div className="flex-grow border-t border-borderTheme"></div>
-                  <span className="flex-shrink mx-4 text-textFaint text-xs font-semibold uppercase tracking-wider">Odoo Connection Settings</span>
-                  <div className="flex-grow border-t border-borderTheme"></div>
-                </div>
-                <div>
-                  <label className="block text-[11px] font-bold uppercase tracking-wider text-textSecondary mb-2">Odoo Backend URL</label>
-                  <div className="flex gap-2">
-                    <input 
-                      type="text" 
-                      value={odooApiUrl} 
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setOdooApiUrl(val);
-                        try { localStorage.setItem("odooApiUrl", val); } catch {}
-                      }} 
-                      placeholder="http://127.0.0.1:8019"
-                      className="flex-grow text-xs px-3 py-2 bg-secondary/30 border border-borderTheme rounded-lg text-textPrimary focus:outline-none focus:border-brand transition-all"
-                    />
-                    <div className={`h-8 w-8 rounded-lg flex items-center justify-center border transition-all ${
-                      offlineDemo ? 'bg-gold/15 border-gold/30 text-gold'
-                        : odooConnected ? 'bg-pos/15 border-pos/30 text-pos'
-                          : 'bg-neg/15 border-neg/30 text-neg'}`}
-                      title={offlineDemo ? "Demo mode — sample data, nothing is saved"
-                        : odooConnected ? "Connected to Odoo" : "Odoo not reachable"}>
-                      <div className={`h-2.5 w-2.5 rounded-full ${odooConnected ? 'bg-pos animate-pulse' : 'bg-neg'}`} />
-                    </div>
-                  </div>
-                </div>
-              </div>
             </div>
           </div>
         </div>
