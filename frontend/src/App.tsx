@@ -297,6 +297,18 @@ const STATUS_META: Record<string, { color: string; rgb: string; short: string; i
   'Rejected': { color: '#DB3A4B', rgb: '219 58 75', short: 'Rejected', icon: X },
   'Paid': { color: '#7A63A8', rgb: '122 99 168', short: 'Paid', icon: Landmark },
 };
+/**
+ * Every status a request passes through, in the order it passes through them.
+ *
+ * The summary lists all of them, including stages nothing is sitting in, so a
+ * requester sees the whole journey from raising to payment rather than only
+ * the three buckets the statuses used to be collapsed into.
+ */
+const STATUS_JOURNEY = [
+  'Draft', 'Pending Approval', 'Needs Clarification', 'Sourcing',
+  'Approved', 'PO Confirmed', 'Paid', 'Rejected', 'Cancelled',
+];
+
 const statusColor = (s: string) => STATUS_META[s]?.color ?? '#64748B';
 const statusRgb = (s: string) => STATUS_META[s]?.rgb ?? '100 116 139';
 
@@ -434,12 +446,12 @@ const chainSigned = (r: RequestItem) =>
 const filterRequests = (list: RequestItem[], statusKey: string, search: string) => {
   const q = search.trim().toLowerCase();
   return newestFirst(list.filter(r => {
-    if (statusKey !== 'all' && groupOf(r.status) !== statusKey) return false;
+    if (statusKey !== 'all' && r.status !== statusKey) return false;
     return !q || requestHaystack(r).includes(q);
   }));
 };
 
-// The three coloured status filter dots (+ an "All" reset), shared across tabs.
+// One chip per status (+ an "All" reset), shared across tabs.
 /**
  * Why a step is not offered here, and what to do about it.
  *
@@ -456,31 +468,36 @@ function StepLock({ what }: { what: string }) {
 }
 
 function StatusDots({ value, onChange, requests }: {
-  value: 'all' | 'action' | 'progress' | 'done';
-  onChange: (v: 'all' | 'action' | 'progress' | 'done') => void;
+  value: string;
+  onChange: (v: string) => void;
   requests: RequestItem[];
 }) {
   return (
-    <div className="flex items-center gap-1 rounded-full bg-surface border border-borderTheme px-1.5 py-1 shadow-sm">
+    <div className="flex items-center gap-1 flex-wrap rounded-2xl bg-surface border border-borderTheme px-1.5 py-1 shadow-sm">
       <button
         onClick={() => onChange('all')}
         title="Show all requests"
-        className={`px-2.5 py-1 rounded-full text-[11px] font-bold transition-all ${value === 'all' ? 'bg-secondary text-textPrimary' : 'text-textFaint hover:text-textPrimary'}`}
+        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold transition-all ${value === 'all' ? 'bg-secondary text-textPrimary' : 'text-textFaint hover:text-textPrimary'}`}
       >
-        All
+        All <span className="tabular-nums">{requests.length}</span>
       </button>
-      {STATUS_GROUPS.map(g => {
-        const active = value === g.key;
-        const count = requests.filter(r => groupOf(r.status) === g.key).length;
+      {STATUS_JOURNEY.map(status => {
+        const active = value === status;
+        const count = requests.filter(r => r.status === status).length;
+        const color = statusColor(status);
+        const rgb = statusRgb(status);
         return (
           <button
-            key={g.key}
-            onClick={() => onChange(active ? 'all' : g.key)}
-            title={`${g.label} · ${count} request${count === 1 ? '' : 's'}`}
-            className="flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-bold transition-all"
-            style={active ? { background: `rgb(${g.rgb} / 0.12)`, color: g.color } : { color: 'rgb(var(--text-faint))' }}
+            key={status}
+            onClick={() => onChange(active ? 'all' : status)}
+            title={`${status} · ${count} request${count === 1 ? '' : 's'}`}
+            className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-bold transition-all hover:opacity-100 ${
+              count === 0 && !active ? 'opacity-40' : ''}`}
+            style={active ? { background: `rgb(${rgb} / 0.12)`, color } : { color: 'rgb(var(--text-faint))' }}
           >
-            <span className="h-2.5 w-2.5 rounded-full transition-all" style={{ background: g.color, boxShadow: active ? `0 0 0 3px rgb(${g.rgb} / 0.25)` : 'none' }} />
+            <span className="h-2.5 w-2.5 rounded-full transition-all shrink-0"
+                  style={{ background: color, boxShadow: active ? `0 0 0 3px rgb(${rgb} / 0.25)` : 'none' }} />
+            <span>{STATUS_META[status]?.short ?? status}</span>
             <span className="tabular-nums">{count}</span>
           </button>
         );
@@ -2374,7 +2391,7 @@ export default function App() {
   // Employee Portal Local States
   const [employeeTab, setEmployeeTab] = useState<'chat' | 'list' | 'tracking' | 'clarify'>('chat');
   // "My Requests" home filters — three coloured status dots + free-text search.
-  const [homeStatusFilter, setHomeStatusFilter] = useState<'all' | 'action' | 'progress' | 'done'>('all');
+  const [homeStatusFilter, setHomeStatusFilter] = useState<string>('all');
   const [homeSearch, setHomeSearch] = useState('');
   // Search boxes on the manager approvals and buyer sourcing queues.
   const [mgrSearch, setMgrSearch] = useState('');
