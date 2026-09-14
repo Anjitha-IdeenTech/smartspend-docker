@@ -1838,6 +1838,14 @@ export default function App() {
   const [deliveredQty, setDeliveredQty] = useState<number>(20);
   const [qualityPassed, setQualityPassed] = useState<boolean>(true);
   const [paymentMethod, setPaymentMethod] = useState<string>("Bank Transfer");
+  // What comes off the bill before the vendor is paid. Both are editable: the
+  // rate a bill attracts is a judgement made on the bill, not a constant, and
+  // retention or a penalty has no rate at all.
+  const [tdsRate, setTdsRate] = useState<number>(TDS.rate);
+  const [otherDeduction, setOtherDeduction] = useState<number>(0);
+  const [otherLabel, setOtherLabel] = useState<string>("Other amount");
+  // The bank's reference for the transfer, recorded against the request.
+  const [paymentNote, setPaymentNote] = useState<string>("");
 
   // Shared Data Model representing Odoo's live state
   const [requests, setRequests] = useState<RequestItem[]>([
@@ -2472,6 +2480,10 @@ export default function App() {
   const [deliveredQtys, setDeliveredQtys] = useState<number[]>([]);
   const currentLines = currentRequest ? reqLines(currentRequest) : [];
   const receivedLines: LineItem[] = currentLines.map((l, i) => ({ ...l, productQty: deliveredQtys[i] ?? l.productQty }));
+  // Worked out in one place: three screens show these and they must agree.
+  const billGross = linesTotal(receivedLines);
+  const tdsAmount = Math.round(billGross * tdsRate) / 100;
+  const netPayable = Math.max(0, billGross - tdsAmount - otherDeduction);
 
   useEffect(() => {
     if (currentRequest) {
@@ -3165,9 +3177,12 @@ export default function App() {
   useLayoutEffect(() => {
     if (sessionRestored.current || !authToken || !currentUser) return;
     sessionRestored.current = true;
-    // An explicit ?scene= is a deep link and outranks the default landing.
-    if (params?.get('scene')) return;
-    handleSsoLogin(currentUser.defaultRole || 'Employee');
+    const role = currentUser.defaultRole || 'Employee';
+    // An explicit ?scene= is a deep link and outranks the default landing —
+    // but only the landing. The role comes from the account either way, or a
+    // deep link would put a manager on a requester's navigation.
+    if (params?.get('scene')) { setUserRole(role); return; }
+    handleSsoLogin(role);
   }, [authToken, currentUser]);
 
   const handleChatSubmit = async (e?: React.FormEvent) => {
@@ -6605,8 +6620,8 @@ export default function App() {
                             <span className="font-bold text-textPrimary">₹{linesTotal(receivedLines).toLocaleString('en-IN')}</span>
                           </div>
                           <div className="flex justify-between">
-                            <span className="text-textSecondary">TDS ({TDS.section}):</span>
-                            <span className="font-bold text-neg">−₹{tdsOn(linesTotal(receivedLines)).toLocaleString('en-IN')}</span>
+                            <span className="text-textSecondary">TDS ({TDS.section} @ {tdsRate}%):</span>
+                            <span className="font-bold text-neg">−₹{tdsAmount.toLocaleString('en-IN')}</span>
                           </div>
                         </div>
                       </div>
@@ -6656,23 +6671,65 @@ export default function App() {
                             </tr>
                             {/* Withheld from the vendor and paid to the department,
                                 so the bill total and the payment differ by exactly
-                                this — it is shown rather than left to explain. */}
+                                this. The rate is a judgement made on the bill, not
+                                a constant, so it is typed here rather than fixed. */}
                             <tr className="bg-secondary/40">
                               <td className="px-3 py-2 font-bold text-textSecondary" colSpan={5}>
-                                Less: TDS @ {TDS.rate}%
-                                <span className="ml-2 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-gold/15 text-gold border border-gold/25">
-                                  Sec {TDS.section} · {TDS.label}
+                                <span className="inline-flex items-center gap-2 flex-wrap">
+                                  Less: TDS @
+                                  <input
+                                    type="number" min={0} max={100} step={0.1}
+                                    value={tdsRate}
+                                    onChange={e => setTdsRate(Math.max(0, Math.min(100, Number(e.target.value) || 0)))}
+                                    aria-label="TDS rate percent"
+                                    className="w-16 px-2 py-1 rounded-md bg-surface border border-borderTheme text-xs font-bold text-textPrimary text-right focus:outline-none focus:border-brand"
+                                  />
+                                  %
+                                  <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-gold/15 text-gold border border-gold/25">
+                                    Sec {TDS.section} · {TDS.label}
+                                  </span>
                                 </span>
                               </td>
                               <td className="px-3 py-2 text-right font-bold text-neg tabular-nums">
-                                −₹{tdsOn(linesTotal(receivedLines)).toLocaleString('en-IN')}
+                                −₹{tdsAmount.toLocaleString('en-IN')}
+                              </td>
+                              <td className="px-3 py-2" />
+                            </tr>
+                            {/* Retention, a penalty, a rounding — whatever else
+                                comes off this bill. It has no rate, so it is the
+                                amount that is typed, and the label with it. */}
+                            <tr className="bg-secondary/40">
+                              <td className="px-3 py-2 font-bold text-textSecondary" colSpan={5}>
+                                <span className="inline-flex items-center gap-2 flex-wrap">
+                                  Less:
+                                  <input
+                                    type="text"
+                                    value={otherLabel}
+                                    onChange={e => setOtherLabel(e.target.value)}
+                                    aria-label="Other amount label"
+                                    placeholder="Other amount"
+                                    className="w-44 px-2 py-1 rounded-md bg-surface border border-borderTheme text-xs font-bold text-textPrimary focus:outline-none focus:border-brand"
+                                  />
+                                </span>
+                              </td>
+                              <td className="px-3 py-2 text-right">
+                                <span className="inline-flex items-center gap-1 justify-end">
+                                  <span className="text-neg font-bold">−₹</span>
+                                  <input
+                                    type="number" min={0} step={1}
+                                    value={otherDeduction}
+                                    onChange={e => setOtherDeduction(Math.max(0, Number(e.target.value) || 0))}
+                                    aria-label="Other amount"
+                                    className="w-28 px-2 py-1 rounded-md bg-surface border border-borderTheme text-xs font-bold text-neg text-right tabular-nums focus:outline-none focus:border-brand"
+                                  />
+                                </span>
                               </td>
                               <td className="px-3 py-2" />
                             </tr>
                             <tr className="border-t border-borderTheme bg-secondary/40">
                               <td className="px-3 py-2 font-bold text-textSecondary" colSpan={5}>Net payable to vendor</td>
                               <td className="px-3 py-2 text-right font-extrabold text-accent-budget tabular-nums">
-                                ₹{(linesTotal(receivedLines) - tdsOn(linesTotal(receivedLines))).toLocaleString('en-IN')}
+                                ₹{netPayable.toLocaleString('en-IN')}
                               </td>
                               <td className="px-3 py-2" />
                             </tr>
@@ -6766,10 +6823,11 @@ export default function App() {
                           <div>
                             <span className="text-textSecondary font-bold uppercase tracking-wider block mb-1">Settlement Amount</span>
                             <span className="text-sm font-extrabold text-accent-budget block bg-secondary p-2.5 rounded-lg border border-borderTheme">
-                              ₹{(linesTotal(receivedLines) - tdsOn(linesTotal(receivedLines))).toLocaleString('en-IN')}
+                              ₹{netPayable.toLocaleString('en-IN')}
                             </span>
                             <span className="text-[10px] text-textFaint mt-1 block">
-                              ₹{linesTotal(receivedLines).toLocaleString('en-IN')} billed, less ₹{tdsOn(linesTotal(receivedLines)).toLocaleString('en-IN')} TDS under {TDS.section}
+                              ₹{linesTotal(receivedLines).toLocaleString('en-IN')} billed, less ₹{tdsAmount.toLocaleString('en-IN')} TDS under {TDS.section}
+                              {otherDeduction > 0 ? ` and ₹${otherDeduction.toLocaleString('en-IN')} ${otherLabel.trim() || 'other'}` : ''}
                             </span>
                           </div>
                         </div>
@@ -6813,7 +6871,15 @@ export default function App() {
                                     return {
                                       ...r,
                                       status: "Paid",
-                                      history: [...r.history, { title: "Payment Cleared & Reconciled", date: "Now", desc: `Paid ₹${r.totalCost.toLocaleString()} via ${paymentMethod}. Ref: TXN-98402517.` }]
+                                      history: [...r.history, {
+                                        title: "Payment Cleared & Reconciled", date: "Now",
+                                        // What was actually transferred, and the
+                                        // reference it can be traced by.
+                                        desc: `Paid ₹${netPayable.toLocaleString('en-IN')} via ${paymentMethod}`
+                                          + ` (₹${billGross.toLocaleString('en-IN')} billed, less ₹${tdsAmount.toLocaleString('en-IN')} TDS`
+                                          + (otherDeduction > 0 ? ` and ₹${otherDeduction.toLocaleString('en-IN')} ${otherLabel.trim() || 'other'}` : '')
+                                          + `). Ref: ${paymentNote.trim() || 'TXN-98402517'}`,
+                                      }]
                                     };
                                   }
                                   return r;
@@ -6828,7 +6894,24 @@ export default function App() {
                           </div>
                         </div>
                       ) : (
-                        <div className="flex justify-end pt-2">
+                        <div className="pt-2 space-y-3">
+                          {/* The bank's reference comes back after the transfer
+                              is made, and it is what anyone reconciling the
+                              statement looks for. Recorded on the request with
+                              the payment rather than kept in someone's inbox. */}
+                          <div>
+                            <label className="text-[10px] font-bold uppercase tracking-wider text-textFaint block mb-1.5">
+                              Payment reference · UTR or note
+                            </label>
+                            <textarea
+                              rows={2}
+                              value={paymentNote}
+                              onChange={e => setPaymentNote(e.target.value)}
+                              placeholder="UTR / NEFT reference, or anything worth recording against this payment…"
+                              className="w-full bg-secondary border border-borderTheme rounded-xl p-3 text-xs text-textPrimary focus:outline-none focus:border-brand"
+                            />
+                          </div>
+                          <div className="flex justify-end">
                           {canRunFulfilment ? (
                             <button 
                               onClick={() => setPaymentComplete(true)}
@@ -6840,6 +6923,7 @@ export default function App() {
                           ) : (
                             <StepLock what="only the purchase manager authorises payment" />
                           )}
+                          </div>
                         </div>
                       )}
                     </div>
