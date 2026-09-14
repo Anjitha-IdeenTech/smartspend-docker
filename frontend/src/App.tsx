@@ -9,7 +9,8 @@ import {
   Paperclip, MessageSquare, History, Search, Eye, Filter,
   Truck, Package, Receipt, CreditCard, Moon, Sun, Bell,
   PanelLeftClose,
-  Building2, Timer, Zap, Star, Activity, Boxes, Handshake, ScanLine
+  Building2, Timer, Zap, Star, Activity, Boxes, Handshake, ScanLine,
+  LayoutGrid, List as ListIcon
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -626,6 +627,87 @@ function RequestCard({ r, onOpen, onPoke }: { r: RequestItem; onOpen: () => void
  * dark text. `stats` renders quiet KPI chips on the right; `right` takes
  * bespoke controls (toggles, badges), which should use .hero-ctl.
  */
+/**
+ * Tiles or rows, for any list that has both.
+ *
+ * Cards read well when you are browsing; rows read well when you are scanning
+ * thirty of them for one reference. Neither is right for everything, so the
+ * choice is the reader's.
+ */
+function ViewToggle({ value, onChange }: { value: 'grid' | 'list'; onChange: (v: 'grid' | 'list') => void }) {
+  return (
+    <div className="flex items-center gap-0.5 rounded-lg bg-surface border border-borderTheme p-0.5 shadow-sm">
+      {([['grid', LayoutGrid, 'Tile view'], ['list', ListIcon, 'List view']] as const).map(([k, Icon, label]) => (
+        <button
+          key={k}
+          onClick={() => onChange(k)}
+          title={label}
+          aria-label={label}
+          aria-pressed={value === k}
+          className={`grid h-7 w-7 place-items-center rounded-md transition-all ${
+            value === k ? 'bg-brand text-onbrand' : 'text-textFaint hover:text-brand'}`}
+        >
+          <Icon className="h-3.5 w-3.5" />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** The same requests as rows — one line each, scannable at a glance. */
+function RequestRows({ rows, onOpen }: { rows: RequestItem[]; onOpen: (r: RequestItem) => void }) {
+  return (
+    <div className="rounded-2xl bg-surface border border-borderTheme shadow-sm overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-left min-w-[720px]">
+          <thead>
+            <tr className="bg-secondary/60 text-[10px] uppercase tracking-wider text-textFaint">
+              <th className="px-4 py-2.5 font-bold">Reference</th>
+              <th className="px-4 py-2.5 font-bold">Product</th>
+              <th className="px-4 py-2.5 font-bold">Branch · Department</th>
+              <th className="px-4 py-2.5 font-bold">Status</th>
+              <th className="px-4 py-2.5 font-bold text-right">Value</th>
+              <th className="px-4 py-2.5 font-bold">Needed by</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(r => (
+              <tr
+                key={r.id}
+                onClick={() => onOpen(r)}
+                className="border-t border-borderTheme hover:bg-secondary/60 transition-colors cursor-pointer"
+              >
+                <td className="px-4 py-3 text-[11px] font-mono font-bold text-textFaint whitespace-nowrap">{r.id}</td>
+                <td className="px-4 py-3 text-xs font-bold text-textPrimary">
+                  {r.productQty}× {reqSummary(r)}
+                </td>
+                <td className="px-4 py-3 text-xs text-textSecondary whitespace-nowrap">{r.location} · {r.department}</td>
+                <td className="px-4 py-3 whitespace-nowrap">
+                  <span
+                    className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2 py-0.5 rounded-full border"
+                    style={{
+                      background: `rgb(${statusRgb(r.status)} / 0.12)`,
+                      color: statusColor(r.status),
+                      borderColor: `rgb(${statusRgb(r.status)} / 0.25)`,
+                    }}
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full" style={{ background: statusColor(r.status) }} />
+                    {r.status}
+                  </span>
+                </td>
+                <td className="px-4 py-3 text-xs font-bold text-textPrimary tabular-nums text-right whitespace-nowrap">
+                  ₹{r.totalCost.toLocaleString('en-IN')}
+                </td>
+                <td className="px-4 py-3 text-xs text-textSecondary whitespace-nowrap">{r.deliveryDate || '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function SceneHeader({ icon: Icon, title, subtitle, stats, right, className = '' }: {
   icon: LucideIcon;
   title: string;
@@ -2392,6 +2474,9 @@ export default function App() {
   const [employeeTab, setEmployeeTab] = useState<'chat' | 'list' | 'tracking' | 'clarify'>('chat');
   // "My Requests" home filters — three coloured status dots + free-text search.
   const [homeStatusFilter, setHomeStatusFilter] = useState<string>('all');
+  // Tiles or rows. Shared, so switching does not have to be done again on the
+  // next tab.
+  const [requestView, setRequestView] = useState<'grid' | 'list'>('grid');
   const [homeSearch, setHomeSearch] = useState('');
   // Search boxes on the manager approvals and buyer sourcing queues.
   const [mgrSearch, setMgrSearch] = useState('');
@@ -2763,6 +2848,8 @@ export default function App() {
   // it here, so the decision is held in state rather than written on discovery.
   const [mastersTab, setMastersTab] = useState<'products' | 'categories' | 'workflow' | 'company' | 'branches' | 'vendors'>('products');
   const [masterSearch, setMasterSearch] = useState<string>("");
+  // Tiles or rows, for the masters that render as cards.
+  const [masterView, setMasterView] = useState<'grid' | 'list'>('grid');
   const [vendorView, setVendorView] = useState<'master' | 'ai'>('master');
   const [openDraft, setOpenDraft] = useState<string | null>(AI_DRAFT_VENDORS[0]?.id ?? null);
   const [draftDecisions, setDraftDecisions] = useState<Record<string, 'approved' | 'rejected'>>({});
@@ -4314,6 +4401,7 @@ export default function App() {
                               </div>
                               <div className="flex items-center gap-3">
                                 <RequestSearch value={homeSearch} onChange={setHomeSearch} />
+                                <ViewToggle value={requestView} onChange={setRequestView} />
                                 <button onClick={() => setEmployeeTab('list')} className="text-sm font-semibold text-brand hover:underline whitespace-nowrap">View all</button>
                               </div>
                             </div>
@@ -4324,16 +4412,23 @@ export default function App() {
                                 <p className="text-xs text-textFaint mt-1">Try a different keyword or status.</p>
                               </div>
                             ) : (
-                              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                {homeFiltered.map(r => (
-                                  <RequestCard
-                                    key={r.id}
-                                    r={r}
-                                    onOpen={() => { setSelectedRequestId(r.id); setEmployeeTab('tracking'); }}
-                                    onPoke={() => handlePoke(r)}
-                                  />
-                                ))}
-                              </div>
+                              requestView === 'list' ? (
+                                <RequestRows
+                                  rows={homeFiltered}
+                                  onOpen={(r) => { setSelectedRequestId(r.id); setEmployeeTab('tracking'); }}
+                                />
+                              ) : (
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                  {homeFiltered.map(r => (
+                                    <RequestCard
+                                      key={r.id}
+                                      r={r}
+                                      onOpen={() => { setSelectedRequestId(r.id); setEmployeeTab('tracking'); }}
+                                      onPoke={() => handlePoke(r)}
+                                    />
+                                  ))}
+                                </div>
+                              )
                             )}
                           </div>
                         );
@@ -4354,6 +4449,7 @@ export default function App() {
                           <div className="flex items-center gap-3 flex-wrap">
                             <StatusDots value={homeStatusFilter} onChange={setHomeStatusFilter} requests={requests} />
                             <RequestSearch value={homeSearch} onChange={setHomeSearch} />
+                            <ViewToggle value={requestView} onChange={setRequestView} />
                           </div>
                         </div>
 
@@ -4364,16 +4460,23 @@ export default function App() {
                             <p className="text-xs text-textFaint mt-1">Try a different keyword or status.</p>
                           </div>
                         ) : (
-                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {listFiltered.map(r => (
-                              <RequestCard
-                                key={r.id}
-                                r={r}
-                                onOpen={() => { setSelectedRequestId(r.id); setEmployeeTab('tracking'); }}
-                                onPoke={() => handlePoke(r)}
-                              />
-                            ))}
-                          </div>
+                          requestView === 'list' ? (
+                            <RequestRows
+                              rows={listFiltered}
+                              onOpen={(r) => { setSelectedRequestId(r.id); setEmployeeTab('tracking'); }}
+                            />
+                          ) : (
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                              {listFiltered.map(r => (
+                                <RequestCard
+                                  key={r.id}
+                                  r={r}
+                                  onOpen={() => { setSelectedRequestId(r.id); setEmployeeTab('tracking'); }}
+                                  onPoke={() => handlePoke(r)}
+                                />
+                              ))}
+                            </div>
+                          )
                         )}
                       </div>
                     );
@@ -7201,6 +7304,9 @@ export default function App() {
                       {/* One button for every master: which one it adds to
                           follows the open tab, so a new master needs a field
                           spec rather than another control. */}
+                      {['branches', 'categories'].includes(mastersTab) && (
+                        <ViewToggle value={masterView} onChange={setMasterView} />
+                      )}
                       {MASTER_FORMS[mastersTab] && (
                         <button
                           onClick={() => setMasterForm({ kind: mastersTab, values: {} })}
@@ -7258,7 +7364,40 @@ export default function App() {
                   )}
 
                   {/* ---------- EXPENSE CATEGORIES ---------- */}
-                  {mastersTab === 'categories' && (
+                  {mastersTab === 'categories' && masterView === 'list' && (
+                    <div className="rounded-2xl bg-surface border border-borderTheme shadow-sm overflow-hidden">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left min-w-[640px]">
+                          <thead>
+                            <tr className="bg-secondary/60 text-[10px] uppercase tracking-wider text-textFaint">
+                              <th className="px-4 py-2.5 font-bold">Category</th>
+                              <th className="px-4 py-2.5 font-bold">Expense type</th>
+                              <th className="px-4 py-2.5 font-bold">GL code</th>
+                              <th className="px-4 py-2.5 font-bold text-right">Approval limit</th>
+                              <th className="px-4 py-2.5 font-bold">Owner</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {allCategoryRows
+                              .filter(c => `${c.name} ${c.expenseType} ${c.glCode}`.toLowerCase().includes(masterSearch.toLowerCase()))
+                              .map(c => (
+                                <tr key={c.name} className="border-t border-borderTheme hover:bg-secondary/60 transition-colors">
+                                  <td className="px-4 py-3 text-xs font-bold text-textPrimary">{c.name}</td>
+                                  <td className="px-4 py-3 text-xs text-textSecondary">{c.expenseType}</td>
+                                  <td className="px-4 py-3 text-[11px] font-mono text-textFaint">{c.glCode}</td>
+                                  <td className="px-4 py-3 text-xs font-bold text-textPrimary tabular-nums text-right">
+                                    {c.limit ? `₹${c.limit.toLocaleString('en-IN')}` : '—'}
+                                  </td>
+                                  <td className="px-4 py-3 text-xs text-textSecondary">{c.owner}</td>
+                                </tr>
+                              ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {mastersTab === 'categories' && masterView === 'grid' && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {allCategoryRows
                         .filter(c => `${c.name} ${c.expenseType} ${c.glCode}`.toLowerCase().includes(masterSearch.toLowerCase()))
@@ -7692,7 +7831,36 @@ export default function App() {
                   )}
 
                   {/* ---------- BRANCHES ---------- */}
-                  {mastersTab === 'branches' && (
+                  {mastersTab === 'branches' && masterView === 'list' && (
+                    <div className="rounded-2xl bg-surface border border-borderTheme shadow-sm overflow-hidden">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left min-w-[520px]">
+                          <thead>
+                            <tr className="bg-secondary/60 text-[10px] uppercase tracking-wider text-textFaint">
+                              <th className="px-4 py-2.5 font-bold">Code</th>
+                              <th className="px-4 py-2.5 font-bold">Branch</th>
+                              <th className="px-4 py-2.5 font-bold">City</th>
+                              <th className="px-4 py-2.5 font-bold">Company</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {branchRows
+                              .filter(b => `${b.name} ${b.code} ${b.city}`.toLowerCase().includes(masterSearch.toLowerCase()))
+                              .map(b => (
+                                <tr key={b.name} className="border-t border-borderTheme hover:bg-secondary/60 transition-colors">
+                                  <td className="px-4 py-3 text-[11px] font-mono text-textFaint">{b.code}</td>
+                                  <td className="px-4 py-3 text-xs font-bold text-textPrimary">{b.name}</td>
+                                  <td className="px-4 py-3 text-xs text-textSecondary">{b.city}</td>
+                                  <td className="px-4 py-3 text-xs text-textSecondary">{companyForBranch(b.name).short}</td>
+                                </tr>
+                              ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {mastersTab === 'branches' && masterView === 'grid' && (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                       {branchRows
                         .filter(b => `${b.name} ${b.code} ${b.city}`.toLowerCase().includes(masterSearch.toLowerCase()))
