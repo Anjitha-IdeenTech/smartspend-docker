@@ -310,6 +310,16 @@ const STATUS_JOURNEY = [
   'Approved', 'PO Confirmed', 'Paid', 'Rejected', 'Cancelled',
 ];
 
+/**
+ * Tax deducted at source on a vendor bill.
+ *
+ * Section 194Q covers the purchase of goods at 0.1%, which is what these
+ * requisitions are. Kept here so the bill, the payment voucher and anything
+ * else that shows a net figure deduct the same amount under the same section.
+ */
+const TDS = { section: '194Q', rate: 0.1, label: 'Purchase of goods' };
+const tdsOn = (gross: number) => Math.round(gross * TDS.rate) / 100;
+
 const statusColor = (s: string) => STATUS_META[s]?.color ?? '#64748B';
 const statusRgb = (s: string) => STATUS_META[s]?.rgb ?? '100 116 139';
 
@@ -6592,7 +6602,11 @@ export default function App() {
                           </div>
                           <div className="flex justify-between pt-2 border-t border-borderTheme">
                             <span className="text-textSecondary">Total Billed:</span>
-                            <span className="font-bold text-textPrimary">₹{linesTotal(receivedLines).toLocaleString()}</span>
+                            <span className="font-bold text-textPrimary">₹{linesTotal(receivedLines).toLocaleString('en-IN')}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-textSecondary">TDS ({TDS.section}):</span>
+                            <span className="font-bold text-neg">−₹{tdsOn(linesTotal(receivedLines)).toLocaleString('en-IN')}</span>
                           </div>
                         </div>
                       </div>
@@ -6636,8 +6650,30 @@ export default function App() {
                           </tbody>
                           <tfoot>
                             <tr className="border-t border-borderTheme bg-secondary/40">
-                              <td className="px-3 py-2 font-bold text-textSecondary" colSpan={5}>Total payable to vendor</td>
-                              <td className="px-3 py-2 text-right font-extrabold text-accent-budget tabular-nums">₹{linesTotal(receivedLines).toLocaleString()}</td>
+                              <td className="px-3 py-2 font-bold text-textSecondary" colSpan={5}>Invoice total (gross)</td>
+                              <td className="px-3 py-2 text-right font-bold text-textPrimary tabular-nums">₹{linesTotal(receivedLines).toLocaleString('en-IN')}</td>
+                              <td className="px-3 py-2" />
+                            </tr>
+                            {/* Withheld from the vendor and paid to the department,
+                                so the bill total and the payment differ by exactly
+                                this — it is shown rather than left to explain. */}
+                            <tr className="bg-secondary/40">
+                              <td className="px-3 py-2 font-bold text-textSecondary" colSpan={5}>
+                                Less: TDS @ {TDS.rate}%
+                                <span className="ml-2 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-gold/15 text-gold border border-gold/25">
+                                  Sec {TDS.section} · {TDS.label}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2 text-right font-bold text-neg tabular-nums">
+                                −₹{tdsOn(linesTotal(receivedLines)).toLocaleString('en-IN')}
+                              </td>
+                              <td className="px-3 py-2" />
+                            </tr>
+                            <tr className="border-t border-borderTheme bg-secondary/40">
+                              <td className="px-3 py-2 font-bold text-textSecondary" colSpan={5}>Net payable to vendor</td>
+                              <td className="px-3 py-2 text-right font-extrabold text-accent-budget tabular-nums">
+                                ₹{(linesTotal(receivedLines) - tdsOn(linesTotal(receivedLines))).toLocaleString('en-IN')}
+                              </td>
                               <td className="px-3 py-2" />
                             </tr>
                           </tfoot>
@@ -6729,7 +6765,12 @@ export default function App() {
                           </div>
                           <div>
                             <span className="text-textSecondary font-bold uppercase tracking-wider block mb-1">Settlement Amount</span>
-                            <span className="text-sm font-extrabold text-accent-budget block bg-secondary p-2.5 rounded-lg border border-borderTheme">₹{linesTotal(receivedLines).toLocaleString()}</span>
+                            <span className="text-sm font-extrabold text-accent-budget block bg-secondary p-2.5 rounded-lg border border-borderTheme">
+                              ₹{(linesTotal(receivedLines) - tdsOn(linesTotal(receivedLines))).toLocaleString('en-IN')}
+                            </span>
+                            <span className="text-[10px] text-textFaint mt-1 block">
+                              ₹{linesTotal(receivedLines).toLocaleString('en-IN')} billed, less ₹{tdsOn(linesTotal(receivedLines)).toLocaleString('en-IN')} TDS under {TDS.section}
+                            </span>
                           </div>
                         </div>
 
