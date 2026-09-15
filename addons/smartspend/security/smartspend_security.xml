@@ -74,6 +74,45 @@
         <field name="groups" eval="[Command.link(ref('group_smartspend_buyer'))]"/>
     </record>
 
+    <!-- A supplier has to read the orders placed with them, or their portal has
+         nothing in it. Rules from different groups are OR'd, so this sits
+         alongside the "own requests" rule the vendor group inherits: they see
+         anything that has reached a purchase order, and their own requisitions
+         if they ever raise one. Read only — a vendor acknowledging an order
+         goes through the gated endpoint, which writes with elevated rights. -->
+    <record id="rule_smartspend_request_vendor" model="ir.rule">
+        <field name="name">SmartSpend: orders placed with a vendor</field>
+        <field name="model_id" ref="model_smartspend_request"/>
+        <field name="domain_force">[('state', 'in', ['po_confirmed', 'paid'])]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_vendor'))]"/>
+        <field name="perm_read" eval="True"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+
+    <record id="rule_smartspend_request_line_vendor" model="ir.rule">
+        <field name="name">SmartSpend: lines of orders placed with a vendor</field>
+        <field name="model_id" ref="model_smartspend_request_line"/>
+        <field name="domain_force">[('request_id.state', 'in', ['po_confirmed', 'paid'])]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_vendor'))]"/>
+        <field name="perm_read" eval="True"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+
+    <record id="rule_smartspend_request_history_vendor" model="ir.rule">
+        <field name="name">SmartSpend: timeline of orders placed with a vendor</field>
+        <field name="model_id" ref="model_smartspend_request_history"/>
+        <field name="domain_force">[('request_id.state', 'in', ['po_confirmed', 'paid'])]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_vendor'))]"/>
+        <field name="perm_read" eval="True"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+
     <!-- The child records inherit the visibility of the request they hang off.
          Without these, a requester who may only see their own requests could
          still read every line, bid and timeline entry in the database. -->

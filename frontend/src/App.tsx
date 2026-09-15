@@ -35,7 +35,8 @@ const SCENES = [
   { id: 14, name: "Scene 14: Payment Processing & Reconciliation" },
   { id: 15, name: "Scene 15: Spend Intelligence Analytics" },
   { id: 16, name: "Scene 16: Master Data Console" },
-  { id: 17, name: "Scene 17: Questions Raised" }
+  { id: 17, name: "Scene 17: Questions Raised" },
+  { id: 18, name: "Scene 18: Vendor Portal" }
 ];
 
 /** The signed-in Odoo user, as returned by /api/smartspend/login. */
@@ -143,6 +144,17 @@ const companyForBranch = (branch?: string): Company => {
   const wanted = (branch || '').trim().toLowerCase();
   return COMPANIES.find(c => c.branches.some(b => b.toLowerCase() === wanted)) ?? COMPANIES[0];
 };
+
+/**
+ * What a supplier sees. Not the buyer's sourcing desk, which is where the
+ * vendor account used to land: the orders placed with them, what has been
+ * delivered against those orders, and the ones still waiting on their word.
+ */
+const VENDOR_TABS = [
+  { key: 'orders' as const,    label: 'Purchase Orders', icon: Package },
+  { key: 'receipts' as const,  label: 'Receipts',        icon: Truck },
+  { key: 'approvals' as const, label: 'Approvals',       icon: CheckCircle2 },
+];
 
 /** Every role the demo can show, with the label the switcher renders. */
 const ROLE_LABELS: Record<string, string> = {
@@ -1803,7 +1815,7 @@ export default function App() {
   const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
   const [activeScene, setActiveScene] = useState<number>(() => {
     const sc = Number(params?.get('scene'));
-    return sc >= 1 && sc <= 17 ? sc : 1;
+    return sc >= 1 && sc <= 18 ? sc : 1;
   });
   // --- Dark theme disabled — light (Aurora) theme only for now. ---
   // To re-enable: restore the stateful darkMode block (see git history) and
@@ -2480,6 +2492,27 @@ export default function App() {
   const [deliveredQtys, setDeliveredQtys] = useState<number[]>([]);
   const currentLines = currentRequest ? reqLines(currentRequest) : [];
   const receivedLines: LineItem[] = currentLines.map((l, i) => ({ ...l, productQty: deliveredQtys[i] ?? l.productQty }));
+
+  // A supplier sees orders, not requisitions: everything that has reached a
+  // purchase order.
+  const vendorOrderable = requests.filter(r =>
+    r.purchaseOrders?.length || r.status === 'PO Confirmed' || r.status === 'Paid');
+  // Narrowed to their own when the account can be matched to a supplier. The
+  // sign-in carries the user's *company*, which is the buying entity on a real
+  // backend and the supplier only on the seeded demo accounts — so it narrows
+  // when it matches something and is ignored when it does not, rather than
+  // showing a supplier an empty portal because the name did not line up.
+  const vendorCompany = (currentUser?.company || '').trim();
+  const vendorOwn = vendorCompany
+    ? vendorOrderable.filter(r => (r.vendor || '').toLowerCase() === vendorCompany.toLowerCase())
+    : [];
+  const vendorOrders = vendorOwn.length ? vendorOwn : vendorOrderable;
+  // Released to them and not yet answered — this is the queue that is theirs.
+  const vendorAwaiting = vendorOrders.filter(r => r.poReleased && !r.poAcknowledged);
+  const vendorApproved = vendorOrders.filter(r => r.poAcknowledged);
+  // A delivery exists once the order has been acknowledged; a settled one has
+  // been paid for.
+  const vendorReceipts = vendorOrders.filter(r => r.poAcknowledged || r.status === 'Paid');
   // Worked out in one place: three screens show these and they must agree.
   const billGross = linesTotal(receivedLines);
   const tdsAmount = Math.round(billGross * tdsRate) / 100;
@@ -2768,7 +2801,7 @@ export default function App() {
     setPokes(prev => prev.filter(p => !(p.to === userRole && p.reqId === r.id)));
     if (userRole === 'Manager') setActiveScene(10);
     else if (userRole === 'SCM Buyer') { setActiveScene(6); setScmTab('requests'); }
-    else if (userRole === 'Vendor') { setActiveScene(6); setScmTab('bidding'); }
+    else if (userRole === 'Vendor') setActiveScene(18);
     else { setActiveScene(2); setEmployeeTab('clarify'); }
   };
 
@@ -2996,6 +3029,9 @@ export default function App() {
     setTimeout(() => setDraftToast(""), 5000);
   };
 
+  // Which of the vendor's three views is open.
+  const [vendorTab, setVendorTab] = useState<'orders' | 'receipts' | 'approvals'>('orders');
+
   // Vendor Portal Local States
   const [vendorBidPrice, setVendorBidPrice] = useState<string>("118000");
   const [vendorLeadTime, setVendorLeadTime] = useState<string>("5 Days");
@@ -3133,7 +3169,7 @@ export default function App() {
   const handleSsoLogin = (role: string) => {
     setUserRole(role);
     if (role === "Vendor") {
-      setActiveScene(6); // single-function external portal
+      setActiveScene(18); // the supplier's own portal
     } else {
       // Land on the role's first (drag-ordered) nav item.
       applyNav(role, (navOrder[role] || DEFAULT_NAV_ORDER[role])?.[0]);
@@ -3819,16 +3855,22 @@ export default function App() {
                 <Sparkles className="h-5 w-5 text-onbrand" />
               </div>
               {userRole !== "Vendor" && navOrder[userRole]?.map(key => renderRailItem(userRole, key))}
-              {userRole === "Vendor" && (
+              {userRole === "Vendor" && VENDOR_TABS.map(t => (
                 <button
-                  onClick={() => { setActiveScene(6); setScmTab('bidding'); }}
-                  title="Active RFQs to Quote"
-                  aria-label="Active RFQs to Quote"
-                  className="grid h-10 w-10 place-items-center rounded-xl text-pos bg-secondary border border-line2/60"
+                  key={t.key}
+                  onClick={() => { setActiveScene(18); setVendorTab(t.key); }}
+                  title={t.label}
+                  aria-label={t.label}
+                  className={`relative grid h-10 w-10 place-items-center rounded-xl transition-all ${
+                    activeScene === 18 && vendorTab === t.key
+                      ? 'bg-brand text-onbrand' : 'text-textSecondary hover:bg-brand/10 hover:text-brand'}`}
                 >
-                  <FileSpreadsheet className="h-5 w-5" />
+                  <t.icon className="h-5 w-5" />
+                  {t.key === 'approvals' && vendorAwaiting.length > 0 && (
+                    <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-gold" />
+                  )}
                 </button>
-              )}
+              ))}
 
               {/* Signing out is how you change role, so it has to be reachable
                   folded too. Pushed to the foot of the rail, where it sits when
@@ -3875,15 +3917,28 @@ export default function App() {
                   )}
                   {userRole !== "Vendor" && navOrder[userRole]?.map((key, idx) => renderNavItem(userRole, key, idx))}
 
-                  {userRole === "Vendor" && (
-                    <button
-                      onClick={() => { setActiveScene(6); setScmTab('bidding'); }}
-                      className="w-full flex items-center space-x-3 px-3 py-2 rounded-xl text-xs font-medium text-pos bg-secondary border border-line2/60"
-                    >
-                      <FileSpreadsheet className="h-4 w-4" />
-                      <span>Active RFQs to Quote</span>
-                    </button>
-                  )}
+                  {userRole === "Vendor" && VENDOR_TABS.map(t => {
+                    const active = activeScene === 18 && vendorTab === t.key;
+                    const count = t.key === 'orders' ? vendorOrders.length
+                      : t.key === 'receipts' ? vendorReceipts.length : vendorAwaiting.length;
+                    return (
+                      <button
+                        key={t.key}
+                        onClick={() => { setActiveScene(18); setVendorTab(t.key); }}
+                        className={`w-full flex items-center space-x-2 px-3 py-2 rounded-xl text-xs font-medium transition-all ${
+                          active ? 'bg-brand text-onbrand' : 'text-textSecondary hover:bg-brand/10 hover:text-brand'}`}
+                      >
+                        <t.icon className="h-4 w-4" />
+                        <span>{t.label}</span>
+                        {count > 0 && (
+                          <span className={`ml-auto text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                            active ? 'bg-white/20 text-onbrand'
+                              : t.key === 'approvals' ? 'bg-gold/20 text-gold border border-gold/30'
+                                : 'bg-secondary text-textSecondary'}`}>{count}</span>
+                        )}
+                      </button>
+                    );
+                  })}
                 </nav>
               </div>
               
@@ -7428,6 +7483,221 @@ export default function App() {
                           </div>
                         </div>
                       ))}
+                    </div>
+                  )}
+                </div>
+                );
+              })()}
+
+              {/* --- SCENE 18: VENDOR PORTAL --- */}
+              {activeScene === 18 && (() => {
+                const tab = VENDOR_TABS.find(t => t.key === vendorTab) ?? VENDOR_TABS[0];
+                const money = (n: number) => `₹${n.toLocaleString('en-IN')}`;
+                const Empty = ({ what }: { what: string }) => (
+                  <div className="p-12 text-center bg-surface border border-borderTheme rounded-2xl shadow-sm">
+                    <Package className="h-8 w-8 mx-auto text-textFaint mb-2" />
+                    <p className="text-sm font-semibold text-textPrimary">Nothing here yet</p>
+                    <p className="text-xs text-textFaint mt-1">{what}</p>
+                  </div>
+                );
+                return (
+                <div className="max-w-6xl mx-auto space-y-6 animate-fadeIn">
+                  <SceneHeader
+                    icon={Handshake}
+                    title={vendorOwn.length ? vendorCompany : 'Supplier Portal'}
+                    subtitle="Your orders, what has been delivered against them, and what is waiting on you."
+                    stats={[
+                      { label: 'Orders', value: String(vendorOrders.length) },
+                      { label: 'Awaiting you', value: String(vendorAwaiting.length) },
+                      { label: 'Approved', value: String(vendorApproved.length) },
+                    ]}
+                  />
+
+                  <div className="flex items-center gap-1.5 p-2 rounded-2xl bg-surface border border-borderTheme shadow-sm overflow-x-auto">
+                    {VENDOR_TABS.map(t => {
+                      const count = t.key === 'orders' ? vendorOrders.length
+                        : t.key === 'receipts' ? vendorReceipts.length : vendorAwaiting.length;
+                      return (
+                        <button
+                          key={t.key}
+                          onClick={() => setVendorTab(t.key)}
+                          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
+                            vendorTab === t.key ? 'bg-brand text-onbrand shadow-sm'
+                              : 'text-textSecondary hover:text-textPrimary hover:bg-secondary'}`}
+                        >
+                          <t.icon className="h-3.5 w-3.5" /> {t.label}
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                            vendorTab === t.key ? 'bg-white/20' : 'bg-raised text-textFaint'}`}>{count}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* ---------- CONFIRMED PURCHASE ORDERS ---------- */}
+                  {vendorTab === 'orders' && (vendorOrders.length === 0 ? (
+                    <Empty what="Orders placed with you will appear here once they are confirmed." />
+                  ) : (
+                    <div className="rounded-2xl bg-surface border border-borderTheme shadow-sm overflow-hidden">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left min-w-[760px]">
+                          <thead>
+                            <tr className="bg-secondary/60 text-[10px] uppercase tracking-wider text-textFaint">
+                              <th className="px-4 py-2.5 font-bold">Order</th>
+                              <th className="px-4 py-2.5 font-bold">Against</th>
+                              <th className="px-4 py-2.5 font-bold">Items</th>
+                              <th className="px-4 py-2.5 font-bold">Deliver to</th>
+                              <th className="px-4 py-2.5 font-bold">Needed by</th>
+                              <th className="px-4 py-2.5 font-bold text-right">Order value</th>
+                              <th className="px-4 py-2.5 font-bold">State</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {newestFirst(vendorOrders).map(r => (
+                              <tr key={r.id} className="border-t border-borderTheme hover:bg-secondary/60 transition-colors">
+                                <td className="px-4 py-3 text-[11px] font-mono font-bold text-textPrimary whitespace-nowrap">
+                                  {r.purchaseOrders?.join(', ') || '—'}
+                                </td>
+                                <td className="px-4 py-3 text-[11px] font-mono text-textFaint whitespace-nowrap">{r.id}</td>
+                                <td className="px-4 py-3 text-xs font-bold text-textPrimary">{r.productQty}× {reqSummary(r)}</td>
+                                <td className="px-4 py-3 text-xs text-textSecondary whitespace-nowrap">{r.location}</td>
+                                <td className="px-4 py-3 text-xs text-textSecondary whitespace-nowrap">{r.deliveryDate || '—'}</td>
+                                <td className="px-4 py-3 text-xs font-bold text-textPrimary tabular-nums text-right whitespace-nowrap">{money(r.totalCost)}</td>
+                                <td className="px-4 py-3 whitespace-nowrap">
+                                  <span className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2 py-0.5 rounded-full border"
+                                        style={{ background: `rgb(${statusRgb(r.status)} / 0.12)`, color: statusColor(r.status), borderColor: `rgb(${statusRgb(r.status)} / 0.25)` }}>
+                                    {r.poAcknowledged ? 'Confirmed by you' : r.poReleased ? 'Awaiting your approval' : r.status}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* ---------- RECEIPTS ---------- */}
+                  {vendorTab === 'receipts' && (vendorReceipts.length === 0 ? (
+                    <Empty what="Deliveries show here once you have confirmed an order." />
+                  ) : (
+                    <div className="space-y-3">
+                      {newestFirst(vendorReceipts).map(r => (
+                        <div key={r.id} className="p-5 rounded-2xl bg-surface border border-borderTheme shadow-sm">
+                          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-borderTheme pb-3">
+                            <div className="min-w-0">
+                              <span className="text-[11px] font-mono font-bold text-textFaint block">
+                                {r.purchaseOrders?.join(', ') || r.id}
+                              </span>
+                              <h4 className="font-outfit font-extrabold text-base text-textPrimary truncate">
+                                {r.productQty}× {reqSummary(r)}
+                              </h4>
+                            </div>
+                            <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border ${
+                              r.status === 'Paid'
+                                ? 'bg-pos/10 text-pos border-pos/25'
+                                : 'bg-gold/10 text-gold border-gold/25'}`}>
+                              {r.status === 'Paid' ? 'Delivered & settled' : 'Delivery due'}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-3">
+                            {[
+                              { l: 'Deliver to', v: r.location },
+                              { l: 'Needed by', v: r.deliveryDate || '—' },
+                              { l: 'Lines', v: `${(r.lineItems?.length ?? 1)} product${(r.lineItems?.length ?? 1) > 1 ? 's' : ''}` },
+                              { l: 'Order value', v: money(r.totalCost) },
+                            ].map(f => (
+                              <div key={f.l}>
+                                <p className="text-[9px] font-bold uppercase tracking-wider text-textFaint">{f.l}</p>
+                                <p className="text-xs font-semibold text-textPrimary mt-0.5">{f.v}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+
+                  {/* ---------- APPROVALS ---------- */}
+                  {vendorTab === 'approvals' && (
+                    <div className="space-y-6">
+                      <div className="space-y-3">
+                        <h3 className="font-outfit font-extrabold text-lg text-textPrimary">
+                          Waiting on you <span className="text-textFaint font-semibold">({vendorAwaiting.length})</span>
+                        </h3>
+                        {vendorAwaiting.length === 0 ? (
+                          <Empty what="Nothing is waiting on your confirmation." />
+                        ) : newestFirst(vendorAwaiting).map(r => (
+                          <div key={r.id} className="p-5 rounded-2xl bg-surface border border-gold/30 shadow-sm space-y-4">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <span className="text-[11px] font-mono font-bold text-gold block">
+                                  {r.purchaseOrders?.join(', ') || r.id}
+                                </span>
+                                <h4 className="font-outfit font-extrabold text-base text-textPrimary truncate">
+                                  {r.productQty}× {reqSummary(r)}
+                                </h4>
+                                <p className="text-[11px] text-textSecondary mt-0.5">
+                                  Deliver to {r.location} by {r.deliveryDate || '—'} · {money(r.totalCost)}
+                                </p>
+                              </div>
+                              <button
+                                onClick={async () => {
+                                  setPoStepBusy(r.id);
+                                  await recordPurchaseOrderStep(r.id, 'acknowledge');
+                                  setPoStepBusy('');
+                                }}
+                                disabled={poStepBusy === r.id}
+                                className="px-4 py-2 rounded-lg bg-accent-savings text-surface text-xs font-bold hover:opacity-90 disabled:opacity-50 transition-all whitespace-nowrap"
+                              >
+                                {poStepBusy === r.id ? 'Confirming…' : 'Confirm order'}
+                              </button>
+                            </div>
+                            <LineItemsTable lines={reqLines(r)} title="What you are being asked to supply" totalLabel="Order value" />
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="space-y-3">
+                        <h3 className="font-outfit font-extrabold text-lg text-textPrimary">
+                          Approved by you <span className="text-textFaint font-semibold">({vendorApproved.length})</span>
+                        </h3>
+                        {vendorApproved.length === 0 ? (
+                          <Empty what="Orders you have confirmed will be listed here." />
+                        ) : (
+                          <div className="rounded-2xl bg-surface border border-borderTheme shadow-sm overflow-hidden">
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-left min-w-[620px]">
+                                <thead>
+                                  <tr className="bg-secondary/60 text-[10px] uppercase tracking-wider text-textFaint">
+                                    <th className="px-4 py-2.5 font-bold">Order</th>
+                                    <th className="px-4 py-2.5 font-bold">Items</th>
+                                    <th className="px-4 py-2.5 font-bold">Deliver to</th>
+                                    <th className="px-4 py-2.5 font-bold text-right">Order value</th>
+                                    <th className="px-4 py-2.5 font-bold">State</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {newestFirst(vendorApproved).map(r => (
+                                    <tr key={r.id} className="border-t border-borderTheme hover:bg-secondary/60 transition-colors">
+                                      <td className="px-4 py-3 text-[11px] font-mono font-bold text-textPrimary whitespace-nowrap">
+                                        {r.purchaseOrders?.join(', ') || r.id}
+                                      </td>
+                                      <td className="px-4 py-3 text-xs font-bold text-textPrimary">{r.productQty}× {reqSummary(r)}</td>
+                                      <td className="px-4 py-3 text-xs text-textSecondary whitespace-nowrap">{r.location}</td>
+                                      <td className="px-4 py-3 text-xs font-bold text-textPrimary tabular-nums text-right whitespace-nowrap">{money(r.totalCost)}</td>
+                                      <td className="px-4 py-3">
+                                        <span className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2 py-0.5 rounded-full bg-pos/10 text-pos border border-pos/25">
+                                          <Check className="h-3 w-3" /> Confirmed
+                                        </span>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
