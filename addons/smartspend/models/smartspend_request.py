@@ -1406,10 +1406,19 @@ class SmartspendRequest(models.Model):
                 for bid in payload['vendorBids'] if bid.get('vendorName')
             ]
         if payload.get('attachments') is not None:
-            vals['document_ids'] = [fields.Command.clear()] + [
-                fields.Command.create({'name': name})
-                for name in payload['attachments'] if name
-            ]
+            # A document holding a real uploaded file is not something the
+            # portal can send back — it posts names only. Clearing the list on
+            # every save therefore threw away the link to the file and left the
+            # name behind, so a requisition showed a document nobody could
+            # open. Keep those, and add whatever names are new.
+            kept = record.document_ids.filtered('attachment_id') if record else record.browse()
+            known = {(doc.name or '').casefold() for doc in kept}
+            vals['document_ids'] = (
+                [fields.Command.set(kept.ids)]
+                + [fields.Command.create({'name': name})
+                   for name in payload['attachments']
+                   if name and name.casefold() not in known]
+            )
         return vals
 
     @api.model

@@ -2676,8 +2676,11 @@ export default function App() {
   };
 
   const [chatInputText, setChatInputText] = useState<string>("");
-  const [attachedFiles, setAttachedFiles] = useState<string[]>([]);
+  // Files the requester picked. Held with their content because the request
+  // does not exist yet when they are chosen — they are uploaded once it does.
+  const [attachedFiles, setAttachedFiles] = useState<{ name: string; data: string }[]>([]);
   const [showFileAttachedAlert, setShowFileAttachedAlert] = useState<boolean>(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   
   // Voice Modal States
   const [voiceState, setVoiceState] = useState<'idle' | 'listening' | 'processing' | 'done'>('idle');
@@ -3243,10 +3246,55 @@ export default function App() {
     setActiveScene(4); // Go to extraction form
   };
 
-  const handleAttachmentAdd = () => {
-    setAttachedFiles(["specification_matrix.pdf"]);
+  /** Open the file picker. The attachment used to be a name with no file. */
+  const handleAttachmentAdd = () => fileInputRef.current?.click();
+
+  /** Read what was picked, and keep it until the request exists to attach it to. */
+  const handleFilesPicked = async (files: FileList | null) => {
+    if (!files?.length) return;
+    const read = await Promise.all(Array.from(files).map(file => new Promise<{ name: string; data: string }>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve({ name: file.name, data: String(reader.result || '') });
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    })));
+    setAttachedFiles(prev => [...prev, ...read.filter(f => !prev.some(p => p.name === f.name))]);
     setShowFileAttachedAlert(true);
-    setTimeout(() => setShowFileAttachedAlert(false), 3000);
+    setTimeout(() => setShowFileAttachedAlert(false), 4000);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  /**
+   * Send the picked files to the backend, now the request exists.
+   *
+   * Each is stored as an attachment on the request, which is what the backend
+   * form and its chatter read — so a document the requester uploaded is one an
+   * approver can actually open.
+   */
+  const uploadAttachments = async (reqId: string, url: string = odooApiUrl) => {
+    if (!authToken || offlineDemo || !attachedFiles.length) return;
+    for (const file of attachedFiles) {
+      try {
+        const res = await apiFetch(`/api/smartspend/attachment`, {
+          method: 'POST',
+          body: JSON.stringify({ id: reqId, filename: file.name, data: file.data }),
+        }, url);
+        if (!res.ok) {
+          const message = await refusalMessage(res);
+          noteSyncError({
+            key: `file:${reqId}:${file.name}`, id: reqId,
+            what: `attachment ${file.name} was not stored`,
+            message, retry: () => uploadAttachments(reqId, url),
+          });
+        }
+      } catch (e) {
+        noteSyncError({
+          key: `file:${reqId}:${file.name}`, id: reqId,
+          what: `attachment ${file.name} was not stored`,
+          message: unreachableMessage(e, url), retry: () => uploadAttachments(reqId, url),
+        });
+      }
+    }
   };
 
   // Convert Extraction Form to Live Request
@@ -3301,7 +3349,7 @@ export default function App() {
       clarificationComments: [],
       vendorBids: [],
       selectedSourcingMethod: "Multi RFQ",
-      attachments: attachedFiles
+      attachments: attachedFiles.map(f => f.name)
     };
 
     setRequests(prev => [newReq, ...prev.filter(r => r.id !== reqId)]);
@@ -3339,6 +3387,8 @@ export default function App() {
     });
     void (async () => {
       const saved = (await submitRequestToOdoo(newReq)) as RequestItem | null;
+      // The files were picked before the request existed; it does now.
+      if (saved?.id) { await uploadAttachments(saved.id); setAttachedFiles([]); }
       const waiting = saved?.approvalChain?.find((step: ApprovalStep) => step.state === 'pending');
       if (!waiting) return;
       setSubmittedInfo(prev => prev && prev.id === reqId ? {
@@ -4268,15 +4318,27 @@ export default function App() {
                       </div>
 
                       {/* File Attached Success Banner */}
-                      {showFileAttachedAlert && (
-                        <div className="p-3 bg-brand/40 border border-brand/30 rounded-xl flex items-center justify-between text-xs text-brand animate-fadeIn">
-                          <span className="flex items-center space-x-2">
+                      {attachedFiles.length > 0 && (
+                        <div className="p-3 bg-brand/10 border border-brand/25 rounded-xl space-y-2 animate-fadeIn">
+                          <span className="flex items-center gap-2 text-xs font-bold text-brand">
                             <Paperclip className="h-4 w-4" />
-                            <span><strong>1 File Attached:</strong> specification_matrix.pdf</span>
+                            {attachedFiles.length} file{attachedFiles.length === 1 ? '' : 's'} attached
+                            <span className="font-medium text-textFaint">· uploaded when the request is raised</span>
                           </span>
-                          <button onClick={() => setAttachedFiles([])} className="text-textSecondary hover:text-primary">
-                            <X className="h-4 w-4" />
-                          </button>
+                          <div className="flex flex-wrap gap-2">
+                            {attachedFiles.map(f => (
+                              <span key={f.name} className="inline-flex items-center gap-2 px-2.5 py-1 rounded-lg bg-surface border border-borderTheme text-[11px] text-textSecondary">
+                                {f.name}
+                                <button
+                                  onClick={() => setAttachedFiles(prev => prev.filter(x => x.name !== f.name))}
+                                  title={`Remove ${f.name}`}
+                                  className="text-textFaint hover:text-neg"
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
                         </div>
                       )}
 
@@ -4352,7 +4414,14 @@ export default function App() {
 
                         {/* Unified Input Bar (Matching user's attachment screenshot exactly) */}
                         <form onSubmit={handleChatSubmit} className="relative flex items-center bg-surface border border-borderTheme/70 rounded-full px-5 py-3.5 focus-within:border-brand/60 shadow-xl transition-all w-full">
-                          {/* Attach button */}
+                          {/* Attach button — opens the picker below */}
+                          <input
+                            ref={fileInputRef}
+                            type="file"
+                            multiple
+                            className="hidden"
+                            onChange={e => handleFilesPicked(e.target.files)}
+                          />
                           <button 
                             type="button"
                             onClick={handleAttachmentAdd}

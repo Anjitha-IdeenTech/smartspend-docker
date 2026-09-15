@@ -9,6 +9,8 @@ on purpose: Odoo authenticates *before* it sets the CORS headers, so a rejection
 raised there reaches the browser without ``Access-Control-Allow-Origin`` and the
 portal sees an opaque network error instead of the 401 it knows how to act on.
 """
+import base64
+import binascii
 import logging
 import re
 
@@ -31,6 +33,9 @@ API_KEY_SCOPE = 'rpc'
 API_KEY_NAME = 'SmartSpend Portal'
 # Portal tokens outlive a demo session but not forever.
 API_KEY_VALIDITY_DAYS = 30
+# Big enough for a spec sheet or a quotation, small enough that the portal
+# cannot be used to push a video into the database.
+ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024
 
 
 def _user_payload(user):
@@ -300,6 +305,71 @@ class SmartSpendApi(http.Controller):
                 record.action_release_purchase_order()
             else:
                 record.action_acknowledge_purchase_order()
+        except (UserError, AccessError) as exc:
+            return _refused(exc)
+        return record._to_portal_dict()
+
+    @http.route('/api/smartspend/attachment', type='json2', auth='none',
+                methods=['POST'], cors='*', readonly=False)
+    def add_attachment(self, id=None, filename=None, data=None, **kwargs):
+        """Store a file the requester uploaded against one request.
+
+        The portal used to name a file it had invented and send nothing, so a
+        requisition arrived with a document listed and no document behind it.
+        This writes a real ir.attachment on the request, which is what the form
+        and the chatter read, and lists it under Documents.
+
+        :param data: the file, base64 encoded, with or without a data: prefix.
+        """
+        error = _authenticate()
+        if error:
+            return error
+
+        reference = (id or '').strip()
+        name = (filename or '').strip() or 'attachment'
+        if not reference:
+            return _error(_("Which request is this file for?"), 400)
+        if not data:
+            return _error(_("No file content was sent."), 400)
+
+        # A data: URL carries its type before the comma; keep only the payload.
+        payload = data.split(',', 1)[1] if data.startswith('data:') else data
+        try:
+            raw = base64.b64decode(payload, validate=True)
+        except (binascii.Error, ValueError):
+            return _error(_("That file could not be read — it is not valid base64."), 400)
+        if len(raw) > ATTACHMENT_MAX_BYTES:
+            return _error(_(
+                "That file is %(size)s MB. The limit is %(limit)s MB.",
+                size=round(len(raw) / 1024 / 1024, 1),
+                limit=ATTACHMENT_MAX_BYTES // (1024 * 1024)), 413)
+
+        # No sudo: a requester may attach to their own request and the record
+        # rules already say which ones those are.
+        record = request.env['smartspend.request'].search([('name', '=', reference)], limit=1)
+        if not record:
+            return _error(_("No purchase request named %s.", reference), 404)
+
+        try:
+            attachment = request.env['ir.attachment'].create({
+                'name': name,
+                'datas': payload,
+                'res_model': 'smartspend.request',
+                'res_id': record.id,
+            })
+            # The request was saved with this filename a moment ago, listing it
+            # with no file behind it. Give that row the file rather than adding
+            # a second row with the same name.
+            placeholder = record.document_ids.filtered(
+                lambda doc: not doc.attachment_id and (doc.name or '').casefold() == name.casefold())
+            if placeholder:
+                placeholder[0].attachment_id = attachment.id
+            else:
+                record.document_ids = [fields.Command.create({
+                    'name': name,
+                    'attachment_id': attachment.id,
+                })]
+            record._log_history(_("Document attached"), name)
         except (UserError, AccessError) as exc:
             return _refused(exc)
         return record._to_portal_dict()
