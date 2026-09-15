@@ -932,7 +932,7 @@ function ApprovalChain({ request, compact = false }: { request: RequestItem; com
             </p>
           ) : (
             <p className="mt-1 text-gold font-semibold">
-              Nobody holds this designation yet — assign a user to it in the ERP
+              Nobody holds this designation yet — assign a user to it in Configuration
               (Configuration ▸ Designations), or any SmartSpend manager can sign it.
             </p>
           )}
@@ -1928,7 +1928,7 @@ export default function App() {
       savings: 0,
       history: [
         { title: "Request Submitted", date: "July 09, 09:15", desc: "Initiated via search bar" },
-        { title: "Budget Checked", date: "July 09, 09:16", desc: "Verified & Reserved in the ERP" },
+        { title: "Budget Checked", date: "July 09, 09:16", desc: "Verified &amp; Reserved" },
         { title: "Sourcing Triggered", date: "July 09, 09:18", desc: "No active rate contract found. Rerouted to SCM buyer." }
       ],
       clarificationComments: [],
@@ -2021,7 +2021,7 @@ export default function App() {
   /** Why Odoo turned a call down — it answers {"error": "..."} with a real status. */
   const refusalMessage = async (res: Response) => {
     const failure = await res.json().catch(() => ({} as any));
-    return (failure?.error as string) || `The ERP refused this (HTTP ${res.status}).`;
+    return (failure?.error as string) || `The server refused this (HTTP ${res.status}).`;
   };
   /**
    * Why a call never landed. A TypeError is fetch failing to connect at all —
@@ -2030,12 +2030,12 @@ export default function App() {
    * has already cleared the session and this screen is about to be sign-in).
    */
   const unreachableMessage = (e: unknown, url: string) =>
-    e instanceof TypeError ? `Could not reach ${url}. Is the ERP running?`
+    e instanceof TypeError ? `Could not reach ${url}. Is the server running?`
       : e instanceof Error ? e.message
         : `Could not reach ${url}.`;
   // Appended when the portal went ahead with a local result anyway, so the
   // screen and Odoo are knowingly out of step until the retry succeeds.
-  const SIMULATED = ' This screen is showing a local result — ERP still holds the previous state.';
+  const SIMULATED = ' This screen is showing a local result — the server still holds the previous state.';
   const [isParsing, setIsParsing] = useState<boolean>(false);
   const [selectedRequestId, setSelectedRequestId] = useState<string>("PR-2026-089");
   const [currentOdooRequestName, setCurrentOdooRequestName] = useState<string>("New");
@@ -2151,7 +2151,7 @@ export default function App() {
         return true;
       }
       setAuthError(
-        `Could not reach ${odooApiUrl}. Is the ERP running? ` +
+        `Could not reach ${odooApiUrl}. Is the server running? ` +
         `Without it you can still explore the demo — sign in as manager@smartspend.demo / manager.`);
       return false;
     } finally {
@@ -2206,7 +2206,7 @@ export default function App() {
       });
       if (res.ok) setMasterData(await res.json());
     } catch (e) {
-      console.warn("Falling back to built-in lists — ERP master data unreachable:", e);
+      console.warn("Falling back to built-in lists — master data unreachable:", e);
     }
   };
 
@@ -2235,7 +2235,7 @@ export default function App() {
       }
       setOdooConnected(false);
     } catch (e) {
-      console.warn("Failed to connect to ERP backend:", e);
+      console.warn("Failed to connect to the backend:", e);
       setOdooConnected(false);
     }
     return null;
@@ -2249,7 +2249,7 @@ export default function App() {
     // Retrying re-posts this very version. Any later edit re-runs the sync
     // effect, which replaces this row with one carrying the newer copy.
     const fail = (message: string) => noteSyncError({
-      key: `save:${reqItem.id}`, id: reqItem.id, what: 'was not saved to the ERP',
+      key: `save:${reqItem.id}`, id: reqItem.id, what: 'was not saved',
       message, retry: () => submitRequestToOdoo(reqItem, url),
     });
     try {
@@ -2271,10 +2271,10 @@ export default function App() {
       // Odoo refused it. Say so: the requester is the only one who can correct
       // the request, and nothing else on screen would ever tell them.
       const message = await refusalMessage(res);
-      console.warn("ERP refused the save:", message);
+      console.warn("The server refused the save:", message);
       fail(message);
     } catch (e) {
-      console.warn("Failed to submit request to ERP:", e);
+      console.warn("Failed to submit the request:", e);
       fail(unreachableMessage(e, url));
     }
     return null;
@@ -2311,7 +2311,7 @@ export default function App() {
       return updated;
     }
     const fail = (message: string) => noteSyncError({
-      key: `po:${reqId}`, id: reqId, what: 'purchase order was not raised in the ERP',
+      key: `po:${reqId}`, id: reqId, what: 'purchase order was not raised',
       message: message + SIMULATED, retry: () => createPurchaseOrderInOdoo(reqId, url),
     });
     try {
@@ -2330,10 +2330,10 @@ export default function App() {
         return updated as RequestItem;
       }
       const message = await refusalMessage(res);
-      console.warn("ERP refused to raise the purchase order:", message);
+      console.warn("The server refused to raise the purchase order:", message);
       fail(message);
     } catch (e) {
-      console.warn("Failed to raise the purchase order in ERP:", e);
+      console.warn("Failed to raise the purchase order:", e);
       fail(unreachableMessage(e, url));
     }
     return null;
@@ -2377,8 +2377,8 @@ export default function App() {
     const fail = (message: string) => noteSyncError({
       key: `po-step:${step}:${reqId}`, id: reqId,
       what: step === 'release'
-        ? 'purchase order release was not recorded in the ERP'
-        : 'vendor acknowledgment was not recorded in the ERP',
+        ? 'purchase order release was not recorded'
+        : 'vendor acknowledgment was not recorded',
       message: message + SIMULATED,
       retry: () => recordPurchaseOrderStep(reqId, step, url),
     });
@@ -2398,7 +2398,7 @@ export default function App() {
         return updated as RequestItem;
       }
       const message = await refusalMessage(res);
-      console.warn("ERP refused the purchase order step:", message);
+      console.warn("The server refused the purchase order step:", message);
       fail(message);
     } catch (e) {
       console.warn("Failed to record the purchase order step:", e);
@@ -2418,7 +2418,7 @@ export default function App() {
         return true;
       }
     } catch (e) {
-      console.warn("Failed to reset ERP database:", e);
+      console.warn("Failed to reset the demo database:", e);
     }
     return false;
   };
@@ -2989,7 +2989,7 @@ export default function App() {
   /** Turn a draft down. It stays in the discovery log, it just never becomes a vendor. */
   const rejectDraftVendor = (d: DraftVendor) => {
     setDraftDecisions(prev => ({ ...prev, [d.id]: 'rejected' }));
-    setDraftToast(`${d.name} rejected — kept in the discovery log, not created in the ERP.`);
+    setDraftToast(`${d.name} rejected — kept in the discovery log, not created.`);
     setTimeout(() => setDraftToast(""), 5000);
   };
 
@@ -3228,7 +3228,7 @@ export default function App() {
           }
         }
       } catch (e) {
-        console.warn("ERP parse failed, falling back to local simulation", e);
+        console.warn("Parse failed, falling back to local simulation", e);
       }
     }
 
@@ -3364,9 +3364,9 @@ export default function App() {
     // decision locally. No sync-error row — nothing is out of step with Odoo
     // when there is no Odoo.
     if (offlineDemo) return null;
-    const what = decision === 'approve' ? 'approval was not recorded in the ERP'
-      : decision === 'reject' ? 'rejection was not recorded in the ERP'
-        : 'clarification request was not recorded in the ERP';
+    const what = decision === 'approve' ? 'approval was not recorded'
+      : decision === 'reject' ? 'rejection was not recorded'
+        : 'clarification request was not recorded';
     const fail = (message: string) => noteSyncError({
       key: `decide:${id}`, id, what,
       message: message + SIMULATED, retry: () => decideInOdoo(id, decision, comment),
@@ -3387,10 +3387,10 @@ export default function App() {
         return updated as RequestItem;
       }
       const message = await refusalMessage(res);
-      console.warn("ERP refused the decision:", message);
+      console.warn("The server refused the decision:", message);
       fail(message);
     } catch (e) {
-      console.warn("Failed to send the decision to ERP:", e);
+      console.warn("Failed to send the decision:", e);
       fail(unreachableMessage(e, odooApiUrl));
     }
     return null;
@@ -3608,7 +3608,7 @@ export default function App() {
       const finalPrice = negotiated;
       setChatLog(prev => [
         ...prev,
-        { sender: 'vendor', text: `We accept the volume proposal. Final price locked at ₹${finalPrice.toLocaleString()} per unit, Net-30 payment terms, including 3 Years On-Site Support. Registering the Rate Contract in the ERP.`, timestamp }
+        { sender: 'vendor', text: `We accept the volume proposal. Final price locked at ₹${finalPrice.toLocaleString()} per unit, Net-30 payment terms, including 3 Years On-Site Support. Registering the Rate Contract.`, timestamp }
       ]);
       setCurrentOfferPrice(finalPrice);
       setNegotiationComplete(true);
@@ -3677,12 +3677,12 @@ export default function App() {
                 <span className="holo-text">Track Everything.</span>
               </h1>
               <p className="text-textSecondary text-lg mt-6 leading-relaxed">
-                Experience corporate procurement simplified. SmartSpend abstracts complex ERP processes into a single, intelligent workspace. No forms, no jargon, no training required.
+                Experience corporate procurement simplified. SmartSpend abstracts complex procurement processes into a single, intelligent workspace. No forms, no jargon, no training required.
               </p>
             </div>
             
             <div className="relative z-10 flex items-center justify-between text-xs text-textFaint">
-              <span>Powered by SmartSpend ERP</span>
+              <span>Powered by SmartSpend</span>
               <span>CONFIDENTIAL PROTOTYPE V2</span>
             </div>
           </div>
@@ -3692,7 +3692,7 @@ export default function App() {
               <div>
                 <h2 className="font-outfit text-3xl font-extrabold text-textPrimary tracking-tight">Sign In</h2>
                 <p className="mt-3 text-sm text-textSecondary">
-                  Use your SmartSpend account. Your portal is decided by the role your ERP account holds.
+                  Use your SmartSpend account. Your portal is decided by the role your account holds.
                 </p>
               </div>
 
@@ -3915,7 +3915,7 @@ export default function App() {
                 )}
                 
                 <div className="flex items-center justify-between text-[11px] text-textFaint px-2 py-1 bg-secondary/30 rounded-lg border border-borderTheme/50 mt-2">
-                  <span className="font-semibold uppercase tracking-wider">ERP Server</span>
+                  <span className="font-semibold uppercase tracking-wider">Server</span>
                   <div className="flex items-center space-x-1.5">
                     <span className="text-[10px] font-medium text-textSecondary">
                       {offlineDemo ? 'Demo data' : odooConnected ? 'Connected' : 'Disconnected'}
@@ -3930,7 +3930,7 @@ export default function App() {
                 {offlineDemo && (
                   <p className="mt-2 px-2 py-1.5 rounded-lg bg-gold/10 border border-gold/25 text-[10px] leading-snug text-textSecondary">
                     <span className="font-bold text-textPrimary">Sample data.</span>{' '}
-                    No ERP is connected, so nothing here is saved — every change
+                    No server is connected, so nothing here is saved — every change
                     lives in this browser until you reload.
                   </p>
                 )}
@@ -4144,9 +4144,9 @@ export default function App() {
                         <div className="mt-4 flex items-start gap-2.5 rounded-xl bg-gold/10 border border-gold/30 px-3.5 py-3">
                           <AlertTriangle className="h-4 w-4 text-gold shrink-0 mt-0.5" />
                           <p className="text-xs text-textSecondary">
-                            <strong className="text-textPrimary">No ERP is connected</strong>, so this
+                            <strong className="text-textPrimary">No server is connected</strong>, so this
                             request was not saved and nobody has been notified. It lives in this
-                            browser until you reload. Point the portal at a running ERP — the
+                            browser until you reload. Point the portal at a running server — the
                             backend URL is on the sign-in screen — and raise it again to record it
                             for real.
                           </p>
@@ -4580,7 +4580,7 @@ export default function App() {
 
                       {/* Audit Log / History */}
                       <div className="border-t border-borderTheme/80 pt-6 max-w-xl mx-auto space-y-3">
-                        <span className="text-xs font-bold text-textFaint uppercase tracking-wider block">ERP Event Log</span>
+                        <span className="text-xs font-bold text-textFaint uppercase tracking-wider block">Event Log</span>
                         {currentRequest.history.map((h, idx) => (
                           <div key={idx} className="p-3 bg-secondary/45 border border-borderTheme rounded-xl flex items-start justify-between text-xs">
                             <div>
@@ -4968,7 +4968,7 @@ export default function App() {
                             <p className="font-bold">Budget Verification Passed</p>
                             <p className="mt-1 text-textSecondary">
                               {currentRequest.budgetName
-                                ? <>Checked against <strong>{currentRequest.budgetName}</strong> in ERP — ₹{Math.round(currentRequest.budgetAvailable ?? 0).toLocaleString()} still available.</>
+                                ? <>Checked against <strong>{currentRequest.budgetName}</strong> — ₹{Math.round(currentRequest.budgetAvailable ?? 0).toLocaleString()} still available.</>
                                 : 'Funds are available. Mapped to Cost Center. No pre-approvals required for budget allocation.'}
                             </p>
                           </div>
@@ -5080,8 +5080,8 @@ export default function App() {
                             </h3>
                             <p className="text-sm text-textSecondary">
                               {currentRequest.contract
-                                ? <>Matched in ERP with <strong>{currentRequest.contractVendor}</strong>, covering {currentLines.length} requested product{currentLines.length > 1 ? 's' : ''}. Total Allocation: </>
-                                : <>Found active agreements registered in the ERP covering all {currentLines.length} requested product{currentLines.length > 1 ? 's' : ''}. Total Allocation: </>}
+                                ? <>Matched with <strong>{currentRequest.contractVendor}</strong>, covering {currentLines.length} requested product{currentLines.length > 1 ? 's' : ''}. Total Allocation: </>
+                                : <>Found active agreements covering all {currentLines.length} requested product{currentLines.length > 1 ? 's' : ''}. Total Allocation: </>}
                               <strong>₹{linesTotal(currentLines.map(l => ({ ...l, targetPrice: getContractPrice(l.productName) }))).toLocaleString()}</strong>.
                             </p>
                           </div>
@@ -5296,7 +5296,7 @@ export default function App() {
                                     <th className="py-2.5">Quote Price</th>
                                     <th className="py-2.5">Warranty SLA</th>
                                     <th className="py-2.5">Lead Time</th>
-                                    <th className="py-2.5">ERP Onboard Status</th>
+                                    <th className="py-2.5">Onboard Status</th>
                                   </tr>
                                 </thead>
                                 <tbody className="text-textSecondary">
@@ -5369,7 +5369,7 @@ export default function App() {
                           <Landmark className="h-4.5 w-4.5" />
                           <h4 className="font-outfit font-extrabold text-base text-primary">Vendor Portal Simulation Workspace</h4>
                         </div>
-                        <p className="text-xs text-textSecondary">This simulates the external vendor's secure magic link. Entering details submits them to ERP.</p>
+                        <p className="text-xs text-textSecondary">This simulates the external vendor's secure magic link. Entering details submits them.</p>
                         
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs pt-2">
                           <div>
@@ -5395,7 +5395,7 @@ export default function App() {
                               onClick={handleVendorBidSubmit}
                               className="w-full py-2 bg-pos hover:bg-pos text-xs font-bold rounded-lg text-onbrand transition-all"
                             >
-                              Submit Vendor Bid to ERP
+                              Submit Vendor Bid
                             </button>
                           </div>
                         </div>
@@ -5429,9 +5429,9 @@ export default function App() {
                         <div className="p-4 bg-pos/20 border border-pos/40 rounded-xl flex items-start space-x-3 text-pos text-xs animate-fadeIn">
                           <CheckCircle2 className="h-5 w-5 mt-0.5 flex-shrink-0" />
                           <div>
-                            <p className="font-bold">ERP Draft Partner Auto-Created!</p>
+                            <p className="font-bold">Draft Partner Auto-Created!</p>
                             <p className="mt-1 text-textSecondary">
-                              Successfully registered <strong>{lastOnboardedVendor}</strong> as a draft partner in ERP (Record ID: `res.partner.draft_092`). Magic link sent for onboard completion.
+                              Successfully registered <strong>{lastOnboardedVendor}</strong> as a draft partner (Record ID: `res.partner.draft_092`). Magic link sent for onboard completion.
                             </p>
                           </div>
                         </div>
@@ -5458,7 +5458,7 @@ export default function App() {
                               </div>
 
                               <div className="flex justify-between items-center pt-2">
-                                <span className="text-[10px] text-textFaint">Not in local ERP Partner DB</span>
+                                <span className="text-[10px] text-textFaint">Not in the vendor master</span>
                                 <button 
                                   onClick={() => handleAutoOnboard(vendor.name)}
                                   className="px-3.5 py-1.5 bg-pos hover:bg-pos text-xs font-bold rounded-lg text-onbrand"
@@ -6190,7 +6190,7 @@ export default function App() {
 
                       {/* Right: Operational Actions card */}
                       <div className="p-5 bg-secondary rounded-xl border border-borderTheme space-y-4">
-                        <span className="text-xs font-bold text-textSecondary uppercase tracking-wider block">ERP Action Control Room</span>
+                        <span className="text-xs font-bold text-textSecondary uppercase tracking-wider block">Action Control Room</span>
                         
                         <div className="space-y-4">
                           {/* Step 1: Raise the order in ERP */}
@@ -6200,7 +6200,7 @@ export default function App() {
                             </div>
                             <div className="flex-grow space-y-1">
                               <p className="font-bold text-textPrimary">1. Generate Purchase Order</p>
-                              <p className="text-[11px] text-textSecondary leading-relaxed">Creates the purchase order in the ERP from the approved request — contracted lines are priced at their rate-card value.</p>
+                              <p className="text-[11px] text-textSecondary leading-relaxed">Creates the purchase order from the approved request — contracted lines are priced at their rate-card value.</p>
                               {!currentRequest.purchaseOrders?.length ? (
                                 // Odoo refuses this to anyone outside the buyer
                                 // group (403), so offering the button to a
@@ -6228,7 +6228,7 @@ export default function App() {
                                   </p>
                                 )
                               ) : (
-                                <p className="text-[10px] text-accent-savings font-semibold mt-1 font-mono">✓ {currentRequest.purchaseOrders.join(', ')} created in the ERP</p>
+                                <p className="text-[10px] text-accent-savings font-semibold mt-1 font-mono">✓ {currentRequest.purchaseOrders.join(', ')} created</p>
                               )}
                             </div>
                           </div>
@@ -6465,7 +6465,7 @@ export default function App() {
                             <CheckCircle2 className="h-5 w-5 mt-0.5 flex-shrink-0" />
                             <div>
                               <p className="font-bold text-textPrimary">Goods Receipt Note (GRN-2026-089) Generated</p>
-                              <p className="mt-1 text-textSecondary">Successfully posted to the ERP. Stock levels updated at Bangalore Warehouse. Handing off to Accounts Payable.</p>
+                              <p className="mt-1 text-textSecondary">Successfully posted. Stock levels updated at Bangalore Warehouse. Handing off to Accounts Payable.</p>
                             </div>
                           </div>
                           <div className="flex justify-end pt-2">
@@ -6515,7 +6515,7 @@ export default function App() {
                     <div className="p-5 rounded-2xl bg-surface border border-borderTheme space-y-4 h-fit shadow-sm">
                       <div className="flex items-center space-x-2 text-accent-budget">
                         <Package className="h-4.5 w-4.5" />
-                        <h4 className="font-outfit font-extrabold text-sm text-textPrimary">ERP Warehouse Status</h4>
+                        <h4 className="font-outfit font-extrabold text-sm text-textPrimary">Warehouse Status</h4>
                       </div>
                       <div className="space-y-3 text-xs font-outfit">
                         <div className="flex justify-between">
@@ -6860,7 +6860,7 @@ export default function App() {
                             <CheckCircle2 className="h-5.5 w-5.5 mt-0.5 flex-shrink-0" />
                             <div>
                               <p className="font-bold text-textPrimary font-outfit">Payment Completed &amp; Reconciled</p>
-                              <p className="mt-1 text-textSecondary leading-relaxed">Transaction posted successfully. ERP auto-reconciliation engine verified the bank statement entry against HDFC corporate accounts. Invoice status: PAID.</p>
+                              <p className="mt-1 text-textSecondary leading-relaxed">Transaction posted successfully. The auto-reconciliation engine verified the bank statement entry against HDFC corporate accounts. Invoice status: PAID.</p>
                             </div>
                           </div>
                           <div className="flex justify-end pt-2">
@@ -7441,7 +7441,7 @@ export default function App() {
                         </button>
                       )}
                       <span className="text-[11px] text-textFaint">
-                        {masterData ? 'Live from ERP' : 'Offline fallback list — ERP not reachable'}
+                        {masterData ? 'Live data' : 'Offline fallback list — server not reachable'}
                       </span>
                     </div>
                   )}
@@ -7577,8 +7577,8 @@ export default function App() {
                           <span className="text-[11px] text-textFaint">
                             {workflowOverrides.length
                               ? `${workflowOverrides.length} edited here — kept in this browser`
-                              : masterData?.workflows ? 'Configured in the ERP · Configuration ▸ Approval Workflows'
-                                : 'Reference process — ERP not reachable'}
+                              : masterData?.workflows ? 'Configured under Configuration ▸ Approval Workflows'
+                                : 'Reference process — server not reachable'}
                           </span>
                           <button
                             onClick={() => setWorkflowForm(blankWorkflow())}
@@ -7787,8 +7787,8 @@ export default function App() {
                             </div>
                           ))}
                           <p className="text-[11px] text-textFaint bg-secondary/60 border border-borderTheme rounded-lg px-3 py-2">
-                            Saved in this browser for the demo. the ERP's master data is unchanged —
-                            set it there under Configuration.
+                            Saved in this browser for the demo. The master data is unchanged —
+                            set it under Configuration.
                           </p>
                         </div>
 
@@ -7936,7 +7936,7 @@ export default function App() {
                           </div>
 
                           <p className="text-[11px] text-textFaint bg-secondary/60 border border-borderTheme rounded-lg px-3 py-2">
-                            Saved in this browser for the demo. the ERP's workflow master is
+                            Saved in this browser for the demo. the workflow master is
                             unchanged — set it there under Configuration ▸ Approval Workflows.
                           </p>
                         </div>
@@ -8278,7 +8278,7 @@ export default function App() {
                                       ))}
                                     </div>
                                     <p className="text-[10px] text-textFaint mt-4 pt-3 border-t border-borderTheme">
-                                      Nothing here is written to ERP until you approve it. Approving creates the partner
+                                      Nothing here is written until you approve it. Approving creates the partner
                                       record and carries this provenance onto it.
                                     </p>
                                   </div>
