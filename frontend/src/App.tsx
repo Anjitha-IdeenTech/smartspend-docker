@@ -3037,6 +3037,9 @@ export default function App() {
 
   // Which of the vendor's three views is open.
   const [vendorTab, setVendorTab] = useState<'orders' | 'receipts' | 'approvals'>('orders');
+  // The order a supplier has opened. A row is a summary; this is the order and
+  // the delivery against it in full.
+  const [vendorDetailId, setVendorDetailId] = useState<string | null>(null);
 
   // Vendor Portal Local States
   const [vendorBidPrice, setVendorBidPrice] = useState<string>("118000");
@@ -7559,7 +7562,9 @@ export default function App() {
                           </thead>
                           <tbody>
                             {newestFirst(vendorOrders).map(r => (
-                              <tr key={r.id} className="border-t border-borderTheme hover:bg-secondary/60 transition-colors">
+                              <tr key={r.id}
+                                  onClick={() => setVendorDetailId(r.id)}
+                                  className="border-t border-borderTheme hover:bg-secondary/60 transition-colors cursor-pointer">
                                 <td className="px-4 py-3 text-[11px] font-mono font-bold text-textPrimary whitespace-nowrap">
                                   {r.purchaseOrders?.join(', ') || '—'}
                                 </td>
@@ -7588,7 +7593,9 @@ export default function App() {
                   ) : (
                     <div className="space-y-3">
                       {newestFirst(vendorReceipts).map(r => (
-                        <div key={r.id} className="p-5 rounded-2xl bg-surface border border-borderTheme shadow-sm">
+                        <div key={r.id}
+                             onClick={() => setVendorDetailId(r.id)}
+                             className="p-5 rounded-2xl bg-surface border border-borderTheme shadow-sm cursor-pointer hover:border-brand/40 transition-colors">
                           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-borderTheme pb-3">
                             <div className="min-w-0">
                               <span className="text-[11px] font-mono font-bold text-textFaint block">
@@ -7684,7 +7691,9 @@ export default function App() {
                                 </thead>
                                 <tbody>
                                   {newestFirst(vendorApproved).map(r => (
-                                    <tr key={r.id} className="border-t border-borderTheme hover:bg-secondary/60 transition-colors">
+                                    <tr key={r.id}
+                                        onClick={() => setVendorDetailId(r.id)}
+                                        className="border-t border-borderTheme hover:bg-secondary/60 transition-colors cursor-pointer">
                                       <td className="px-4 py-3 text-[11px] font-mono font-bold text-textPrimary whitespace-nowrap">
                                         {r.purchaseOrders?.join(', ') || r.id}
                                       </td>
@@ -7707,6 +7716,146 @@ export default function App() {
                     </div>
                   )}
                 </div>
+                );
+              })()}
+
+              {/* The order a supplier opened, in full: what was ordered, what it
+                  is worth, where the delivery stands, and everything recorded
+                  against it. A row says which order; this says what is in it. */}
+              {activeScene === 18 && vendorDetailId && (() => {
+                const r = requests.find(x => x.id === vendorDetailId);
+                if (!r) return null;
+                const money = (n: number) => `₹${n.toLocaleString('en-IN')}`;
+                const delivered = r.status === 'Paid';
+                const field = (l: string, v: React.ReactNode) => (
+                  <div key={l}>
+                    <p className="text-[9px] font-bold uppercase tracking-wider text-textFaint">{l}</p>
+                    <p className="text-xs font-semibold text-textPrimary mt-0.5">{v}</p>
+                  </div>
+                );
+                return (
+                  <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 backdrop-blur-sm p-4 sm:p-8"
+                       onClick={() => setVendorDetailId(null)}>
+                    <div className="w-full max-w-3xl rounded-2xl bg-surface border border-borderTheme shadow-xl my-auto"
+                         onClick={e => e.stopPropagation()}>
+                      <div className="flex items-start justify-between gap-4 px-6 py-5 border-b border-borderTheme">
+                        <div className="min-w-0">
+                          <span className="text-[11px] font-mono font-bold text-textFaint block">
+                            {r.purchaseOrders?.join(', ') || 'Order not yet raised'} · against {r.id}
+                          </span>
+                          <h3 className="font-outfit font-extrabold text-xl text-textPrimary truncate">
+                            {r.productQty}× {reqSummary(r)}
+                          </h3>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border"
+                                style={{ background: `rgb(${statusRgb(r.status)} / 0.12)`, color: statusColor(r.status), borderColor: `rgb(${statusRgb(r.status)} / 0.25)` }}>
+                            {r.status}
+                          </span>
+                          <button onClick={() => setVendorDetailId(null)}
+                                  title="Close"
+                                  className="p-1.5 rounded-lg text-textFaint hover:text-textPrimary hover:bg-secondary transition-all">
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="px-6 py-5 space-y-6">
+                        {/* ---- the order ---- */}
+                        <section className="space-y-3">
+                          <h4 className="text-[10px] font-bold uppercase tracking-wider text-textFaint flex items-center gap-1.5">
+                            <Package className="h-3.5 w-3.5" /> Purchase order
+                          </h4>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-4 rounded-xl bg-secondary border border-borderTheme">
+                            {field('Order', r.purchaseOrders?.join(', ') || '—')}
+                            {field('Raised on', r.createdDate || '—')}
+                            {field('Deliver to', r.location)}
+                            {field('Needed by', r.deliveryDate || '—')}
+                            {field('Department', r.department)}
+                            {field('Buyer', r.buyer || '—')}
+                            {field('Lines', `${r.lineItems?.length ?? 1}`)}
+                            {field('Order value', money(r.totalCost))}
+                          </div>
+                          <LineItemsTable lines={reqLines(r)} title="Ordered from you" totalLabel="Order value" />
+                        </section>
+
+                        {/* ---- the delivery ---- */}
+                        <section className="space-y-3">
+                          <h4 className="text-[10px] font-bold uppercase tracking-wider text-textFaint flex items-center gap-1.5">
+                            <Truck className="h-3.5 w-3.5" /> Receipt
+                          </h4>
+                          <div className={`p-4 rounded-xl border ${
+                            delivered ? 'bg-pos/5 border-pos/25' : 'bg-gold/5 border-gold/25'}`}>
+                            <div className="flex items-center gap-2">
+                              {delivered ? <CheckCircle2 className="h-4 w-4 text-pos" /> : <Clock className="h-4 w-4 text-gold" />}
+                              <p className={`text-sm font-bold ${delivered ? 'text-pos' : 'text-gold'}`}>
+                                {delivered ? 'Delivered and settled' : r.poAcknowledged ? 'Confirmed — delivery due' : 'Not yet confirmed by you'}
+                              </p>
+                            </div>
+                            <p className="text-xs text-textSecondary mt-1">
+                              {delivered
+                                ? 'The goods were received against this order and the invoice has been paid.'
+                                : r.poAcknowledged
+                                  ? `You confirmed this order. It is expected at ${r.location} by ${r.deliveryDate || 'the agreed date'}.`
+                                  : 'This order is waiting on your confirmation before delivery is scheduled.'}
+                            </p>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-4">
+                              {field('Released to you', r.poReleased ? 'Yes' : 'Not yet')}
+                              {field('Confirmed by you', r.poAcknowledged ? 'Yes' : 'Not yet')}
+                              {field('Deliver to', r.location)}
+                              {field('Needed by', r.deliveryDate || '—')}
+                            </div>
+                          </div>
+                        </section>
+
+                        {/* ---- what has happened to it ---- */}
+                        {r.history?.length > 0 && (
+                          <section className="space-y-3">
+                            <h4 className="text-[10px] font-bold uppercase tracking-wider text-textFaint flex items-center gap-1.5">
+                              <History className="h-3.5 w-3.5" /> Recorded against this order
+                            </h4>
+                            <div className="space-y-2">
+                              {r.history.slice(-6).map((h, i) => (
+                                <div key={i} className="flex items-start gap-3 px-3 py-2 rounded-lg bg-secondary border border-borderTheme">
+                                  <span className="h-1.5 w-1.5 rounded-full bg-brand mt-1.5 shrink-0" />
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-bold text-textPrimary">{h.title}</p>
+                                    {h.desc && <p className="text-[11px] text-textSecondary mt-0.5">{h.desc}</p>}
+                                  </div>
+                                  <span className="ml-auto text-[10px] text-textFaint shrink-0">{h.date}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </section>
+                        )}
+                      </div>
+
+                      <div className="flex justify-between items-center gap-3 px-6 py-4 border-t border-borderTheme">
+                        <span className="text-[11px] text-textFaint">
+                          {r.poAcknowledged ? 'You have confirmed this order.' : r.poReleased ? 'This order is waiting on your confirmation.' : ''}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          {r.poReleased && !r.poAcknowledged && (
+                            <button
+                              onClick={async () => {
+                                setPoStepBusy(r.id);
+                                await recordPurchaseOrderStep(r.id, 'acknowledge');
+                                setPoStepBusy('');
+                              }}
+                              disabled={poStepBusy === r.id}
+                              className="px-4 py-2 rounded-lg bg-accent-savings text-surface text-xs font-bold hover:opacity-90 disabled:opacity-50 transition-all"
+                            >
+                              {poStepBusy === r.id ? 'Confirming…' : 'Confirm order'}
+                            </button>
+                          )}
+                          <button onClick={() => setVendorDetailId(null)}
+                                  className="px-4 py-2 rounded-lg border border-borderTheme bg-secondary text-xs font-bold text-textSecondary hover:text-textPrimary transition-all">
+                            Close
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 );
               })()}
 
