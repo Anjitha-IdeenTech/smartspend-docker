@@ -2775,6 +2775,12 @@ export default function App() {
     if (!authToken || !requestsSynced || !requests.length) return;
     const key = `${authToken.slice(0, 12)}:${userRole}`;
     if (inboxShownRef.current === key) return;
+    // A supplier's portal opens on the queue itself — Approvals lists what is
+    // waiting on them and carries the count. Raising a modal over it said "10
+    // purchase orders are waiting on you" when most were already confirmed,
+    // and sat across the tab bar so Purchase Orders and Receipts could not be
+    // clicked at all.
+    if (userRole === 'Vendor') { inboxShownRef.current = key; return; }
     const statuses = queueStatusesForRole(userRole);
     if (!statuses.length) { inboxShownRef.current = key; return; }
     const waiting = newestFirst(requests.filter(r => statuses.includes(r.status)));
@@ -7637,7 +7643,7 @@ export default function App() {
                                   {r.productQty}× {reqSummary(r)}
                                 </h4>
                                 <p className="text-[11px] text-textSecondary mt-0.5">
-                                  Deliver to {r.location} by {r.deliveryDate || '—'} · {money(r.totalCost)}
+                                  Against {r.id} · deliver to {r.location} by {r.deliveryDate || '—'} · {money(r.totalCost)}
                                 </p>
                               </div>
                               <button
