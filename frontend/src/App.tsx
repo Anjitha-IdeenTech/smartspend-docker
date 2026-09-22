@@ -7992,6 +7992,15 @@ export default function App() {
                     openAuction={auctionOpen}
                     onOpenHandled={() => setAuctionOpen(null)}
                     onRequestUpdated={swapInRequest}
+                    onRaisePurchaseOrder={async (id) => {
+                      // Raises it once — asking again for a request that already has a
+                      // live order just opens it — then shows the release steps.
+                      const raised = await createPurchaseOrderInOdoo(id);
+                      if (!raised) return false;
+                      setSelectedRequestId(id);
+                      setActiveScene(11);
+                      return true;
+                    }}
                   />
                 </div>
               )}

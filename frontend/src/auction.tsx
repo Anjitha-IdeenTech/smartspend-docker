@@ -936,14 +936,17 @@ function SurrogateBid({ api, auction, onDone }: { api: ApiFn; auction: Auction; 
   );
 }
 
-function AuctionRoom({ api, reference, onBack, onRequestUpdated }: {
+function AuctionRoom({ api, reference, onBack, onRequestUpdated, onRaisePurchaseOrder }: {
   api: ApiFn; reference: string; onBack: () => void; onRequestUpdated: (r: AuctionableRequest) => void;
+  /** Raise (or open) the purchase order for the awarded request; false when refused. */
+  onRaisePurchaseOrder?: (requestId: string) => Promise<boolean>;
 }) {
   const [auction, setAuction] = useState<Auction | null>(null);
   const [offset, setOffset] = useState(0);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const [celebrate, setCelebrate] = useState(false);
+  const [poBusy, setPoBusy] = useState(false);
   const [burst, setBurst] = useState<string | null>(null);
   const prevExt = useRef<number | null>(null);
   const prevState = useRef<string | null>(null);
@@ -980,6 +983,16 @@ function AuctionRoom({ api, reference, onBack, onRequestUpdated }: {
     absorb(res.data.auction);
     if (res.data.request) onRequestUpdated(res.data.request);
     if (action === 'award') setCelebrate(true);
+  };
+  // The award has already written the winner and the winning prices onto the
+  // request; the purchase order is raised from exactly that, then the buyer is
+  // taken to Track Request for the release and acknowledgment steps.
+  const raisePurchaseOrder = async () => {
+    if (!onRaisePurchaseOrder || !auction?.requestId) return;
+    setPoBusy(true); setError('');
+    const ok = await onRaisePurchaseOrder(auction.requestId);
+    setPoBusy(false);
+    if (!ok) setError('The purchase order could not be raised — see the message at the top of the screen.');
   };
   const respondFor = async (participantId: number, accept: boolean) => {
     setBusy(`respond-${participantId}`); setError('');
@@ -1037,6 +1050,12 @@ function AuctionRoom({ api, reference, onBack, onRequestUpdated }: {
                 </button>
               )}
             </>
+          )}
+          {auction.state === 'awarded' && onRaisePurchaseOrder && (
+            <button onClick={raisePurchaseOrder} disabled={poBusy}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-brand px-4 py-2 text-xs font-bold text-onbrand shadow disabled:opacity-50">
+              <Send className="h-4 w-4" /> {poBusy ? 'Raising…' : 'Generate Purchase Order'}
+            </button>
           )}
           {!['awarded', 'cancelled'].includes(auction.state) && (
             <button onClick={() => act('cancel', `Cancel ${auction.id}? Every vendor's invitation is withdrawn.`)} disabled={!!busy}
@@ -1208,8 +1227,16 @@ function AuctionRoom({ api, reference, onBack, onRequestUpdated }: {
               <p className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-400/15 border border-emerald-300/40 px-3 py-1 text-xs font-bold text-emerald-200">
                 <PartyPopper className="h-3.5 w-3.5" /> saved {inr(auction.savings)} · {savedPct.toFixed(1)}% below opening
               </p>
-              <p className="mt-4 text-xs text-white/65">{auction.requestId} now names {auction.winner} at the winning prices. Raise the purchase order from <b className="text-white">To Source</b>.</p>
-              <button onClick={() => setCelebrate(false)} className="mt-5 rounded-xl bg-white px-5 py-2 text-xs font-bold text-[#1b1537]">Done</button>
+              <p className="mt-4 text-xs text-white/65">{auction.requestId} now names {auction.winner} at the winning prices. Next: raise the purchase order to {auction.winner}.</p>
+              <div className="mt-5 flex justify-center gap-2">
+                {onRaisePurchaseOrder && (
+                  <button onClick={() => { setCelebrate(false); void raisePurchaseOrder(); }} disabled={poBusy}
+                          className="rounded-xl bg-white px-5 py-2 text-xs font-black text-[#1b1537] disabled:opacity-50">
+                    Generate Purchase Order
+                  </button>
+                )}
+                <button onClick={() => setCelebrate(false)} className="rounded-xl border border-white/30 px-5 py-2 text-xs font-bold text-white">Done</button>
+              </div>
             </div>
           </div>
         </div>,
@@ -1222,11 +1249,12 @@ function AuctionRoom({ api, reference, onBack, onRequestUpdated }: {
 // ===========================================================================
 // Buyer: the desk
 // ===========================================================================
-export function AuctionDesk({ api, offline, requests, launchFor, onLaunchHandled, openAuction, onOpenHandled, onRequestUpdated }: {
+export function AuctionDesk({ api, offline, requests, launchFor, onLaunchHandled, openAuction, onOpenHandled, onRequestUpdated, onRaisePurchaseOrder }: {
   api: ApiFn; offline: boolean; requests: AuctionableRequest[];
   launchFor: string | null; onLaunchHandled: () => void;
   openAuction: string | null; onOpenHandled: () => void;
   onRequestUpdated: (r: AuctionableRequest) => void;
+  onRaisePurchaseOrder?: (requestId: string) => Promise<boolean>;
 }) {
   const [auctions, setAuctions] = useState<Auction[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -1254,7 +1282,8 @@ export function AuctionDesk({ api, offline, requests, launchFor, onLaunchHandled
 
   if (offline) return <OfflineNote />;
   if (selected) {
-    return <AuctionRoom api={api} reference={selected} onBack={() => { setSelected(null); void load(); }} onRequestUpdated={onRequestUpdated} />;
+    return <AuctionRoom api={api} reference={selected} onBack={() => { setSelected(null); void load(); }}
+                        onRequestUpdated={onRequestUpdated} onRaisePurchaseOrder={onRaisePurchaseOrder} />;
   }
 
   const live = auctions.filter(a => a.state === 'live');
