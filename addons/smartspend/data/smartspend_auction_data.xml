@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="1">
+
+        <record id="seq_smartspend_auction" model="ir.sequence">
+            <field name="name">SmartSpend Reverse Auction</field>
+            <field name="code">smartspend.auction</field>
+            <field name="prefix">AUC-%(year)s-</field>
+            <field name="padding">3</field>
+            <field name="number_next">1</field>
+            <field name="number_increment">1</field>
+            <field name="company_id" eval="False"/>
+        </record>
+
+        <!-- Opens and closes auctions on time and sends the half-hour reminder.
+             The API also moves an auction along whenever it is read, so a
+             screen never waits on this to see a close. -->
+        <record id="ir_cron_smartspend_auction_tick" model="ir.cron">
+            <field name="name">SmartSpend: open, close and remind reverse auctions</field>
+            <field name="model_id" ref="model_smartspend_auction"/>
+            <field name="state">code</field>
+            <field name="code">model._cron_tick()</field>
+            <field name="user_id" ref="base.user_root"/>
+            <field name="interval_number">1</field>
+            <field name="interval_type">minutes</field>
+        </record>
+
+        <!-- Two more supplier sign-ins, so an auction can be shown with real
+             competition: three browser windows, three vendors, one price going
+             down. Each is placed under its supplier company by the function
+             call below. -->
+        <record id="user_demo_vendor_apex" model="res.users">
+            <field name="name">Apex Systems Sales Desk</field>
+            <field name="login">vendor2@smartspend.demo</field>
+            <field name="password">vendor2</field>
+            <field name="group_ids" eval="[Command.link(ref('smartspend.group_smartspend_vendor'))]"/>
+        </record>
+
+        <record id="user_demo_vendor_securenet" model="res.users">
+            <field name="name">SecureNet Sales Desk</field>
+            <field name="login">vendor3@smartspend.demo</field>
+            <field name="password">vendor3</field>
+            <field name="group_ids" eval="[Command.link(ref('smartspend.group_smartspend_vendor'))]"/>
+        </record>
+
+    </data>
+
+    <!-- Outside the noupdate block on purpose: re-run on every upgrade, and a
+         no-op once each demo login already sits under its supplier. -->
+    <function model="smartspend.auction" name="_link_demo_vendor_accounts"/>
+</odoo>

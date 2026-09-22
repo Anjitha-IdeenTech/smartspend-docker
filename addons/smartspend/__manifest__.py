@@ -1,6 +1,6 @@
 {
     'name': 'SmartSpend AI Procurement Copilot',
-    'version': '19.0.1.1.0',
+    'version': '19.0.1.2.0',
     'summary': 'Purchase requests, rate contracts and the REST API behind the SmartSpend demo UI',
     'description': """
 SmartSpend AI Procurement Copilot — Odoo backend
@@ -39,12 +39,14 @@ belong to.
         'data/smartspend_contract_data.xml',
         'data/smartspend_workflow_data.xml',
         'data/smartspend_demo_users_data.xml',
+        'data/smartspend_auction_data.xml',
         'views/smartspend_master_views.xml',
         'views/smartspend_budget_views.xml',
         'views/smartspend_request_views.xml',
         'views/smartspend_contract_views.xml',
         'views/smartspend_workflow_views.xml',
         'views/purchase_order_views.xml',
+        'views/smartspend_auction_views.xml',
         'wizard/smartspend_request_cancel_views.xml',
         'wizard/smartspend_request_approve_views.xml',
         'views/smartspend_menus.xml',

@@ -195,4 +195,13 @@
         <field name="global" eval="True"/>
     </record>
 
+    <!-- A vendor never reads these models directly: the supplier portal goes
+         through the API, which shows each vendor their own standing only. -->
+    <record id="rule_smartspend_auction_company" model="ir.rule">
+        <field name="name">SmartSpend: reverse auction multi-company</field>
+        <field name="model_id" ref="model_smartspend_auction"/>
+        <field name="domain_force">['|', ('company_id', '=', False), ('company_id', 'in', company_ids)]</field>
+        <field name="global" eval="True"/>
+    </record>
+
 </odoo>

@@ -71,6 +71,7 @@ report "7. Purchase order lifecycle"    "$(shell "$HERE/test_po_lifecycle.py")"
 shell "$HERE/_teardown.py" > /dev/null; shell "$HERE/_setup_users.py" > /dev/null
 report "8. Full portal journey"         "$("$PY" "$HERE/test_portal_journey.py" 2>&1)"
 report "9. Hosted demo (no Odoo)"        "$(node "$HERE/test_demo_mode.mjs" 2>&1)"
+report "10. Reverse auctions"           "$(shell "$HERE/test_auction_backend.py")"
 
 echo "-------------------------------------------------------------------"
 shell "$HERE/_teardown.py" | grep -E "requests left|BASELINE"

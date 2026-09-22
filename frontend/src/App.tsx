@@ -10,12 +10,14 @@ import {
   Truck, Package, Receipt, CreditCard, Moon, Sun, Bell,
   PanelLeftClose,
   Building2, Timer, Zap, Star, Activity, Boxes, Handshake, ScanLine,
-  LayoutGrid, List as ListIcon
+  LayoutGrid, List as ListIcon, Gavel
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import {
   DEFAULT_API_URL, OFFLINE_TOKEN, resolveApiUrl, resolveDemoUser,
 } from './demoMode';
+import { AuctionDesk, VendorAuctions } from './auction';
+import type { AuctionableRequest } from './auction';
 
 // Define the Scene IDs and names
 const SCENES = [
@@ -36,7 +38,8 @@ const SCENES = [
   { id: 15, name: "Scene 15: Spend Intelligence Analytics" },
   { id: 16, name: "Scene 16: Master Data Console" },
   { id: 17, name: "Scene 17: Questions Raised" },
-  { id: 18, name: "Scene 18: Vendor Portal" }
+  { id: 18, name: "Scene 18: Vendor Portal" },
+  { id: 19, name: "Scene 19: Live Reverse Auctions" }
 ];
 
 /** The signed-in Odoo user, as returned by /api/smartspend/login. */
@@ -154,6 +157,8 @@ const VENDOR_TABS = [
   { key: 'orders' as const,    label: 'Purchase Orders', icon: Package },
   { key: 'receipts' as const,  label: 'Receipts',        icon: Truck },
   { key: 'approvals' as const, label: 'Approvals',       icon: CheckCircle2 },
+  // Reverse auctions the supplier was invited to — see src/auction.tsx.
+  { key: 'auctions' as const,  label: 'Live Auctions',   icon: Gavel },
 ];
 
 /** Every role the demo can show, with the label the switcher renders. */
@@ -1815,7 +1820,7 @@ export default function App() {
   const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
   const [activeScene, setActiveScene] = useState<number>(() => {
     const sc = Number(params?.get('scene'));
-    return sc >= 1 && sc <= 18 ? sc : 1;
+    return sc >= 1 && sc <= 19 ? sc : 1;
   });
   // --- Dark theme disabled — light (Aurora) theme only for now. ---
   // To re-enable: restore the stateful darkMode block (see git history) and
@@ -2559,7 +2564,7 @@ export default function App() {
     // Confirmed", which drops it straight out of the To Source queue — and the
     // buyer had no other route to the tracking screen, so the vendor
     // acknowledgment step it owns became unreachable the moment it was due.
-    'SCM Buyer': ['requests', 'discovery', 'tracking'],
+    'SCM Buyer': ['requests', 'auctions', 'discovery', 'tracking'],
     CEO: ['analytics', 'tracking', 'masters'],
   };
   const [navOrder, setNavOrder] = useState<Record<string, string[]>>(() => {
@@ -2617,6 +2622,7 @@ export default function App() {
         }
         setActiveScene(11);
       }
+      else if (key === 'auctions') { setActiveScene(19); }
       else { setActiveScene(6); setScmTab(key === 'discovery' ? 'discovery' : 'requests'); }
     }
     else if (role === 'CEO') { setActiveScene(key === 'masters' ? 16 : key === 'tracking' ? 11 : 15); }
@@ -2629,6 +2635,7 @@ export default function App() {
     if (role === 'SCM Buyer') {
       if (key === 'masters') return activeScene === 16;
       if (key === 'tracking') return activeScene === 11;
+      if (key === 'auctions') return activeScene === 19;
       return activeScene === 6 && scmTab === (key === 'discovery' ? 'discovery' : 'requests');
     }
     if (role === 'CEO') return key === 'masters' ? activeScene === 16 : key === 'tracking' ? activeScene === 11 : activeScene === 15;
@@ -2648,6 +2655,7 @@ export default function App() {
       'Manager/tracking': { icon: <History className="h-4 w-4" />, label: 'Track Request' },
       'Manager/masters': { icon: <Boxes className="h-4 w-4" />, label: 'Master Data', badge: pill(pendingDrafts.length, 'bg-brand/20 text-brand border border-brand/30', true) },
       'SCM Buyer/requests': { icon: <Briefcase className="h-4 w-4" />, label: 'To Source', badge: pill(requests.filter(r => BUYER_QUEUE_STATUSES.includes(r.status)).length, 'bg-brand/20 text-brand border border-brand/30') },
+      'SCM Buyer/auctions': { icon: <Gavel className="h-4 w-4" />, label: 'Live Auctions', badge: pill(auctionLiveCount + auctionToAwardCount, auctionLiveCount ? 'bg-neg/15 text-neg border border-neg/30' : 'bg-gold/20 text-gold border border-gold/30', auctionLiveCount > 0) },
       'SCM Buyer/tracking': { icon: <History className="h-4 w-4" />, label: 'Track Request', badge: pill(requests.filter(r => r.status === 'PO Confirmed').length, 'bg-brand/20 text-brand border border-brand/30') },
       'SCM Buyer/discovery': { icon: <Search className="h-4 w-4" />, label: 'Find Vendors' },
       'SCM Buyer/masters': { icon: <Boxes className="h-4 w-4" />, label: 'Master Data', badge: pill(pendingDrafts.length, 'bg-brand/20 text-brand border border-brand/30', true) },
@@ -3036,10 +3044,52 @@ export default function App() {
   };
 
   // Which of the vendor's three views is open.
-  const [vendorTab, setVendorTab] = useState<'orders' | 'receipts' | 'approvals'>('orders');
+  const [vendorTab, setVendorTab] = useState<'orders' | 'receipts' | 'approvals' | 'auctions'>('orders');
   // The order a supplier has opened. A row is a summary; this is the order and
   // the delivery against it in full.
   const [vendorDetailId, setVendorDetailId] = useState<string | null>(null);
+
+  // ---- Live reverse auctions (src/auction.tsx) ----------------------------
+  // The request the buyer asked to auction from the sourcing queue, and the
+  // auction to open when they land on the desk.
+  const [auctionLaunchFor, setAuctionLaunchFor] = useState<string | null>(null);
+  const [auctionOpen, setAuctionOpen] = useState<string | null>(null);
+  // Just enough about every auction for the sidebar badges and the sourcing
+  // queue: which request each belongs to and where it stands. The auction
+  // screens poll their own detail; this only keeps the counts honest.
+  const [auctionIndex, setAuctionIndex] = useState<{ id: string; requestId?: string; state: string; meState?: string }[]>([]);
+  const auctionApi = (path: string, init?: RequestInit) => apiFetch(path, init);
+  /** Take the request an auction action changed, without echoing it back as a save. */
+  const swapInRequest = (updated: AuctionableRequest) => {
+    setRequests(prev => {
+      const next = prev.map(r => r.id === updated.id ? (updated as unknown as RequestItem) : r);
+      lastOdooSyncRef.current = JSON.stringify(next);
+      return next;
+    });
+  };
+  useEffect(() => {
+    if (!authToken || offlineDemo || !['SCM Buyer', 'Vendor'].includes(userRole)) { setAuctionIndex([]); return; }
+    let stopped = false;
+    const tick = async () => {
+      try {
+        const res = await apiFetch('/api/smartspend/auctions', { method: 'GET' });
+        if (!res.ok || stopped) return;
+        const data = await res.json();
+        if (Array.isArray(data) && !stopped) {
+          setAuctionIndex(data.map((a: any) => ({ id: a.id, requestId: a.requestId, state: a.state, meState: a.me?.state })));
+        }
+      } catch { /* the badges keep their last value */ }
+    };
+    void tick();
+    const timer = setInterval(tick, 15000);
+    return () => { stopped = true; clearInterval(timer); };
+  }, [authToken, offlineDemo, userRole, odooApiUrl, activeScene]);
+  const auctionLiveCount = auctionIndex.filter(a => a.state === 'live').length;
+  const auctionToAwardCount = auctionIndex.filter(a => a.state === 'closed').length;
+  const vendorAuctionCount = auctionIndex.filter(a =>
+    (a.state === 'scheduled' && a.meState === 'invited') || (a.state === 'live' && a.meState === 'live')).length;
+  const auctionForRequest = (id: string) =>
+    auctionIndex.find(a => a.requestId === id && a.state !== 'cancelled');
 
   // Vendor Portal Local States
   const [vendorBidPrice, setVendorBidPrice] = useState<string>("118000");
@@ -3875,7 +3925,8 @@ export default function App() {
                       ? 'bg-brand text-onbrand' : 'text-textSecondary hover:bg-brand/10 hover:text-brand'}`}
                 >
                   <t.icon className="h-5 w-5" />
-                  {t.key === 'approvals' && vendorAwaiting.length > 0 && (
+                  {((t.key === 'approvals' && vendorAwaiting.length > 0)
+                    || (t.key === 'auctions' && vendorAuctionCount > 0)) && (
                     <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-gold" />
                   )}
                 </button>
@@ -3929,7 +3980,8 @@ export default function App() {
                   {userRole === "Vendor" && VENDOR_TABS.map(t => {
                     const active = activeScene === 18 && vendorTab === t.key;
                     const count = t.key === 'orders' ? vendorOrders.length
-                      : t.key === 'receipts' ? vendorReceipts.length : vendorAwaiting.length;
+                      : t.key === 'receipts' ? vendorReceipts.length
+                        : t.key === 'auctions' ? vendorAuctionCount : vendorAwaiting.length;
                     return (
                       <button
                         key={t.key}
@@ -5383,6 +5435,33 @@ export default function App() {
                               >
                                 Manage RFQ
                               </button>
+                              {(() => {
+                                // A live reverse auction: offered once the buyer picks
+                                // "Live Reverse Auction" above, and a way back into the
+                                // auction room once one is running for this request.
+                                const running = auctionForRequest(req.id);
+                                if (running) {
+                                  return (
+                                    <button
+                                      onClick={() => { setAuctionOpen(running.id); setActiveScene(19); }}
+                                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-brand/30 bg-brand/10 text-xs font-bold text-brand"
+                                    >
+                                      {running.state === 'live' ? <span className="auction-live-dot" /> : <Gavel className="h-3.5 w-3.5" />}
+                                      {running.id}
+                                    </button>
+                                  );
+                                }
+                                if (req.selectedSourcingMethod !== 'Bidding') return null;
+                                return (
+                                  <button
+                                    onClick={() => { setAuctionLaunchFor(req.id); setActiveScene(19); }}
+                                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold text-white shadow-md"
+                                    style={{ background: 'linear-gradient(135deg, #7C3AED 0%, #C026D3 60%, #EC4899 100%)' }}
+                                  >
+                                    <Gavel className="h-3.5 w-3.5" /> Launch Auction
+                                  </button>
+                                );
+                              })()}
                             </div>
                           </div>
                         ))}
@@ -5395,6 +5474,36 @@ export default function App() {
                   {/* SCM Tab 2: RFQ Bidding Events (Managing RFQs and bidding) */}
                   {scmTab === 'bidding' && (
                     <div className="space-y-6">
+                      {/* The live reverse auction for this request — launched and run
+                          from the auction desk. */}
+                      {(() => {
+                        const running = auctionForRequest(currentRequest.id);
+                        if (!running && !['Approved', 'Sourcing'].includes(currentRequest.status)) return null;
+                        return (
+                          <div className="relative overflow-hidden rounded-2xl p-5 text-white flex flex-col sm:flex-row sm:items-center gap-4 shadow-lg"
+                               style={{ background: 'linear-gradient(135deg, #140F2A 0%, #211943 52%, #2A1640 100%)' }}>
+                            <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white/10 border border-white/15">
+                              <Gavel className="h-5 w-5 text-pink-200" />
+                            </div>
+                            <div className="flex-1">
+                              <p className="font-outfit font-extrabold flex items-center gap-2">
+                                {running?.state === 'live' && <span className="auction-live-dot" />}
+                                {running ? `${running.id} · ${running.state === 'live' ? 'live now' : running.state === 'closed' ? 'waiting for your award' : running.state}` : 'Run this as a live reverse auction'}
+                              </p>
+                              <p className="text-xs text-white/60">
+                                {running ? 'Open the auction room to watch the bids come in and award it.'
+                                  : 'Invite vendors and let them bid the price down against the clock — the winner lands on this request.'}
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => { if (running) setAuctionOpen(running.id); else setAuctionLaunchFor(currentRequest.id); setActiveScene(19); }}
+                              className="rounded-xl bg-white px-4 py-2 text-xs font-black text-[#1b1537] shadow"
+                            >
+                              {running ? 'Open auction room' : 'Launch auction'}
+                            </button>
+                          </div>
+                        );
+                      })()}
                       <div className="p-6 rounded-2xl bg-surface border border-borderTheme space-y-6">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-borderTheme pb-4">
                           <div>
@@ -7525,7 +7634,8 @@ export default function App() {
                   <div className="flex items-center gap-1.5 p-2 rounded-2xl bg-surface border border-borderTheme shadow-sm overflow-x-auto">
                     {VENDOR_TABS.map(t => {
                       const count = t.key === 'orders' ? vendorOrders.length
-                        : t.key === 'receipts' ? vendorReceipts.length : vendorAwaiting.length;
+                        : t.key === 'receipts' ? vendorReceipts.length
+                          : t.key === 'auctions' ? vendorAuctionCount : vendorAwaiting.length;
                       return (
                         <button
                           key={t.key}
@@ -7541,6 +7651,9 @@ export default function App() {
                       );
                     })}
                   </div>
+
+                  {/* ---------- LIVE AUCTIONS ---------- */}
+                  {vendorTab === 'auctions' && <VendorAuctions api={auctionApi} offline={offlineDemo} />}
 
                   {/* ---------- CONFIRMED PURCHASE ORDERS ---------- */}
                   {vendorTab === 'orders' && (vendorOrders.length === 0 ? (
@@ -7858,6 +7971,22 @@ export default function App() {
                   </div>
                 );
               })()}
+
+              {/* --- SCENE 19: LIVE REVERSE AUCTIONS (SCM buyer) --- */}
+              {activeScene === 19 && (
+                <div className="max-w-6xl mx-auto space-y-6 animate-fadeIn">
+                  <AuctionDesk
+                    api={auctionApi}
+                    offline={offlineDemo}
+                    requests={requests}
+                    launchFor={auctionLaunchFor}
+                    onLaunchHandled={() => setAuctionLaunchFor(null)}
+                    openAuction={auctionOpen}
+                    onOpenHandled={() => setAuctionOpen(null)}
+                    onRequestUpdated={swapInRequest}
+                  />
+                </div>
+              )}
 
               {/* --- SCENE 16: MASTER DATA CONSOLE --- */}
               {activeScene === 16 && (

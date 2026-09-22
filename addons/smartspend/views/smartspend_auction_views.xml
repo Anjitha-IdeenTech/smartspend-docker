@@ -1,0 +1,414 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ================================================== Auction: list -->
+    <record id="smartspend_auction_view_list" model="ir.ui.view">
+        <field name="name">smartspend.auction.list</field>
+        <field name="model">smartspend.auction</field>
+        <field name="arch" type="xml">
+            <list string="Reverse Auctions" create="0"
+                  decoration-success="state == 'awarded'"
+                  decoration-danger="state == 'live'"
+                  decoration-info="state == 'scheduled'"
+                  decoration-warning="state == 'closed'"
+                  decoration-muted="state == 'cancelled'">
+                <field name="name"/>
+                <field name="request_id"/>
+                <field name="buyer_id" widget="many2one_avatar_user" optional="show"/>
+                <field name="start_date"/>
+                <field name="end_date"/>
+                <field name="accepted_count" string="Bidders" optional="show"/>
+                <field name="bid_count" optional="show"/>
+                <field name="extension_count" optional="hide"/>
+                <field name="ceiling_total" widget="monetary" sum="Opening"/>
+                <field name="best_total" widget="monetary" sum="Best"/>
+                <field name="leader_id" optional="show"/>
+                <field name="savings_amount" widget="monetary" sum="Savings" optional="show"/>
+                <field name="savings_percent" string="Saved %" optional="show"/>
+                <field name="currency_id" column_invisible="1"/>
+                <field name="state" widget="badge"
+                       decoration-success="state == 'awarded'"
+                       decoration-danger="state == 'live'"
+                       decoration-info="state == 'scheduled'"
+                       decoration-warning="state == 'closed'"
+                       decoration-muted="state == 'cancelled'"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- ================================================== Auction: kanban -->
+    <record id="smartspend_auction_view_kanban" model="ir.ui.view">
+        <field name="name">smartspend.auction.kanban</field>
+        <field name="model">smartspend.auction</field>
+        <field name="arch" type="xml">
+            <kanban default_group_by="state" create="0" quick_create="false" group_create="false"
+                    group_delete="false" group_edit="false" records_draggable="false">
+                <field name="currency_id"/>
+                <field name="state"/>
+                <templates>
+                    <t t-name="card">
+                        <div class="d-flex align-items-baseline">
+                            <field name="name" class="fw-bolder fs-5 me-2"/>
+                            <span t-if="record.state.raw_value == 'live'"
+                                  class="badge text-bg-danger ms-auto">● LIVE</span>
+                        </div>
+                        <field name="request_id" class="text-muted"/>
+                        <div class="d-flex mt-2 gap-3">
+                            <div>
+                                <div class="small text-muted">Opening</div>
+                                <field name="ceiling_total" widget="monetary"/>
+                            </div>
+                            <div>
+                                <div class="small text-muted">Best bid</div>
+                                <field name="best_total" widget="monetary" class="fw-bold"/>
+                            </div>
+                        </div>
+                        <div class="mt-1" t-if="record.leader_id.raw_value">
+                            <span class="small text-muted">L1 </span>
+                            <field name="leader_id" class="fw-bold"/>
+                            <span class="text-success small ms-1">
+                                −<field name="savings_percent"/>%
+                            </span>
+                        </div>
+                        <footer class="align-items-end">
+                            <div class="small text-muted">
+                                <field name="bid_count"/> bids ·
+                                <field name="accepted_count"/> bidders
+                            </div>
+                            <field name="buyer_id" widget="many2one_avatar_user" class="ms-auto"/>
+                        </footer>
+                    </t>
+                </templates>
+            </kanban>
+        </field>
+    </record>
+
+    <!-- ================================================== Auction: form -->
+    <record id="smartspend_auction_view_form" model="ir.ui.view">
+        <field name="name">smartspend.auction.form</field>
+        <field name="model">smartspend.auction</field>
+        <field name="arch" type="xml">
+            <form string="Reverse Auction" create="0">
+                <header>
+                    <button name="action_schedule" type="object" string="Send Invitations"
+                            class="oe_highlight" invisible="state != 'draft'"/>
+                    <button name="action_start" type="object" string="Open Bidding Now"
+                            class="oe_highlight" invisible="state != 'scheduled'"
+                            confirm="Open bidding now? Vendors who have not accepted yet are dropped."/>
+                    <button name="action_award" type="object" string="Award to L1"
+                            class="oe_highlight" invisible="state != 'closed'"
+                            confirm="Award this auction to the lowest bidder and reprice the request at their bid?"/>
+                    <button name="action_bid_again" type="object" string="Bid Again"
+                            invisible="state != 'closed'"
+                            confirm="Reopen bidding for another round?"/>
+                    <button name="action_cancel" type="object" string="Cancel Auction"
+                            invisible="state in ('awarded', 'cancelled')"
+                            confirm="Cancel this auction? Every vendor's invitation is withdrawn."/>
+                    <field name="state" widget="statusbar"
+                           statusbar_visible="scheduled,live,closed,awarded"/>
+                </header>
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button class="oe_stat_button" name="action_view_request"
+                                type="object" icon="fa-file-text-o">
+                            <div class="o_field_widget o_stat_info">
+                                <span class="o_stat_value"><field name="request_id" readonly="1"/></span>
+                                <span class="o_stat_text">Request</span>
+                            </div>
+                        </button>
+                        <button class="oe_stat_button" name="action_view_bids"
+                                type="object" icon="fa-gavel">
+                            <field name="bid_count" widget="statinfo" string="Bids"/>
+                        </button>
+                    </div>
+                    <widget name="web_ribbon" title="Awarded" bg_color="text-bg-success"
+                            invisible="state != 'awarded'"/>
+                    <widget name="web_ribbon" title="Live" bg_color="text-bg-danger"
+                            invisible="state != 'live'"/>
+                    <widget name="web_ribbon" title="Cancelled" bg_color="text-bg-secondary"
+                            invisible="state != 'cancelled'"/>
+                    <div class="oe_title">
+                        <h1><field name="name" readonly="1"/></h1>
+                    </div>
+                    <group>
+                        <group string="Standing">
+                            <field name="currency_id" invisible="1"/>
+                            <field name="ceiling_total" widget="monetary"/>
+                            <field name="best_total" widget="monetary"/>
+                            <field name="leader_id"/>
+                            <field name="savings_amount" widget="monetary"/>
+                            <field name="savings_percent"/>
+                        </group>
+                        <group string="Clock">
+                            <field name="start_date" readonly="state not in ('draft', 'scheduled')"/>
+                            <field name="end_date" readonly="1"/>
+                            <field name="original_end_date"
+                                   invisible="not extension_count"/>
+                            <field name="duration_minutes" readonly="state not in ('draft', 'scheduled')"/>
+                            <field name="extension_count"/>
+                            <field name="closed_on" invisible="not closed_on"/>
+                        </group>
+                        <group string="Rules">
+                            <field name="extension_window" readonly="state not in ('draft', 'scheduled')"/>
+                            <field name="extension_minutes" readonly="state not in ('draft', 'scheduled')"/>
+                            <field name="min_decrement" widget="monetary"
+                                   readonly="state not in ('draft', 'scheduled')"/>
+                            <field name="visibility" readonly="state not in ('draft', 'scheduled')"/>
+                            <field name="rebid_minutes" readonly="state in ('awarded', 'cancelled')"/>
+                        </group>
+                        <group string="Outcome" invisible="state not in ('awarded', 'cancelled')">
+                            <field name="winner_id" invisible="not winner_id"/>
+                            <field name="awarded_total" widget="monetary" invisible="not winner_id"/>
+                            <field name="awarded_on" invisible="not winner_id"/>
+                            <field name="awarded_by_id" invisible="not winner_id"/>
+                            <field name="cancel_reason" invisible="not cancel_reason"/>
+                        </group>
+                        <group>
+                            <field name="buyer_id" widget="many2one_avatar_user"/>
+                            <field name="company_id" groups="base.group_multi_company"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Leaderboard" name="leaderboard">
+                            <field name="participant_ids">
+                                <list create="0" delete="0" editable="bottom"
+                                      decoration-success="rank == 1"
+                                      decoration-muted="state in ('declined', 'cancelled')">
+                                    <field name="rank" string="L" readonly="1"/>
+                                    <field name="partner_id" readonly="1"/>
+                                    <field name="user_id" readonly="1" optional="show"/>
+                                    <field name="state" widget="badge" readonly="1"
+                                           decoration-success="state in ('won', 'accepted', 'live')"
+                                           decoration-danger="state in ('declined', 'lost')"
+                                           decoration-info="state == 'invited'"/>
+                                    <field name="current_total" widget="monetary"/>
+                                    <field name="savings_percent" string="Below Opening %"/>
+                                    <field name="bid_count" string="Bids"/>
+                                    <field name="improved_on" optional="show"/>
+                                    <field name="responded_on" optional="hide"/>
+                                    <field name="response_note" optional="hide" readonly="1"/>
+                                    <field name="currency_id" column_invisible="1"/>
+                                    <button name="action_accept" type="object" string="Accept"
+                                            icon="fa-check" invisible="state != 'invited'"/>
+                                    <button name="action_decline" type="object" string="Decline"
+                                            icon="fa-times" invisible="state not in ('invited', 'accepted')"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Bid Log" name="bids">
+                            <field name="bid_ids" readonly="1">
+                                <list>
+                                    <field name="placed_on"/>
+                                    <field name="partner_id"/>
+                                    <field name="total" widget="monetary"/>
+                                    <field name="rank_after" string="Rank"/>
+                                    <field name="seconds_left" string="Secs Left" optional="hide"/>
+                                    <field name="extended_by" string="+Min" optional="show"/>
+                                    <field name="on_behalf" optional="show"/>
+                                    <field name="placed_by_id" widget="many2one_avatar_user" optional="show"/>
+                                    <field name="currency_id" column_invisible="1"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Items" name="items">
+                            <field name="line_ids" readonly="1">
+                                <list>
+                                    <field name="product_name"/>
+                                    <field name="product_qty"/>
+                                    <field name="product_uom_id"/>
+                                    <field name="ceiling_price" widget="monetary"/>
+                                    <field name="ceiling_subtotal" widget="monetary" sum="Opening"/>
+                                    <field name="currency_id" column_invisible="1"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Terms" name="terms">
+                            <field name="terms" nolabel="1"
+                                   readonly="state not in ('draft', 'scheduled')"
+                                   placeholder="What a vendor agrees to by accepting the invitation."/>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <!-- ================================================== Auction: search -->
+    <record id="smartspend_auction_view_search" model="ir.ui.view">
+        <field name="name">smartspend.auction.search</field>
+        <field name="model">smartspend.auction</field>
+        <field name="arch" type="xml">
+            <search string="Reverse Auctions">
+                <field name="name"/>
+                <field name="request_id"/>
+                <field name="leader_id"/>
+                <field name="participant_ids" string="Vendor" filter_domain="[('participant_ids.partner_id', 'ilike', self)]"/>
+                <filter name="live" string="Live" domain="[('state', '=', 'live')]"/>
+                <filter name="scheduled" string="Scheduled" domain="[('state', '=', 'scheduled')]"/>
+                <filter name="closed" string="To Award" domain="[('state', '=', 'closed')]"/>
+                <filter name="awarded" string="Awarded" domain="[('state', '=', 'awarded')]"/>
+                <separator/>
+                <filter name="mine" string="My Auctions" domain="[('buyer_id', '=', uid)]"/>
+                <filter name="filter_start" string="Opens" date="start_date"/>
+                <group>
+                    <filter name="group_state" string="Status" context="{'group_by': 'state'}"/>
+                    <filter name="group_leader" string="Leading Vendor" context="{'group_by': 'leader_id'}"/>
+                    <filter name="group_buyer" string="Buyer" context="{'group_by': 'buyer_id'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="smartspend_auction_action" model="ir.actions.act_window">
+        <field name="name">Reverse Auctions</field>
+        <field name="res_model">smartspend.auction</field>
+        <field name="view_mode">kanban,list,form</field>
+        <field name="search_view_id" ref="smartspend_auction_view_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                No reverse auction yet
+            </p>
+            <p>
+                Open an approved purchase request and press <b>Launch Reverse Auction</b>.
+                Invited vendors accept the terms, then bid the price down live against
+                the clock; the lowest total at the close is L1.
+            </p>
+        </field>
+    </record>
+
+    <!-- ================================================== Bid log -->
+    <record id="smartspend_auction_bid_view_list" model="ir.ui.view">
+        <field name="name">smartspend.auction.bid.list</field>
+        <field name="model">smartspend.auction.bid</field>
+        <field name="arch" type="xml">
+            <list string="Bid Log" create="0" edit="0" delete="0">
+                <field name="placed_on"/>
+                <field name="auction_id"/>
+                <field name="partner_id"/>
+                <field name="total" widget="monetary"/>
+                <field name="rank_after" string="Rank"/>
+                <field name="extended_by" string="+Min" optional="show"/>
+                <field name="on_behalf" optional="show"/>
+                <field name="placed_by_id" widget="many2one_avatar_user" optional="show"/>
+                <field name="currency_id" column_invisible="1"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="smartspend_auction_bid_view_graph" model="ir.ui.view">
+        <field name="name">smartspend.auction.bid.graph</field>
+        <field name="model">smartspend.auction.bid</field>
+        <field name="arch" type="xml">
+            <graph string="Best Bid by Vendor" type="bar" order="asc">
+                <field name="partner_id"/>
+                <field name="total" type="measure"/>
+            </graph>
+        </field>
+    </record>
+
+    <record id="smartspend_auction_bid_view_pivot" model="ir.ui.view">
+        <field name="name">smartspend.auction.bid.pivot</field>
+        <field name="model">smartspend.auction.bid</field>
+        <field name="arch" type="xml">
+            <pivot string="Bids">
+                <field name="auction_id" type="row"/>
+                <field name="partner_id" type="col"/>
+                <field name="total" type="measure"/>
+            </pivot>
+        </field>
+    </record>
+
+    <record id="smartspend_auction_bid_view_search" model="ir.ui.view">
+        <field name="name">smartspend.auction.bid.search</field>
+        <field name="model">smartspend.auction.bid</field>
+        <field name="arch" type="xml">
+            <search string="Bids">
+                <field name="auction_id"/>
+                <field name="partner_id"/>
+                <filter name="surrogate" string="Surrogate Bids" domain="[('on_behalf', '=', True)]"/>
+                <filter name="extended" string="Extended the Close" domain="[('extended_by', '>', 0)]"/>
+                <group>
+                    <filter name="group_auction" string="Auction" context="{'group_by': 'auction_id'}"/>
+                    <filter name="group_vendor" string="Vendor" context="{'group_by': 'partner_id'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="smartspend_auction_bid_action" model="ir.actions.act_window">
+        <field name="name">Bid Log</field>
+        <field name="res_model">smartspend.auction.bid</field>
+        <field name="view_mode">list,graph,pivot</field>
+        <field name="search_view_id" ref="smartspend_auction_bid_view_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">No bids yet</p>
+            <p>Every price a vendor puts into a reverse auction is logged here and cannot be edited.</p>
+        </field>
+    </record>
+
+    <!-- ================================================== Launch wizard -->
+    <record id="smartspend_auction_launch_view_form" model="ir.ui.view">
+        <field name="name">smartspend.auction.launch.form</field>
+        <field name="model">smartspend.auction.launch</field>
+        <field name="arch" type="xml">
+            <form string="Launch Reverse Auction">
+                <group>
+                    <group string="What is being bid on">
+                        <field name="request_id"/>
+                        <field name="currency_id" invisible="1"/>
+                        <field name="ceiling_total" widget="monetary"/>
+                        <field name="partner_ids" widget="many2many_tags"
+                               options="{'no_create': True}"/>
+                    </group>
+                    <group string="When">
+                        <field name="start_date"/>
+                        <field name="duration_minutes"/>
+                    </group>
+                    <group string="Rules">
+                        <field name="extension_window"/>
+                        <field name="extension_minutes"/>
+                        <field name="min_decrement" widget="monetary"/>
+                        <field name="visibility" widget="radio"/>
+                        <field name="rebid_minutes"/>
+                    </group>
+                </group>
+                <group string="Terms &amp; Conditions">
+                    <field name="terms" nolabel="1" colspan="2"/>
+                </group>
+                <footer>
+                    <button name="action_launch" type="object" string="Send Invitations"
+                            class="oe_highlight"/>
+                    <button string="Discard" special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <!-- ================================================== On the request -->
+    <record id="smartspend_request_view_form_auction" model="ir.ui.view">
+        <field name="name">smartspend.request.form.auction</field>
+        <field name="model">smartspend.request</field>
+        <field name="inherit_id" ref="smartspend_request_view_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//button[@name='action_start_sourcing']" position="after">
+                <button name="action_launch_auction" type="object" string="Launch Reverse Auction"
+                        invisible="state not in ('approved', 'sourcing')"
+                        groups="smartspend.group_smartspend_buyer"/>
+            </xpath>
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button class="oe_stat_button" name="action_view_auctions"
+                        type="object" icon="fa-gavel"
+                        invisible="not auction_count"
+                        groups="smartspend.group_smartspend_buyer">
+                    <field name="auction_count" widget="statinfo" string="Auctions"/>
+                </button>
+            </xpath>
+            <xpath expr="//field[@name='vendor_name']" position="after">
+                <field name="awarded_auction_id" invisible="not awarded_auction_id"
+                       groups="smartspend.group_smartspend_buyer"/>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

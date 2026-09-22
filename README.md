@@ -30,6 +30,8 @@ so the plain URL reaches this stack's Odoo. Odoo's own backend is on
 | `buyer@smartspend.demo` | `buyer` | SCM Buyer |
 | `vendor@smartspend.demo` | `vendor` | Vendor |
 | `admin@smartspend.demo` | `admin` | Full access |
+| `vendor2@smartspend.demo` | `vendor2` | Vendor — Apex Systems (for live auctions) |
+| `vendor3@smartspend.demo` | `vendor3` | Vendor — SecureNet (for live auctions) |
 
 > These are demo credentials for a local stack. Change them before exposing
 > this to a network. The database ships with no API keys and no password for
@@ -60,6 +62,26 @@ so the plain URL reaches this stack's Odoo. Odoo's own backend is on
 
 The role comes from the account you sign in as, so switching role means signing
 in as someone else.
+
+## Live reverse auction (bidding)
+
+Vendors bid a request's price down against the clock; the lowest total at the
+close is L1. Ported from the Odoo 15 `bidding` module and run end to end in the
+portal. Best shown with three browser windows (normal, incognito, a second
+browser), one per login:
+
+| # | Who | Does |
+|---|---|---|
+| 1 | SCM Buyer | **To Source** → pick *Live Reverse Auction* on an approved request → **Launch Auction** (or **Live Auctions** → *Launch an auction*). Invite Primus, Apex and SecureNet; opens in 2 min, runs 5 min |
+| 2 | `vendor@` / `vendor2@` | **Live Auctions** → accept the terms |
+| 3 | SCM Buyer | **Open bidding now** once two have accepted |
+| 4 | Vendors | Bid with the quick steps (−1%, *Beat the leader*); each sees only their own rank — an outbid vendor gets an alert |
+| 5 | SCM Buyer | Watch the auction room: price curve, leaderboard, play-by-play. A bid in the last minute extends the close |
+| 6 | SCM Buyer | **Award to L1** — the request is repriced at the winning bid and names the winner; raise the PO as usual |
+
+A vendor who quotes by phone can be accepted and bid for by the buyer
+(*Record a phoned-in bid*), logged under the buyer's name. In Odoo:
+**SmartSpend → Reverse Auctions**.
 
 ## Checking it is really connected
 

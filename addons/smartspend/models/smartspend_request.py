@@ -307,6 +307,20 @@ class SmartspendRequest(models.Model):
              "behind it. A request that reached Paid before the bill was raised "
              "automatically is the usual case.")
 
+    # -- Reverse auction ----------------------------------------------------
+    # Buyers only: a requester has no rights on the auction models, and the
+    # vendors' prices are not theirs to read.
+    auction_ids = fields.One2many(
+        'smartspend.auction', 'request_id', string='Reverse Auctions',
+        groups='smartspend.group_smartspend_buyer')
+    auction_count = fields.Integer(
+        compute='_compute_auction_count', groups='smartspend.group_smartspend_buyer')
+    awarded_auction_id = fields.Many2one(
+        'smartspend.auction', string='Won at Auction', readonly=True, copy=False,
+        help="The reverse auction this request's vendor and prices came from. While "
+             "it is set, the purchase order is priced at the winning bid rather than "
+             "at any rate card that also covers the items.")
+
     _name_uniq = models.Constraint(
         'UNIQUE(name, company_id)',
         'A purchase request with this reference already exists.',
@@ -1223,6 +1237,36 @@ class SmartspendRequest(models.Model):
             'context': dict(self.env.context, smartspend_request_id=self.id),
         }
 
+    def _compute_auction_count(self):
+        for request in self:
+            request.auction_count = len(request.auction_ids)
+
+    def action_launch_auction(self):
+        """Open the launcher that puts this request up for a live reverse auction."""
+        self.ensure_one()
+        return {
+            'type': 'ir.actions.act_window',
+            'name': _('Launch Reverse Auction'),
+            'res_model': 'smartspend.auction.launch',
+            'view_mode': 'form',
+            'target': 'new',
+            'context': {'default_request_id': self.id},
+        }
+
+    def action_view_auctions(self):
+        self.ensure_one()
+        action = {
+            'type': 'ir.actions.act_window',
+            'name': _('Reverse Auctions for %s', self.name),
+            'res_model': 'smartspend.auction',
+            'domain': [('request_id', '=', self.id)],
+        }
+        if len(self.auction_ids) == 1:
+            action.update(view_mode='form', res_id=self.auction_ids.id)
+        else:
+            action.update(view_mode='list,form')
+        return action
+
 
     # ------------------------------------------------------------------
     # Portal (REST API) serialisation
@@ -1725,7 +1769,10 @@ class SmartspendRequestLine(models.Model):
     def _prepare_purchase_order_line_vals(self, order):
         self.ensure_one()
         product = self._find_or_create_product()
-        price = self.contract_price if self.contract_line_id else self.price_unit
+        # A price won at reverse auction is what the vendor committed to for this
+        # order, so it stands even where a rate card also covers the item.
+        on_rate_card = self.contract_line_id and not self.request_id.awarded_auction_id
+        price = self.contract_price if on_rate_card else self.price_unit
         # Order in the requested unit when the product actually accepts it;
         # a unit the product does not know would not price or receive correctly.
         uom = self.product_uom_id

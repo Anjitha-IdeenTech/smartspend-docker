@@ -36,6 +36,25 @@
               action="smartspend_contract_action"
               sequence="10"/>
 
+    <!-- Live reverse auctions: run by the sourcing desk, so buyers only. -->
+    <menuitem id="menu_smartspend_auctions"
+              name="Reverse Auctions"
+              parent="menu_smartspend_root"
+              groups="smartspend.group_smartspend_buyer"
+              sequence="22"/>
+
+    <menuitem id="menu_smartspend_auction_all"
+              name="Auctions"
+              parent="menu_smartspend_auctions"
+              action="smartspend_auction_action"
+              sequence="10"/>
+
+    <menuitem id="menu_smartspend_auction_bids"
+              name="Bid Log"
+              parent="menu_smartspend_auctions"
+              action="smartspend_auction_bid_action"
+              sequence="20"/>
+
     <menuitem id="menu_smartspend_budgets"
               name="Budgets"
               parent="menu_smartspend_root"
