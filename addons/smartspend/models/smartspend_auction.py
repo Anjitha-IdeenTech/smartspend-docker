@@ -64,18 +64,24 @@ REBID_WINDOW_MINUTES = 15
 REMINDER_MINUTES = 30
 
 # Demo supplier logins, and the supplier company each one bids for.
-# Demo supplier logins: the supplier company each one bids for, and the
-# person behind the login. A client sees three real-looking sales contacts
-# competing, not three "demo vendor" accounts. The last item is the name the
-# account was first seeded with; only that is ever replaced, so a name changed
-# by hand is left alone.
+# Demo supplier logins: the supplier company each one bids for, the person
+# behind it, and a sign-in named after the company. A client sees three
+# real-looking sales contacts competing, not three "demo vendor" accounts.
+# `seeded` holds the name and login each account was first created with; only
+# those are ever replaced, so an account somebody has since edited is left alone.
 DEMO_VENDOR_ACCOUNTS = {
-    'smartspend.user_demo_vendor': (
-        'Primus Technologies', 'Arjun Nair', 'Key Account Manager', ('Demo Vendor',)),
-    'smartspend.user_demo_vendor_apex': (
-        'Apex Systems', 'Meera Krishnan', 'Enterprise Sales Lead', ('Apex Systems Sales Desk',)),
-    'smartspend.user_demo_vendor_securenet': (
-        'SecureNet', 'Vikram Desai', 'Regional Sales Manager', ('SecureNet Sales Desk',)),
+    'smartspend.user_demo_vendor': {
+        'supplier': 'Primus Technologies', 'person': 'Arjun Nair', 'job': 'Key Account Manager',
+        'login': 'primus@smartspend.demo', 'password': 'primus',
+        'seeded': {'names': ('Demo Vendor',), 'logins': ('vendor@smartspend.demo',)}},
+    'smartspend.user_demo_vendor_apex': {
+        'supplier': 'Apex Systems', 'person': 'Meera Krishnan', 'job': 'Enterprise Sales Lead',
+        'login': 'apex@smartspend.demo', 'password': 'apex',
+        'seeded': {'names': ('Apex Systems Sales Desk',), 'logins': ('vendor2@smartspend.demo',)}},
+    'smartspend.user_demo_vendor_securenet': {
+        'supplier': 'SecureNet', 'person': 'Vikram Desai', 'job': 'Regional Sales Manager',
+        'login': 'securenet@smartspend.demo', 'password': 'securenet',
+        'seeded': {'names': ('SecureNet Sales Desk',), 'logins': ('vendor3@smartspend.demo',)}},
 }
 
 
@@ -920,13 +926,20 @@ class SmartspendAuction(models.Model):
         by the demo seeder rather than by a data file.
         """
         Partner = self.env['res.partner'].sudo()
-        for xmlid, (supplier, person, job, seeded_names) in DEMO_VENDOR_ACCOUNTS.items():
+        Users = self.env['res.users'].sudo().with_context(active_test=False)
+        for xmlid, spec in DEMO_VENDOR_ACCOUNTS.items():
+            supplier, person, job = spec['supplier'], spec['person'], spec['job']
             user = self.env.ref(xmlid, raise_if_not_found=False)
             if not user:
                 continue
             user = user.sudo()
-            if user.name in seeded_names:
+            if user.name in spec['seeded']['names']:
                 user.name = person
+            # Sign in under the company's name. The password moves with the
+            # login, and only from the login the account was seeded with.
+            if (user.login in spec['seeded']['logins']
+                    and not Users.search_count([('login', '=', spec['login'])])):
+                user.write({'login': spec['login'], 'password': spec['password']})
             company = Partner.search([('name', '=ilike', supplier), ('is_company', '=', True)], limit=1)
             if not company:
                 company = Partner.create({'name': supplier, 'is_company': True, 'supplier_rank': 1})

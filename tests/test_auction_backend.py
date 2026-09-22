@@ -61,6 +61,10 @@ check('amounts read the way the portal writes them',
       (inr(157000), inr(1234567.5), inr(999), inr(0)))
 print('=' * 72)
 
+check('each supplier signs in under its company\'s name',
+      (v_primus.login, v_apex.login, v_secure.login)
+      == ('primus@smartspend.demo', 'apex@smartspend.demo', 'securenet@smartspend.demo'),
+      (v_primus.login, v_apex.login, v_secure.login))
 check('the demo suppliers are real-looking sales contacts',
       (v_primus.name, v_apex.name, v_secure.name) == ('Arjun Nair', 'Meera Krishnan', 'Vikram Desai')
       and all(u.partner_id.function for u in (v_primus, v_apex, v_secure)),

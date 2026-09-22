@@ -6555,7 +6555,7 @@ export default function App() {
                                   </button>
                                 ) : (
                                   <p className="text-[10px] text-textSecondary/60 font-semibold mt-1 italic">
-                                    Waiting on the vendor to confirm. Sign in as buyer@smartspend.demo or vendor@smartspend.demo, then open Track Request.
+                                    Waiting on the vendor to confirm. Sign in as buyer@smartspend.demo, or as the supplier it was placed with (e.g. primus@smartspend.demo), then open Track Request.
                                   </p>
                                 )
                               )}

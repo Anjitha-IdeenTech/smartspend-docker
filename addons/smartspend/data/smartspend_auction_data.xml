@@ -31,15 +31,15 @@
              call below. -->
         <record id="user_demo_vendor_apex" model="res.users">
             <field name="name">Meera Krishnan</field>
-            <field name="login">vendor2@smartspend.demo</field>
-            <field name="password">vendor2</field>
+            <field name="login">apex@smartspend.demo</field>
+            <field name="password">apex</field>
             <field name="group_ids" eval="[Command.link(ref('smartspend.group_smartspend_vendor'))]"/>
         </record>
 
         <record id="user_demo_vendor_securenet" model="res.users">
             <field name="name">Vikram Desai</field>
-            <field name="login">vendor3@smartspend.demo</field>
-            <field name="password">vendor3</field>
+            <field name="login">securenet@smartspend.demo</field>
+            <field name="password">securenet</field>
             <field name="group_ids" eval="[Command.link(ref('smartspend.group_smartspend_vendor'))]"/>
         </record>
 

@@ -28,14 +28,15 @@ so the plain URL reaches this stack's Odoo. Odoo's own backend is on
 | `requester@smartspend.demo` | `requester` | Requester |
 | `manager@smartspend.demo` | `manager` | Manager |
 | `buyer@smartspend.demo` | `buyer` | SCM Buyer |
-| `vendor@smartspend.demo` | `vendor` | Vendor |
+| `primus@smartspend.demo` | `primus` | Vendor — Primus Technologies |
 | `admin@smartspend.demo` | `admin` | Full access |
-| `vendor2@smartspend.demo` | `vendor2` | Vendor — Apex Systems (for live auctions) |
-| `vendor3@smartspend.demo` | `vendor3` | Vendor — SecureNet (for live auctions) |
+| `apex@smartspend.demo` | `apex` | Vendor — Apex Systems |
+| `securenet@smartspend.demo` | `securenet` | Vendor — SecureNet |
 
 The three supplier sign-ins are three competing companies, each with its own
-sales contact: `vendor@` is Arjun Nair (Primus Technologies), `vendor2@` Meera
-Krishnan (Apex Systems), `vendor3@` Vikram Desai (SecureNet). Each sees only
+sales contact, and signs in under the company's name: `primus@` is Arjun Nair
+(Primus Technologies), `apex@` Meera Krishnan (Apex Systems), `securenet@` Vikram
+Desai (SecureNet). Each sees only
 their own invitations, bids and rank — and only the purchase orders placed with
 their company, so to acknowledge an order, sign in as the vendor it went to.
 
@@ -79,7 +80,7 @@ browser), one per login:
 | # | Who | Does |
 |---|---|---|
 | 1 | SCM Buyer | **To Source** → pick *Live Reverse Auction* on an approved request → **Launch Auction** (or **Live Auctions** → *Launch an auction*). Invite Primus, Apex and SecureNet; opens in 2 min, runs 5 min |
-| 2 | `vendor@` / `vendor2@` | **Live Auctions** → accept the terms. The moment every invited vendor has answered (and at least two are in), bidding opens by itself |
+| 2 | `primus@` / `apex@` | **Live Auctions** → accept the terms. The moment every invited vendor has answered (and at least two are in), bidding opens by itself |
 | 3 | SCM Buyer | Or **Open bidding now** once two have accepted, without waiting for the rest |
 | 4 | Vendors | Bid with the quick steps (−1%, *Beat the leader*); each sees only their own rank — an outbid vendor gets an alert |
 | 5 | SCM Buyer | Watch the auction room: price curve, leaderboard, play-by-play. **Time extension** (as in the Odoo 15 module): a bid inside *Extension Applied in last (minutes)* adds *Extension Duration (minutes)* to the clock — every time a vendor bids at the last moment |

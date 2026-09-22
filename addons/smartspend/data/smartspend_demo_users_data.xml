@@ -37,9 +37,9 @@
              payload the portal reads back says "Vendor" and lands the account
              on the quoting screen rather than a requester's inbox. -->
         <record id="user_demo_vendor" model="res.users">
-            <field name="name">Demo Vendor</field>
-            <field name="login">vendor@smartspend.demo</field>
-            <field name="password">vendor</field>
+            <field name="name">Arjun Nair</field>
+            <field name="login">primus@smartspend.demo</field>
+            <field name="password">primus</field>
             <field name="group_ids" eval="[Command.link(ref('smartspend.group_smartspend_vendor'))]"/>
         </record>
 

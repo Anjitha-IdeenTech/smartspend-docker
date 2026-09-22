@@ -44,7 +44,7 @@ ok('the buyer holds SCM Buyer but not Manager', (() => {
   return b && b.roles.includes('SCM Buyer') && !b.roles.includes('Manager');
 })());
 ok('the vendor is a vendor and nothing else', (() => {
-  const v = resolveDemoUser('vendor', 'vendor');
+  const v = resolveDemoUser('primus', 'primus');
   return v && v.is_vendor === true && v.roles.join() === 'Vendor';
 })());
 ok('a wrong password is refused', resolveDemoUser('manager', 'nope') === null);
