@@ -64,10 +64,18 @@ REBID_WINDOW_MINUTES = 15
 REMINDER_MINUTES = 30
 
 # Demo supplier logins, and the supplier company each one bids for.
+# Demo supplier logins: the supplier company each one bids for, and the
+# person behind the login. A client sees three real-looking sales contacts
+# competing, not three "demo vendor" accounts. The last item is the name the
+# account was first seeded with; only that is ever replaced, so a name changed
+# by hand is left alone.
 DEMO_VENDOR_ACCOUNTS = {
-    'smartspend.user_demo_vendor': 'Primus Technologies',
-    'smartspend.user_demo_vendor_apex': 'Apex Systems',
-    'smartspend.user_demo_vendor_securenet': 'SecureNet',
+    'smartspend.user_demo_vendor': (
+        'Primus Technologies', 'Arjun Nair', 'Key Account Manager', ('Demo Vendor',)),
+    'smartspend.user_demo_vendor_apex': (
+        'Apex Systems', 'Meera Krishnan', 'Enterprise Sales Lead', ('Apex Systems Sales Desk',)),
+    'smartspend.user_demo_vendor_securenet': (
+        'SecureNet', 'Vikram Desai', 'Regional Sales Manager', ('SecureNet Sales Desk',)),
 }
 
 
@@ -120,24 +128,34 @@ class SmartspendAuction(models.Model):
     start_date = fields.Datetime(string='Opens At', required=True, tracking=True)
     end_date = fields.Datetime(
         string='Closes At', required=True, tracking=True,
-        help="Moves later every time a late bid triggers the soft close.")
+        help="Moves later every time a last-moment bid triggers a time extension.")
     duration_minutes = fields.Integer(
         string='Duration (minutes)', default=10, required=True,
         help="How long bidding runs once it opens. Starting early keeps the duration.")
     original_end_date = fields.Datetime(
         string='Scheduled Close', readonly=True, copy=False,
-        help="When the auction was due to close before any soft-close extension.")
+        help="When the auction was due to close before any time extension.")
     closed_on = fields.Datetime(string='Closed On', readonly=True, copy=False)
 
     # -- Rules ---------------------------------------------------------------
+    # The two fields of the original module, under its own labels: a bid placed
+    # in the last `extension_window` minutes adds `extension_minutes` to the
+    # clock — and a bid in the new last minutes extends it again.
     extension_window = fields.Integer(
-        string='Soft Close Window (minutes)', default=2,
-        help="A bid placed with less than this left on the clock extends the auction. "
-             "Zero switches the soft close off.")
+        string='Extension Applied in last (minutes)', default=2,
+        help="A bid placed with less than this many minutes left on the clock extends "
+             "the auction by the Extension Duration. Zero switches extensions off.")
     extension_minutes = fields.Integer(
-        string='Extend By (minutes)', default=2,
-        help="How much time a late bid adds to the close.")
-    extension_count = fields.Integer(string='Extensions', readonly=True, copy=False)
+        string='Extension Duration (minutes)', default=2,
+        help="How many minutes a last-moment bid adds to the close.")
+    extension_count = fields.Integer(string='Time Extensions', readonly=True, copy=False)
+    start_mode = fields.Selection([
+        ('schedule', 'At the scheduled time'),
+        ('buyer', 'Opened early by the buyer'),
+        ('ready', 'Every vendor ready'),
+    ], string='Opened', readonly=True, copy=False,
+        help="How bidding opened. It opens by itself the moment every invited vendor "
+             "has answered and at least two have accepted.")
     min_decrement = fields.Monetary(
         string='Minimum Decrement',
         help="Each new bid must undercut the vendor's own previous bid by at least this much.")
@@ -230,11 +248,11 @@ class SmartspendAuction(models.Model):
             if auction.duration_minutes <= 0:
                 raise ValidationError(_("An auction has to run for at least a minute."))
             if auction.extension_window < 0 or auction.extension_minutes < 0 or auction.rebid_minutes < 0:
-                raise ValidationError(_("Soft-close and round lengths cannot be negative."))
+                raise ValidationError(_("Extension and round lengths cannot be negative."))
             if auction.extension_window and not auction.extension_minutes:
                 raise ValidationError(_(
-                    "The soft close is on (%s-minute window) but extends by nothing. "
-                    "Set how many minutes a late bid adds.", auction.extension_window))
+                    "Extension Applied in last is %s minutes but the Extension Duration is "
+                    "zero. Set how many minutes a last-moment bid adds.", auction.extension_window))
             if auction.min_decrement < 0:
                 raise ValidationError(_("The minimum decrement cannot be negative."))
 
@@ -420,21 +438,47 @@ class SmartspendAuction(models.Model):
                 subtype_xmlid='mail.mt_comment')
         return True
 
-    def _go_live(self):
+    def _go_live(self, mode='schedule'):
         self.ensure_one()
         now = fields.Datetime.now()
         accepted = self.participant_ids.filtered(lambda p: p.state == 'accepted')
         silent = self.participant_ids.filtered(lambda p: p.state == 'invited')
         accepted.write({'state': 'live'})
         silent.write({'state': 'cancelled', 'response_note': _("Did not accept before bidding opened.")})
-        self.write({'state': 'live', 'start_date': min(self.start_date, now)})
+        self.write({'state': 'live', 'start_date': min(self.start_date, now), 'start_mode': mode})
+        how = {
+            'ready': _(" — opened automatically, every invited vendor is ready"),
+            'buyer': _(" — opened early by %s", self.env.user.name),
+        }.get(mode, '')
         self._post_to_request(
             _("Reverse Auction Live"),
-            _("%(auction)s is open to %(count)s vendors until %(end)s.",
-              auction=self.name, count=len(accepted), end=self._when(self.end_date)))
+            _("%(auction)s is open to %(count)s vendors until %(end)s%(how)s.",
+              auction=self.name, count=len(accepted), end=self._when(self.end_date), how=how))
         self.message_post(body=_(
-            "Bidding is open. %(count)s vendors competing: %(vendors)s.",
-            count=len(accepted), vendors=", ".join(accepted.mapped('partner_id.name'))))
+            "Bidding is open%(how)s. %(count)s vendors competing: %(vendors)s.",
+            how=how, count=len(accepted), vendors=", ".join(accepted.mapped('partner_id.name'))))
+
+    def _open_now(self, mode):
+        """Open bidding this minute, keeping the length the buyer asked for."""
+        self.ensure_one()
+        now = fields.Datetime.now()
+        end = now + timedelta(minutes=self.duration_minutes)
+        self.write({'start_date': now, 'end_date': end, 'original_end_date': end})
+        self._go_live(mode)
+
+    def _start_if_everyone_ready(self):
+        """Open bidding the moment there is nobody left to wait for.
+
+        Every invited vendor has answered, and at least two of them accepted.
+        Holding the event until the scheduled time from here on would only keep
+        ready bidders waiting; a vendor who declined is not coming.
+        """
+        for auction in self.filtered(lambda a: a.state == 'scheduled'):
+            answers = auction.participant_ids.mapped('state')
+            if 'invited' in answers or answers.count('accepted') < MIN_BIDDERS:
+                continue
+            auction._open_now('ready')
+        return True
 
     def action_start(self):
         """Open bidding now instead of waiting for the scheduled time."""
@@ -448,11 +492,7 @@ class SmartspendAuction(models.Model):
                     "Only %(count)s vendor(s) have accepted %(auction)s. It needs at least "
                     "%(minimum)s competing bidders to open.",
                     count=len(accepted), auction=auction.name, minimum=MIN_BIDDERS))
-            now = fields.Datetime.now()
-            # Opening early keeps the length the buyer asked for.
-            end = now + timedelta(minutes=auction.duration_minutes)
-            auction.write({'start_date': now, 'end_date': end, 'original_end_date': end})
-            auction._go_live()
+            auction._open_now('buyer')
         return True
 
     def _close(self):
@@ -585,7 +625,7 @@ class SmartspendAuction(models.Model):
                         "only %(count)s vendor(s) had accepted by the opening time; "
                         "it needs %(minimum)s", count=len(accepted), minimum=MIN_BIDDERS))
                     continue
-                auction._go_live()
+                auction._go_live('schedule')
             if auction.state == 'live' and auction.end_date <= now:
                 auction._close()
         return True
@@ -703,7 +743,7 @@ class SmartspendAuction(models.Model):
             new_end = auction.end_date + timedelta(minutes=extended_by)
             auction.write({'end_date': new_end, 'extension_count': auction.extension_count + 1})
             auction.message_post(body=_(
-                "Soft close: a bid with %(left)s left extended bidding by %(minutes)s min, "
+                "Time extended: a bid with %(left)s left added %(minutes)s min to the clock, "
                 "to %(end)s.",
                 left=_("%(m)s:%(s)02d", m=int(remaining.total_seconds()) // 60,
                        s=int(remaining.total_seconds()) % 60),
@@ -736,6 +776,7 @@ class SmartspendAuction(models.Model):
             'closedAt': iso_utc(self.closed_on),
             'serverNow': iso_utc(fields.Datetime.now()),
             'durationMinutes': self.duration_minutes,
+            'openedBy': self.start_mode or '',
             'extensionWindow': self.extension_window,
             'extensionMinutes': self.extension_minutes,
             'extensionCount': self.extension_count,
@@ -879,18 +920,23 @@ class SmartspendAuction(models.Model):
         by the demo seeder rather than by a data file.
         """
         Partner = self.env['res.partner'].sudo()
-        for xmlid, supplier in DEMO_VENDOR_ACCOUNTS.items():
+        for xmlid, (supplier, person, job, seeded_names) in DEMO_VENDOR_ACCOUNTS.items():
             user = self.env.ref(xmlid, raise_if_not_found=False)
             if not user:
                 continue
+            user = user.sudo()
+            if user.name in seeded_names:
+                user.name = person
             company = Partner.search([('name', '=ilike', supplier), ('is_company', '=', True)], limit=1)
             if not company:
                 company = Partner.create({'name': supplier, 'is_company': True, 'supplier_rank': 1})
             elif not company.supplier_rank:
                 company.supplier_rank = 1
-            contact = user.sudo().partner_id
+            contact = user.partner_id
             if contact.parent_id != company:
                 contact.parent_id = company
+            if not contact.function:
+                contact.function = job
         return True
 
 
@@ -988,6 +1034,7 @@ class SmartspendAuctionParticipant(models.Model):
                 vendor=participant.partner_id.name,
                 verb=_("accepted") if accept else _("declined"),
                 proxy=proxy, note=_(": %s", note) if note else '.'))
+        self.auction_id._start_if_everyone_ready()
         return True
 
     def action_accept(self):
@@ -1022,8 +1069,8 @@ class SmartspendAuctionBid(models.Model):
         help="Keyed in by the buyer for a vendor who quoted by phone or email.")
     rank_after = fields.Integer(string='Rank After', aggregator=None)
     extended_by = fields.Integer(
-        string='Extended Close By (min)', aggregator='sum',
-        help="Minutes this bid added to the close under the soft-close rule.")
+        string='Time Extension Added (min)', aggregator='sum',
+        help="Minutes this bid added to the close under the time-extension rule.")
     seconds_left = fields.Integer(string='Seconds Left', aggregator=None)
     note = fields.Char()
     line_ids = fields.One2many('smartspend.auction.bid.line', 'bid_id', string='Prices')

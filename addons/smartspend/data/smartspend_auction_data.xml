@@ -30,14 +30,14 @@
              down. Each is placed under its supplier company by the function
              call below. -->
         <record id="user_demo_vendor_apex" model="res.users">
-            <field name="name">Apex Systems Sales Desk</field>
+            <field name="name">Meera Krishnan</field>
             <field name="login">vendor2@smartspend.demo</field>
             <field name="password">vendor2</field>
             <field name="group_ids" eval="[Command.link(ref('smartspend.group_smartspend_vendor'))]"/>
         </record>
 
         <record id="user_demo_vendor_securenet" model="res.users">
-            <field name="name">SecureNet Sales Desk</field>
+            <field name="name">Vikram Desai</field>
             <field name="login">vendor3@smartspend.demo</field>
             <field name="password">vendor3</field>
             <field name="group_ids" eval="[Command.link(ref('smartspend.group_smartspend_vendor'))]"/>

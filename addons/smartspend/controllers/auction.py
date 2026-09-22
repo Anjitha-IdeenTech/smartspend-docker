@@ -100,6 +100,37 @@ class SmartSpendAuctionApi(http.Controller):
         auction._sync_state()
         return _envelope(auction, user)
 
+    @http.route('/api/smartspend/auction-vendors', type='json2', auth='none',
+                methods=['GET'], cors='*', readonly=True)
+    def auction_vendors(self, **kwargs):
+        """Suppliers a buyer can invite, and whether each can sign in to bid.
+
+        A supplier with a portal login accepts and bids for itself; one without
+        can still be invited, but then the buyer answers and bids on its behalf.
+        The self-serve suppliers are listed first, so a live auction is set up
+        with bidders who can actually take part.
+        """
+        error = _authenticate()
+        if error:
+            return error
+        if not _is_buyer(request.env.user):
+            return _error(_("Only an SCM buyer invites vendors to an auction."), 403)
+        Auction = request.env['smartspend.auction']
+        contracted = request.env['smartspend.contract'].search([('is_running', '=', True)]).partner_id
+        rows = []
+        for vendor in request.env['res.partner'].search([('supplier_rank', '>', 0)], limit=200):
+            login = Auction._portal_user_for(vendor)
+            rows.append({
+                'id': vendor.id,
+                'name': vendor.name,
+                'city': vendor.city or '',
+                'onContract': vendor in contracted,
+                'login': login.login or '',
+                'contact': login.name or '',
+            })
+        rows.sort(key=lambda row: (not row['login'], row['name'].casefold()))
+        return rows
+
     @http.route('/api/smartspend/auctions/launch', type='json2', auth='none',
                 methods=['POST'], cors='*', readonly=False)
     def launch_auction(self, requestId=None, vendorIds=None, startInMinutes=None,

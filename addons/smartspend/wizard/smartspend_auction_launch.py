@@ -22,13 +22,17 @@ class SmartspendAuctionLaunch(models.TransientModel):
     start_date = fields.Datetime(
         string='Opens At', required=True,
         default=lambda self: fields.Datetime.now() + timedelta(minutes=5),
-        help="Leave the vendors time to accept the terms. You can open it early "
-             "from the auction once two have accepted.")
+        help="Leave the vendors time to accept the terms. Bidding opens by itself the "
+             "moment every invited vendor has answered and two have accepted — or at "
+             "this time, whichever comes first.")
     duration_minutes = fields.Integer(string='Runs For (minutes)', default=10, required=True)
     extension_window = fields.Integer(
-        string='Soft Close Window (minutes)', default=2,
-        help="A bid with less than this left extends the close. Zero switches it off.")
-    extension_minutes = fields.Integer(string='Extend By (minutes)', default=2)
+        string='Extension Applied in last (minutes)', default=2,
+        help="A bid placed with less than this many minutes left extends the close by "
+             "the Extension Duration. Zero switches extensions off.")
+    extension_minutes = fields.Integer(
+        string='Extension Duration (minutes)', default=2,
+        help="How many minutes a last-moment bid adds to the close.")
     min_decrement = fields.Monetary(
         string='Minimum Decrement',
         help="How much lower each vendor's next bid has to be than their last.")

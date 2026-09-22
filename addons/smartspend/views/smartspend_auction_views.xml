@@ -145,12 +145,19 @@
                             <field name="original_end_date"
                                    invisible="not extension_count"/>
                             <field name="duration_minutes" readonly="state not in ('draft', 'scheduled')"/>
+                            <field name="start_mode" invisible="not start_mode"/>
                             <field name="extension_count"/>
                             <field name="closed_on" invisible="not closed_on"/>
                         </group>
-                        <group string="Rules">
+                        <group string="Time Extension">
                             <field name="extension_window" readonly="state not in ('draft', 'scheduled')"/>
                             <field name="extension_minutes" readonly="state not in ('draft', 'scheduled')"/>
+                            <div colspan="2" class="text-muted small">
+                                Any vendor bidding in the last minutes pushes the close out, and
+                                a bid in the new last minutes pushes it out again.
+                            </div>
+                        </group>
+                        <group string="Rules">
                             <field name="min_decrement" widget="monetary"
                                    readonly="state not in ('draft', 'scheduled')"/>
                             <field name="visibility" readonly="state not in ('draft', 'scheduled')"/>
@@ -203,7 +210,7 @@
                                     <field name="total" widget="monetary"/>
                                     <field name="rank_after" string="Rank"/>
                                     <field name="seconds_left" string="Secs Left" optional="hide"/>
-                                    <field name="extended_by" string="+Min" optional="show"/>
+                                    <field name="extended_by" string="Extension (min)" optional="show"/>
                                     <field name="on_behalf" optional="show"/>
                                     <field name="placed_by_id" widget="many2one_avatar_user" optional="show"/>
                                     <field name="currency_id" column_invisible="1"/>
@@ -288,7 +295,7 @@
                 <field name="partner_id"/>
                 <field name="total" widget="monetary"/>
                 <field name="rank_after" string="Rank"/>
-                <field name="extended_by" string="+Min" optional="show"/>
+                <field name="extended_by" string="Extension (min)" optional="show"/>
                 <field name="on_behalf" optional="show"/>
                 <field name="placed_by_id" widget="many2one_avatar_user" optional="show"/>
                 <field name="currency_id" column_invisible="1"/>
@@ -327,7 +334,7 @@
                 <field name="auction_id"/>
                 <field name="partner_id"/>
                 <filter name="surrogate" string="Surrogate Bids" domain="[('on_behalf', '=', True)]"/>
-                <filter name="extended" string="Extended the Close" domain="[('extended_by', '>', 0)]"/>
+                <filter name="extended" string="Triggered a Time Extension" domain="[('extended_by', '>', 0)]"/>
                 <group>
                     <filter name="group_auction" string="Auction" context="{'group_by': 'auction_id'}"/>
                     <filter name="group_vendor" string="Vendor" context="{'group_by': 'partner_id'}"/>
@@ -364,10 +371,16 @@
                     <group string="When">
                         <field name="start_date"/>
                         <field name="duration_minutes"/>
+                        <div colspan="2" class="text-muted small">
+                            Opens by itself the moment every invited vendor has answered and
+                            at least two have accepted — or at the time above, whichever is first.
+                        </div>
                     </group>
-                    <group string="Rules">
+                    <group string="Time Extension">
                         <field name="extension_window"/>
                         <field name="extension_minutes"/>
+                    </group>
+                    <group string="Rules">
                         <field name="min_decrement" widget="monetary"/>
                         <field name="visibility" widget="radio"/>
                         <field name="rebid_minutes"/>

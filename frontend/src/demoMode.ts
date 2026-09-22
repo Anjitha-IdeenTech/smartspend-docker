@@ -66,7 +66,7 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
     roles: ['Employee', 'SCM Buyer', 'Manager', 'CEO'], defaultRole: 'Manager',
   },
   {
-    id: 104, name: 'Demo Vendor', login: 'vendor@smartspend.demo',
+    id: 104, name: 'Arjun Nair', login: 'vendor@smartspend.demo',
     password: 'vendor', company: 'Primus Technologies',
     is_vendor: true,
     roles: ['Vendor'], defaultRole: 'Vendor',
@@ -74,13 +74,13 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
   // Two more suppliers, so a reverse auction has real competition. Live
   // auctions need the server, so offline these open the supplier portal only.
   {
-    id: 106, name: 'Apex Systems Sales Desk', login: 'vendor2@smartspend.demo',
+    id: 106, name: 'Meera Krishnan', login: 'vendor2@smartspend.demo',
     password: 'vendor2', company: 'Apex Systems',
     is_vendor: true,
     roles: ['Vendor'], defaultRole: 'Vendor',
   },
   {
-    id: 107, name: 'SecureNet Sales Desk', login: 'vendor3@smartspend.demo',
+    id: 107, name: 'Vikram Desai', login: 'vendor3@smartspend.demo',
     password: 'vendor3', company: 'SecureNet',
     is_vendor: true,
     roles: ['Vendor'], defaultRole: 'Vendor',

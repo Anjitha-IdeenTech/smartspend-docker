@@ -1,6 +1,6 @@
 """Reverse auctions, end to end in the ORM — rolled back at the end.
 
-Launch → accept / decline → open → bid down → soft close → close → award →
+Launch → accept / decline → open → bid down → time extension → close → award →
 purchase order, plus every refusal on the way and the access rules that keep a
 supplier from reading a rival's price. Time is moved by writing the auction's
 clock directly, so nothing here waits.
@@ -61,6 +61,14 @@ check('amounts read the way the portal writes them',
       (inr(157000), inr(1234567.5), inr(999), inr(0)))
 print('=' * 72)
 
+check('the demo suppliers are real-looking sales contacts',
+      (v_primus.name, v_apex.name, v_secure.name) == ('Arjun Nair', 'Meera Krishnan', 'Vikram Desai')
+      and all(u.partner_id.function for u in (v_primus, v_apex, v_secure)),
+      [(u.name, u.partner_id.function) for u in (v_primus, v_apex, v_secure)])
+F = env['smartspend.auction']._fields
+check('the time extension carries the original module\'s two field names',
+      (F['extension_window'].string, F['extension_minutes'].string)
+      == ('Extension Applied in last (minutes)', 'Extension Duration (minutes)'))
 check('the three demo supplier logins sit under their companies',
       v_primus.partner_id.commercial_partner_id == primus
       and v_apex.partner_id.commercial_partner_id == apex
@@ -106,19 +114,22 @@ raises('a second auction while one is open is refused', UserError,
        lambda: Auction._launch_for_request(r, vendors3, soon(), 10))
 raises('opening with nobody accepted is refused', UserError, a.action_start)
 
-print('\n--- invitations ---')
+print('\n--- invitations, and opening once everyone is ready ---')
 p_primus.with_user(v_primus).sudo()._respond(True)
 p_apex.with_user(v_apex).sudo()._respond(True)
+check('two accepted, one still to answer: it waits', a.state == 'scheduled', a.state)
+raises('accepting twice is refused', UserError, lambda: p_primus.sudo()._respond(True))
 p_secure.with_user(v_secure).sudo()._respond(False, 'Stock not available')
 check('two accept, one declines',
-      (p_primus.state, p_apex.state, p_secure.state) == ('accepted', 'accepted', 'declined'))
+      (p_primus.state, p_apex.state, p_secure.state) == ('live', 'live', 'declined'))
 check('the decline keeps its reason', p_secure.response_note == 'Stock not available')
-raises('accepting twice is refused', UserError, lambda: p_primus.sudo()._respond(True))
-
-a.action_start()
-check('opening early goes live', a.state == 'live', a.state)
+check('the last answer opens bidding by itself', a.state == 'live' and a.start_mode == 'ready',
+      (a.state, a.start_mode))
 check('and keeps the ten-minute duration',
       abs((a.end_date - now()).total_seconds() - 600) < 5, a.end_date)
+check('the request timeline says it opened because everyone was ready',
+      'every invited vendor is ready' in (r.history_ids[-1].description or ''),
+      r.history_ids[-1].description)
 check('accepted vendors are now bidding', (p_primus.state, p_apex.state) == ('live', 'live'))
 check('the decliner stays out', p_secure.state == 'declined')
 raises('an invitation cannot be answered once bidding is open', UserError,
@@ -150,7 +161,7 @@ check('a tie goes to whoever got there first', (p_primus.rank, p_apex.rank) == (
 raises('a vendor who declined cannot bid', UserError, lambda: bid(p_secure, v_secure, 60000, 8000))
 check('every bid is logged', len(a.bid_ids) == 4 and p_primus.bid_count == 2, len(a.bid_ids))
 
-print('\n--- soft close ---')
+print('\n--- time extension (a bid in the last minutes) ---')
 a.sudo().end_date = now() + timedelta(seconds=60)
 end_before = a.end_date
 bid(p_apex, v_apex, 64000, 8000)                          # 144000, inside the 2-minute window
@@ -160,6 +171,27 @@ check('a bid inside the window extends the close by two minutes',
 last = a.bid_ids.sorted('id')[-1]
 check('the bid that did it is marked', last.extended_by == 2 and 0 < last.seconds_left <= 60,
       (last.extended_by, last.seconds_left))
+
+# The original module's rule applies to every bid, not just the first: each
+# time a vendor bids again in the last minutes, the clock is pushed out again.
+r8 = approved_request(LINES)
+a8 = Auction._launch_for_request(r8, primus | apex, soon(2), 5, extension_window=1, extension_minutes=2)
+for p in a8.participant_ids:
+    p.sudo()._respond(True)
+q_primus = a8.participant_ids.filtered(lambda p: p.partner_id == primus)
+q_apex = a8.participant_ids.filtered(lambda p: p.partner_id == apex)
+n1, n2 = a8.line_ids.sorted('sequence')
+bid8 = lambda who, user, laptop, dock: a8.with_user(user)._place_bid(who, {n1.id: laptop, n2.id: dock})
+bid8(q_primus, v_primus, 66000, 8000)
+check('a bid with time to spare adds nothing', a8.extension_count == 0, a8.extension_count)
+extended = []
+for who, user, laptop in ((q_apex, v_apex, 65500), (q_primus, v_primus, 65000), (q_apex, v_apex, 64500)):
+    a8.sudo().end_date = now() + timedelta(seconds=40)   # the clock has run down again
+    before = a8.end_date
+    bid8(who, user, laptop, 8000)
+    extended.append(round((a8.end_date - before).total_seconds() / 60))
+check('every last-moment bid extends it again, by the Extension Duration each time',
+      extended == [2, 2, 2] and a8.extension_count == 3, (extended, a8.extension_count))
 
 print('\n--- what each side can see ---')
 vendor_view = a.sudo()._to_vendor_dict(p_primus)
@@ -239,7 +271,6 @@ r5 = approved_request(LINES)
 a5 = Auction._launch_for_request(r5, primus | apex, soon(2), 5)
 for p in a5.participant_ids:
     p.sudo()._respond(True)
-a5.action_start()
 # The portal posts the whole request back, items included, on any edit.
 payload = r5.with_user(admin)._to_portal_dict()
 env['smartspend.request'].with_user(admin)._upsert_from_portal(payload)
@@ -268,7 +299,8 @@ a3 = Auction._launch_for_request(r2, primus | apex, soon(2), 5)
 check('a cancelled auction does not block a new one', a3.state == 'scheduled')
 for p in a3.participant_ids:
     p.sudo()._respond(True)
-a3.action_start()
+check('both invited vendors accepted: it opened by itself', a3.state == 'live' and a3.start_mode == 'ready',
+      (a3.state, a3.start_mode))
 a3.sudo().write({'start_date': now() - timedelta(minutes=30), 'end_date': now() - timedelta(seconds=1)})
 a3._sync_state()
 raises('nobody bid: nothing to award', UserError, a3.action_award)
@@ -285,16 +317,29 @@ check('cancel withdraws every invitation', a3.state == 'cancelled'
       and set(a3.participant_ids.mapped('state')) == {'cancelled'})
 raises('a cancelled auction cannot be cancelled again', UserError, a3.action_cancel)
 
-print('\n--- the cron ---')
+print('\n--- opening early, and the cron ---')
+r6 = approved_request(LINES)
+a6 = Auction._launch_for_request(r6, primus | apex | secure, soon(10), 5)
+a6.participant_ids.filtered(lambda p: p.partner_id != secure).sudo()._respond(True)
+check('two in, one silent: still waiting', a6.state == 'scheduled')
+a6.action_start()
+check('the buyer can open early once two have accepted', a6.state == 'live' and a6.start_mode == 'buyer',
+      (a6.state, a6.start_mode))
+check('the silent vendor is dropped', a6.participant_ids.filtered(lambda p: p.partner_id == secure).state == 'cancelled')
+r7 = approved_request(LINES)
+a7 = Auction._launch_for_request(r7, primus | apex | secure, soon(10), 5)
+a7.participant_ids.filtered(lambda p: p.partner_id == primus).sudo()._respond(True)
+a7.participant_ids.filtered(lambda p: p.partner_id != primus).sudo()._respond(False)
+check('everyone answered but only one accepted: it does not open', a7.state == 'scheduled', a7.state)
+
 r3 = approved_request(LINES)
-a4 = Auction._launch_for_request(r3, primus | apex, soon(20), 5)
+a4 = Auction._launch_for_request(r3, primus | apex | secure, soon(20), 5)
 env['smartspend.auction']._cron_tick()
 check('the cron sends the half-hour reminder once', a4.reminder_sent)
-for p in a4.participant_ids:
-    p.sudo()._respond(True)
+a4.participant_ids.filtered(lambda p: p.partner_id != secure).sudo()._respond(True)
 a4.sudo().start_date = now() - timedelta(seconds=1)
 env['smartspend.auction']._cron_tick()
-check('and opens it on time', a4.state == 'live', a4.state)
+check('and opens it on time', a4.state == 'live' and a4.start_mode == 'schedule', (a4.state, a4.start_mode))
 
 print('\n--- the Odoo screens ---')
 for model, kinds in (('smartspend.auction', ('form', 'list', 'kanban', 'search')),

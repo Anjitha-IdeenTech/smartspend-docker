@@ -33,6 +33,11 @@ so the plain URL reaches this stack's Odoo. Odoo's own backend is on
 | `vendor2@smartspend.demo` | `vendor2` | Vendor — Apex Systems (for live auctions) |
 | `vendor3@smartspend.demo` | `vendor3` | Vendor — SecureNet (for live auctions) |
 
+The three supplier sign-ins are three competing companies, each with its own
+sales contact: `vendor@` is Arjun Nair (Primus Technologies), `vendor2@` Meera
+Krishnan (Apex Systems), `vendor3@` Vikram Desai (SecureNet). Each sees only
+their own invitations, bids and rank.
+
 > These are demo credentials for a local stack. Change them before exposing
 > this to a network. The database ships with no API keys and no password for
 > Odoo's built-in `admin` user — sign in as `admin@smartspend.demo` instead.
@@ -73,10 +78,10 @@ browser), one per login:
 | # | Who | Does |
 |---|---|---|
 | 1 | SCM Buyer | **To Source** → pick *Live Reverse Auction* on an approved request → **Launch Auction** (or **Live Auctions** → *Launch an auction*). Invite Primus, Apex and SecureNet; opens in 2 min, runs 5 min |
-| 2 | `vendor@` / `vendor2@` | **Live Auctions** → accept the terms |
-| 3 | SCM Buyer | **Open bidding now** once two have accepted |
+| 2 | `vendor@` / `vendor2@` | **Live Auctions** → accept the terms. The moment every invited vendor has answered (and at least two are in), bidding opens by itself |
+| 3 | SCM Buyer | Or **Open bidding now** once two have accepted, without waiting for the rest |
 | 4 | Vendors | Bid with the quick steps (−1%, *Beat the leader*); each sees only their own rank — an outbid vendor gets an alert |
-| 5 | SCM Buyer | Watch the auction room: price curve, leaderboard, play-by-play. A bid in the last minute extends the close |
+| 5 | SCM Buyer | Watch the auction room: price curve, leaderboard, play-by-play. **Time extension** (as in the Odoo 15 module): a bid inside *Extension Applied in last (minutes)* adds *Extension Duration (minutes)* to the clock — every time a vendor bids at the last moment |
 | 6 | SCM Buyer | **Award to L1** — the request is repriced at the winning bid and names the winner; raise the PO as usual |
 
 A vendor who quotes by phone can be accepted and bid for by the buyer

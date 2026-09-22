@@ -3,7 +3,7 @@
  * console.
  *
  * Everything on these screens comes from the server: the ranking, the clock,
- * the soft-close extensions and what a vendor is allowed to know are all
+ * the time extensions and what a vendor is allowed to know are all
  * decided there (see controllers/auction.py). The screens poll while they are
  * open and animate the difference between one answer and the next — nothing
  * here invents a bid, a rank or a price.
@@ -39,6 +39,8 @@ export interface Auction {
   state: 'draft' | 'scheduled' | 'live' | 'closed' | 'awarded' | 'cancelled'; stateLabel: string;
   startAt: string; endAt: string; originalEndAt: string; closedAt: string; serverNow: string;
   durationMinutes: number; extensionWindow: number; extensionMinutes: number; extensionCount: number;
+  /** How bidding opened: 'ready' (every vendor ready), 'buyer' (opened early) or 'schedule'. */
+  openedBy?: string;
   minDecrement: number; visibility: 'rank' | 'leader'; rebidMinutes: number; terms: string;
   ceiling: number; lines: AuctionLine[]; buyer?: string;
   // the buyer's view
@@ -198,7 +200,7 @@ function RankBadge({ rank, size = 'md' }: { rank: number; size?: 'sm' | 'md' | '
   );
 }
 
-/** The clock: a ring that empties as time runs out, and turns hot in the soft close. */
+/** The clock: a ring that empties as time runs out, and turns hot in the extension window. */
 function CountdownRing({ auction, now, size = 196 }: { auction: Auction; now: number; size?: number }) {
   const gid = useId().replace(/:/g, '');
   const start = ts(auction.startAt), end = ts(auction.endAt);
@@ -211,7 +213,7 @@ function CountdownRing({ auction, now, size = 196 }: { auction: Auction; now: nu
   const critical = live && remaining < 15000;
   const r = (size - 18) / 2, c = 2 * Math.PI * r;
   const tone = critical ? ['#FB7185', '#F43F5E'] : softClose ? ['#FBBF24', '#F97316'] : ['#A78BFA', '#F472B6'];
-  const label = live ? (softClose ? 'SOFT CLOSE' : 'until close') : scheduled ? 'until bidding opens'
+  const label = live ? (softClose ? 'extension window' : 'until close') : scheduled ? 'until bidding opens'
     : auction.state === 'closed' ? 'bidding closed' : auction.state === 'awarded' ? 'awarded' : auction.stateLabel.toLowerCase();
   return (
     <div className={`relative shrink-0 ${critical ? 'auction-shake' : ''}`} style={{ width: size, height: size }}>
@@ -250,7 +252,7 @@ function CountdownRing({ auction, now, size = 196 }: { auction: Auction; now: nu
         </span>
         {live && auction.extensionCount > 0 && (
           <span className="mt-1 text-[10px] font-semibold text-amber-200/90">
-            extended ×{auction.extensionCount}
+            time extended ×{auction.extensionCount}
           </span>
         )}
       </div>
@@ -327,7 +329,7 @@ function PriceDescentChart({ auction, now }: { auction: Auction; now: number }) 
           <g key={`ext-${b.id}`}>
             <line x1={x(ts(b.at))} x2={x(ts(b.at))} y1={T} y2={H - B} stroke="rgba(251,191,36,0.55)" strokeDasharray="3 4" />
             <text x={x(ts(b.at)) + (x(ts(b.at)) > W - R - 40 ? -4 : 4)} y={T + 10} fontSize="9" fontWeight="800" fill="#FBBF24"
-                  textAnchor={x(ts(b.at)) > W - R - 40 ? 'end' : 'start'}>+{b.extendedBy}m soft close</text>
+                  textAnchor={x(ts(b.at)) > W - R - 40 ? 'end' : 'start'}>+{b.extendedBy}m extension</text>
           </g>
         ))}
         {envelope.length > 0 && (
@@ -470,13 +472,17 @@ function ActivityFeed({ auction, now }: { auction: Auction; now: number }) {
       if (b.extendedBy) {
         out.push({
           key: `x${b.id}`, at: ts(b.at) + 1, icon: Timer, tone: 'text-amber-300',
-          text: <><b className="text-amber-200">Soft close</b> — {b.secondsLeft}s left, close pushed out <b className="text-white">+{b.extendedBy} min</b></>,
+          text: <><b className="text-amber-200">Time extended</b> — a bid with {b.secondsLeft}s left added <b className="text-white">+{b.extendedBy} min</b> to the clock</>,
         });
       }
       lastByVendor[b.vendorId] = b.total;
     });
     if (auction.state !== 'scheduled' && auction.state !== 'draft' && ts(auction.startAt)) {
-      out.push({ key: 'open', at: ts(auction.startAt), icon: Play, tone: 'text-emerald-300', text: <><b className="text-white">Bidding opened</b> to {auction.acceptedCount ?? 0} vendors</> });
+      out.push({
+        key: 'open', at: ts(auction.startAt), icon: Play, tone: 'text-emerald-300',
+        text: <><b className="text-white">{auction.openedBy === 'ready' ? 'Bidding opened automatically' : auction.openedBy === 'buyer' ? 'Bidding opened early' : 'Bidding opened'}</b> to {auction.acceptedCount ?? 0} vendors</>,
+        sub: auction.openedBy === 'ready' ? 'every invited vendor was ready' : auction.openedBy === 'buyer' ? 'by the buyer' : 'at the scheduled time',
+      });
     }
     if (auction.closedAt) {
       out.push({ key: 'close', at: ts(auction.closedAt), icon: Gavel, tone: 'text-white', text: <><b className="text-white">Bidding closed</b>{auction.leader ? <> · L1 {auction.leader}</> : ''}</> });
@@ -575,7 +581,11 @@ function OfflineNote() {
 // ===========================================================================
 // Buyer: launch panel
 // ===========================================================================
-interface VendorOption { id: number; name: string; city: string; onContract: boolean }
+interface VendorOption {
+  id: number; name: string; city: string; onContract: boolean;
+  /** The supplier's portal sign-in, when it has one; empty means the buyer bids for it. */
+  login?: string; contact?: string;
+}
 
 const DEFAULT_TERMS =
   'Prices are for the full quantity, delivered to the requesting site, inclusive of freight and exclusive of GST. ' +
@@ -620,7 +630,9 @@ function LaunchPanel({ api, requests, initialRequestId, onClose, onLaunched }: {
 
   useEffect(() => {
     void (async () => {
-      const res = await call<VendorOption[]>(api, '/api/smartspend/vendors', { method: 'GET' });
+      // Which suppliers can sign in to bid; an older backend only has the plain list.
+      let res = await call<VendorOption[]>(api, '/api/smartspend/auction-vendors', { method: 'GET' });
+      if (!res.ok) res = await call<VendorOption[]>(api, '/api/smartspend/vendors', { method: 'GET' });
       if (res.ok) setVendors(res.data);
       else setError(res.error);
     })();
@@ -631,7 +643,14 @@ function LaunchPanel({ api, requests, initialRequestId, onClose, onLaunched }: {
   useEffect(() => {
     if (!req) return;
     const quoting = new Set([...req.vendorBids.map(b => b.vendorName), req.vendor].map(n => (n || '').toLowerCase()));
-    setPicked(vendors.filter(v => quoting.has(v.name.toLowerCase())).map(v => v.id));
+    const suggested = vendors.filter(v => quoting.has(v.name.toLowerCase())).map(v => v.id);
+    // Too few already quoting to make an auction: bring in the suppliers who
+    // can sign in and bid for themselves.
+    for (const v of vendors) {
+      if (suggested.length >= 3) break;
+      if (v.login && !suggested.includes(v.id)) suggested.push(v.id);
+    }
+    setPicked(suggested);
     const step = req.totalCost * 0.005;
     setDecrement(step >= 100 ? Math.round(step / 100) * 100 : Math.round(step));
   }, [requestId, vendors.length]);
@@ -738,29 +757,40 @@ function LaunchPanel({ api, requests, initialRequestId, onClose, onLaunched }: {
                   <label className="text-[10px] font-bold uppercase tracking-wider text-textFaint">Invite vendors · at least two</label>
                   <span className="text-[11px] text-textSecondary">{picked.length} selected</span>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  {vendors.map(v => {
-                    const on = picked.includes(v.id);
-                    return (
-                      <button key={v.id} type="button"
-                              onClick={() => setPicked(prev => on ? prev.filter(id => id !== v.id) : [...prev, v.id])}
-                              className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-all ${on
-                                ? 'border-brand bg-brand text-onbrand shadow-sm' : 'border-borderTheme bg-surface text-textSecondary hover:border-line2 hover:text-textPrimary'}`}>
-                        {on ? <Check className="h-3.5 w-3.5" /> : <Users className="h-3.5 w-3.5 opacity-60" />}
-                        {v.name}
-                        {v.onContract && <span className={`text-[9px] font-bold uppercase ${on ? 'text-onbrand/70' : 'text-pos'}`}>contract</span>}
-                      </button>
-                    );
-                  })}
-                  {!vendors.length && <span className="text-xs text-textFaint">Loading suppliers…</span>}
-                </div>
+                {([
+                  { key: 'login', title: 'Can sign in and bid themselves', note: 'Each accepts the terms and bids from their own supplier portal.', list: vendors.filter(v => v.login) },
+                  { key: 'none', title: 'No portal login', note: 'You accept and key in their bids for them (phoned-in bids).', list: vendors.filter(v => !v.login) },
+                ] as const).map(group => group.list.length > 0 && (
+                  <div key={group.key} className="space-y-1.5">
+                    {vendors.some(v => v.login) && (
+                      <p className="text-[10px] text-textFaint"><b className="text-textSecondary">{group.title}</b> — {group.note}</p>
+                    )}
+                    <div className="flex flex-wrap gap-2">
+                      {group.list.map(v => {
+                        const on = picked.includes(v.id);
+                        return (
+                          <button key={v.id} type="button" title={v.login ? `Signs in as ${v.login}` : 'No portal login'}
+                                  onClick={() => setPicked(prev => on ? prev.filter(id => id !== v.id) : [...prev, v.id])}
+                                  className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-all ${on
+                                    ? 'border-brand bg-brand text-onbrand shadow-sm' : 'border-borderTheme bg-surface text-textSecondary hover:border-line2 hover:text-textPrimary'}`}>
+                            {on ? <Check className="h-3.5 w-3.5" /> : <Users className="h-3.5 w-3.5 opacity-60" />}
+                            {v.name}
+                            {v.contact && <span className={`text-[10px] font-medium ${on ? 'text-onbrand/75' : 'text-textFaint'}`}>· {v.contact}</span>}
+                            {v.onContract && <span className={`text-[9px] font-bold uppercase ${on ? 'text-onbrand/70' : 'text-pos'}`}>contract</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+                {!vendors.length && <span className="text-xs text-textFaint">Loading suppliers…</span>}
               </section>
 
               <section className="grid sm:grid-cols-2 gap-5">
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold uppercase tracking-wider text-textFaint">Bidding opens in</label>
                   <Segmented value={startIn} options={[1, 2, 5, 10, 30]} onChange={setStartIn} fmt={v => `${v} min`} />
-                  <p className="text-[11px] text-textFaint">Time for vendors to accept. Open it early once two have.</p>
+                  <p className="text-[11px] text-textFaint">Opens by itself the moment every vendor has answered and two have accepted — at the latest after this.</p>
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold uppercase tracking-wider text-textFaint">Runs for</label>
@@ -770,14 +800,22 @@ function LaunchPanel({ api, requests, initialRequestId, onClose, onLaunched }: {
 
               <section className="grid sm:grid-cols-3 gap-4">
                 <div className="rounded-2xl border border-borderTheme p-4 space-y-2">
-                  <div className="flex items-center gap-2 text-xs font-bold text-textPrimary"><Timer className="h-4 w-4 text-gold" /> Soft close</div>
-                  <p className="text-[11px] text-textSecondary leading-snug">A bid in the last
+                  <div className="flex items-center gap-2 text-xs font-bold text-textPrimary"><Timer className="h-4 w-4 text-gold" /> Time extension</div>
+                  <label className="flex items-center justify-between gap-2 text-[11px] text-textSecondary">
+                    <span>Extension Applied in last (minutes)</span>
                     <input type="number" min={0} value={windowMin} onChange={e => setWindowMin(Math.max(0, Number(e.target.value)))}
-                           className="mx-1 w-12 rounded-md border border-borderTheme bg-secondary px-1.5 py-0.5 text-xs font-bold text-textPrimary" />
-                    min pushes the close out by
+                           aria-label="Extension Applied in last (minutes)"
+                           className="w-14 rounded-md border border-borderTheme bg-secondary px-1.5 py-0.5 text-xs font-bold text-textPrimary" />
+                  </label>
+                  <label className="flex items-center justify-between gap-2 text-[11px] text-textSecondary">
+                    <span>Extension Duration (minutes)</span>
                     <input type="number" min={0} value={extendBy} onChange={e => setExtendBy(Math.max(0, Number(e.target.value)))}
-                           className="mx-1 w-12 rounded-md border border-borderTheme bg-secondary px-1.5 py-0.5 text-xs font-bold text-textPrimary" />
-                    min. No sniping.</p>
+                           aria-label="Extension Duration (minutes)"
+                           className="w-14 rounded-md border border-borderTheme bg-secondary px-1.5 py-0.5 text-xs font-bold text-textPrimary" />
+                  </label>
+                  <p className="text-[10px] text-textFaint leading-snug">
+                    {windowMin > 0 ? `A bid in the last ${windowMin} min adds ${extendBy} min — and again each time another bid lands in the last ${windowMin} min.` : 'Off: the auction closes on time whatever happens.'}
+                  </p>
                 </div>
                 <div className="rounded-2xl border border-borderTheme p-4 space-y-2">
                   <div className="flex items-center gap-2 text-xs font-bold text-textPrimary"><TrendingDown className="h-4 w-4 text-pos" /> Minimum step</div>
@@ -823,10 +861,10 @@ function LaunchPanel({ api, requests, initialRequestId, onClose, onLaunched }: {
 
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-borderTheme">
                 <p className="text-[11px] text-textSecondary">
-                  Invitations go to <b>{picked.length}</b> vendor{picked.length === 1 ? '' : 's'} now. Bidding opens at{' '}
-                  <b>{opensAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</b> and closes at{' '}
-                  <b>{closesAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</b>
-                  {windowMin > 0 ? ' unless a late bid extends it' : ''}.
+                  Invitations go to <b>{picked.length}</b> vendor{picked.length === 1 ? '' : 's'} now. Bidding opens as soon as
+                  every vendor is ready — at the latest <b>{opensAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</b>{' '}
+                  (then closing <b>{closesAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</b>) — and runs {duration} min
+                  {windowMin > 0 ? ', plus any time extensions' : ''}.
                 </p>
                 <div className="flex gap-2">
                   <button onClick={onClose} className="px-4 py-2.5 rounded-xl border border-borderTheme text-xs font-bold text-textSecondary hover:bg-secondary">Cancel</button>
@@ -906,17 +944,22 @@ function AuctionRoom({ api, reference, onBack, onRequestUpdated }: {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const [celebrate, setCelebrate] = useState(false);
-  const [burst, setBurst] = useState<number | null>(null);
+  const [burst, setBurst] = useState<string | null>(null);
   const prevExt = useRef<number | null>(null);
+  const prevState = useRef<string | null>(null);
   const now = useServerNow(offset);
 
+  const flash = (text: string) => { setBurst(text); setTimeout(() => setBurst(null), 2800); };
   const absorb = (a: Auction) => {
     setOffset(ts(a.serverNow) - Date.now());
     if (prevExt.current !== null && a.extensionCount > prevExt.current) {
-      setBurst(a.extensionMinutes);
-      setTimeout(() => setBurst(null), 2600);
+      flash(`TIME EXTENDED · +${a.extensionMinutes}:00`);
     }
     prevExt.current = a.extensionCount;
+    if (prevState.current === 'scheduled' && a.state === 'live') {
+      flash(a.openedBy === 'ready' ? 'EVERY VENDOR READY · BIDDING IS OPEN' : 'BIDDING IS OPEN');
+    }
+    prevState.current = a.state;
     setAuction(a);
   };
   const load = async () => {
@@ -1010,7 +1053,7 @@ function AuctionRoom({ api, reference, onBack, onRequestUpdated }: {
         {celebrate && <Confetti />}
         {burst !== null && (
           <div className="auction-burst pointer-events-none absolute left-1/2 top-6 -translate-x-1/2 rounded-full bg-amber-400 px-5 py-2 text-sm font-black text-[#2a1a00] shadow-[0_0_40px_rgba(251,191,36,0.8)]">
-            SOFT CLOSE · +{burst}:00
+            {burst}
           </div>
         )}
         <div className="flex flex-col lg:flex-row lg:items-center gap-8">
@@ -1059,7 +1102,8 @@ function AuctionRoom({ api, reference, onBack, onRequestUpdated }: {
             {auction.state === 'scheduled' && (
               <p className="text-sm text-white/70">
                 <b className="text-white">{accepted}</b> of {auction.participants?.length ?? 0} vendors accepted.
-                {accepted < 2 ? ' It needs two by the opening time, or it is cancelled.' : ' Ready — open it now or let the clock do it.'}
+                {' '}It opens by itself the moment every invited vendor has answered and at least two are in — at the latest {hhmm(auction.startAt)}.
+                {accepted < 2 ? ' With fewer than two by then, it is cancelled.' : ' Or open it now.'}
               </p>
             )}
           </div>
@@ -1127,8 +1171,8 @@ function AuctionRoom({ api, reference, onBack, onRequestUpdated }: {
         <div className="rounded-3xl bg-surface border border-borderTheme p-5 shadow-sm space-y-3">
           <h3 className="font-outfit font-extrabold text-textPrimary flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-pos" /> Rules of this event</h3>
           <ul className="space-y-2 text-xs text-textSecondary">
-            <li className="flex gap-2"><Clock className="h-4 w-4 text-textFaint shrink-0" />Opens {hhmm(auction.startAt)}, closes {hhmm(auction.endAt)}{auction.originalEndAt && auction.originalEndAt !== auction.endAt ? <> (was {hhmm(auction.originalEndAt)})</> : null}</li>
-            <li className="flex gap-2"><Timer className="h-4 w-4 text-textFaint shrink-0" />{auction.extensionWindow ? <>Bid in the last {auction.extensionWindow} min → close +{auction.extensionMinutes} min</> : 'No soft close'}</li>
+            <li className="flex gap-2"><Clock className="h-4 w-4 text-textFaint shrink-0" />{auction.state === 'scheduled' ? 'Opens when every vendor is ready, at the latest ' : 'Opened '}{hhmm(auction.startAt)}, closes {hhmm(auction.endAt)}{auction.originalEndAt && auction.originalEndAt !== auction.endAt ? <> (was {hhmm(auction.originalEndAt)})</> : null}</li>
+            <li className="flex gap-2"><Timer className="h-4 w-4 text-textFaint shrink-0" />{auction.extensionWindow ? <>Extension Applied in last {auction.extensionWindow} min · Extension Duration +{auction.extensionMinutes} min — again for every bid in that window</> : 'No time extension'}</li>
             <li className="flex gap-2"><TrendingDown className="h-4 w-4 text-textFaint shrink-0" />{auction.minDecrement ? <>Each rebid ≥ {inr(auction.minDecrement)} below the vendor's last</> : 'Each rebid must simply be lower'}</li>
             <li className="flex gap-2">{auction.visibility === 'rank' ? <EyeOff className="h-4 w-4 text-textFaint shrink-0" /> : <Eye className="h-4 w-4 text-textFaint shrink-0" />}{auction.visibility === 'rank' ? 'Sealed: vendors see their rank only' : 'Vendors see the leading price, never the name'}</li>
             <li className="flex gap-2"><Lock className="h-4 w-4 text-textFaint shrink-0" />Every bid is logged and cannot be edited</li>
@@ -1350,7 +1394,8 @@ function VendorConsole({ api, reference, onBack }: { api: ApiFn; reference: stri
   const [showDecline, setShowDecline] = useState(false);
   const [prices, setPrices] = useState<Record<string, number>>({});
   const [toast, setToast] = useState<{ text: string; tone: 'good' | 'bad' | 'info' } | null>(null);
-  const [burst, setBurst] = useState<number | null>(null);
+  const [burst, setBurst] = useState<string | null>(null);
+  const prevState = useRef<string | null>(null);
   const prevRank = useRef<number | null>(null);
   const prevExt = useRef<number | null>(null);
   // The total the price boxes were last filled from. A bid placed from
@@ -1373,9 +1418,13 @@ function VendorConsole({ api, reference, onBack }: { api: ApiFn; reference: stri
     }
     prevRank.current = rank || prevRank.current;
     if (prevExt.current !== null && a.extensionCount > prevExt.current) {
-      setBurst(a.extensionMinutes); setTimeout(() => setBurst(null), 2600);
+      setBurst(`TIME EXTENDED · +${a.extensionMinutes}:00`); setTimeout(() => setBurst(null), 2800);
     }
     prevExt.current = a.extensionCount;
+    if (prevState.current === 'scheduled' && a.state === 'live' && a.me?.state === 'live') {
+      say(a.openedBy === 'ready' ? 'Every vendor is ready — bidding is open. Place your bid!' : 'Bidding is open — place your bid!', 'good');
+    }
+    prevState.current = a.state;
     const myTotal = a.me?.total ?? 0;
     if (seededTotal.current === null || mine || myTotal !== seededTotal.current) {
       const base: Record<string, number> = {};
@@ -1399,7 +1448,14 @@ function VendorConsole({ api, reference, onBack }: { api: ApiFn; reference: stri
       method: 'POST', body: JSON.stringify({ accept, note: accept ? '' : declineNote }),
     });
     setBusy(false);
-    if (res.ok) { absorb(res.data.auction); say(accept ? 'You are in. Bidding opens on the clock.' : 'Invitation declined.', accept ? 'good' : 'info'); }
+    if (res.ok) {
+      const a = res.data.auction;
+      absorb(a);
+      say(!accept ? 'Invitation declined.'
+        : a.state === 'live' ? 'Every vendor is ready — bidding is open. Place your bid!'
+          : `You're in. Bidding opens as soon as every vendor is ready — at the latest ${hhmm(a.startAt)}.`,
+        accept ? 'good' : 'info');
+    }
     else setError(res.error);
   };
 
@@ -1483,7 +1539,7 @@ function VendorConsole({ api, reference, onBack }: { api: ApiFn; reference: stri
         {me.state === 'won' && <Confetti />}
         {burst !== null && (
           <div className="auction-burst pointer-events-none absolute left-1/2 top-6 -translate-x-1/2 rounded-full bg-amber-400 px-5 py-2 text-sm font-black text-[#2a1a00] shadow-[0_0_40px_rgba(251,191,36,0.8)]">
-            SOFT CLOSE · +{burst}:00
+            {burst}
           </div>
         )}
         <div className="flex flex-col md:flex-row md:items-center gap-8">
@@ -1542,8 +1598,8 @@ function VendorConsole({ api, reference, onBack }: { api: ApiFn; reference: stri
           <h3 className="font-outfit text-lg font-extrabold text-textPrimary flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-pos" /> Terms of the event</h3>
           <p className="text-xs text-textSecondary whitespace-pre-line rounded-xl bg-secondary/60 border border-borderTheme p-3">{auction.terms || 'No special terms.'}</p>
           <ul className="grid sm:grid-cols-3 gap-2 text-[11px] text-textSecondary">
-            <li className="rounded-xl border border-borderTheme p-3"><Clock className="h-4 w-4 text-textFaint mb-1" />Opens {hhmm(auction.startAt)}, runs {auction.durationMinutes} min</li>
-            <li className="rounded-xl border border-borderTheme p-3"><Timer className="h-4 w-4 text-textFaint mb-1" />{auction.extensionWindow ? `A bid in the last ${auction.extensionWindow} min adds ${auction.extensionMinutes} min` : 'Hard close — no extensions'}</li>
+            <li className="rounded-xl border border-borderTheme p-3"><Clock className="h-4 w-4 text-textFaint mb-1" />Opens as soon as every vendor is ready — at the latest {hhmm(auction.startAt)} — and runs {auction.durationMinutes} min</li>
+            <li className="rounded-xl border border-borderTheme p-3"><Timer className="h-4 w-4 text-textFaint mb-1" />{auction.extensionWindow ? `Time extension: any bid in the last ${auction.extensionWindow} min adds ${auction.extensionMinutes} min — each time it happens` : 'No time extension — it closes on the clock'}</li>
             <li className="rounded-xl border border-borderTheme p-3"><TrendingDown className="h-4 w-4 text-textFaint mb-1" />{auction.minDecrement ? `Each rebid at least ${inr(auction.minDecrement)} lower` : 'Each rebid must be lower'}</li>
           </ul>
           <label className="flex items-center gap-2 text-xs font-semibold text-textPrimary cursor-pointer">
@@ -1574,9 +1630,9 @@ function VendorConsole({ api, reference, onBack }: { api: ApiFn; reference: stri
             <div className="flex items-center gap-2">
               <Gavel className="h-5 w-5 text-brand" />
               <h3 className="font-outfit text-lg font-extrabold text-textPrimary">Your bid</h3>
-              {softClose && <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-gold/15 border border-gold/30 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-gold"><Timer className="h-3 w-3" /> soft close — a bid now extends the clock</span>}
+              {softClose && <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-gold/15 border border-gold/30 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-gold"><Timer className="h-3 w-3" /> extension window — a bid now adds {auction.extensionMinutes} min</span>}
             </div>
-            {!bidding && <p className="text-xs text-textSecondary rounded-xl bg-info/5 border border-info/20 px-3 py-2">Bidding opens at <b>{hhmm(auction.startAt)}</b>. You can prepare your prices now.</p>}
+            {!bidding && <p className="text-xs text-textSecondary rounded-xl bg-info/5 border border-info/20 px-3 py-2">Bidding opens the moment every invited vendor is ready — at the latest <b>{hhmm(auction.startAt)}</b>. You can prepare your prices now.</p>}
             <div className="rounded-2xl border border-borderTheme overflow-hidden">
               <table className="w-full text-xs">
                 <thead><tr className="bg-secondary/70 text-[10px] uppercase tracking-wider text-textFaint">
