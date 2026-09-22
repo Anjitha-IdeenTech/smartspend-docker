@@ -72,6 +72,7 @@ shell "$HERE/_teardown.py" > /dev/null; shell "$HERE/_setup_users.py" > /dev/nul
 report "8. Full portal journey"         "$("$PY" "$HERE/test_portal_journey.py" 2>&1)"
 report "9. Hosted demo (no Odoo)"        "$(node "$HERE/test_demo_mode.mjs" 2>&1)"
 report "10. Reverse auctions"           "$(shell "$HERE/test_auction_backend.py")"
+report "11. Each vendor sees own orders" "$(shell "$HERE/test_vendor_scope.py")"
 
 echo "-------------------------------------------------------------------"
 shell "$HERE/_teardown.py" | grep -E "requests left|BASELINE"

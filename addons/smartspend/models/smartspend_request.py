@@ -1162,6 +1162,18 @@ class SmartspendRequest(models.Model):
             "Purchase order released to the vendor by %s.", self.env.user.name))
         return True
 
+    def _placed_with(self, user):
+        """Whether this order was placed with the supplier ``user`` signs in for.
+
+        A supplier login sits under its company's contact; an order is theirs
+        when the request's vendor is that company. The vendor record rules say
+        the same thing — this is for the calls that look an order up with
+        elevated rights and must still refuse another supplier's.
+        """
+        self.ensure_one()
+        supplier = user.sudo().partner_id.commercial_partner_id
+        return bool(self.partner_id) and self.sudo().partner_id.commercial_partner_id == supplier
+
     def action_acknowledge_purchase_order(self):
         """Record the vendor's acknowledgment of the released order.
 

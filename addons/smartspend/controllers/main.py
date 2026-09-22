@@ -299,6 +299,13 @@ class SmartSpendApi(http.Controller):
             [('name', '=', reference)], limit=1)
         if not record:
             return _error(_("No purchase request named %s.", reference), 404)
+        # A supplier answers for the orders placed with them, and no others.
+        # Said the same way as an unknown reference, so the refusal does not
+        # tell one supplier which orders another one holds.
+        is_staff = (user.has_group('smartspend.group_smartspend_buyer')
+                    or user.has_group('smartspend.group_smartspend_manager'))
+        if not is_staff and not record._placed_with(user):
+            return _error(_("No purchase request named %s.", reference), 404)
 
         try:
             if step == 'release':

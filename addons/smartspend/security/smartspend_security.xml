@@ -75,7 +75,9 @@
     </record>
 
     <!-- A supplier has to read the orders placed with them, or their portal has
-         nothing in it. Rules from different groups are OR'd, so this sits
+         nothing in it — and only those: an order is theirs when the request's
+         vendor is their company (the contact their login sits under), so one
+         supplier never reads another's orders, items or timeline. Rules from different groups are OR'd, so this sits
          alongside the "own requests" rule the vendor group inherits: they see
          anything that has reached a purchase order, and their own requisitions
          if they ever raise one. Read only — a vendor acknowledging an order
@@ -83,7 +85,7 @@
     <record id="rule_smartspend_request_vendor" model="ir.rule">
         <field name="name">SmartSpend: orders placed with a vendor</field>
         <field name="model_id" ref="model_smartspend_request"/>
-        <field name="domain_force">[('state', 'in', ['po_confirmed', 'paid'])]</field>
+        <field name="domain_force">[('state', 'in', ['po_confirmed', 'paid']), ('partner_id.commercial_partner_id', '=', user.commercial_partner_id.id)]</field>
         <field name="groups" eval="[Command.link(ref('group_smartspend_vendor'))]"/>
         <field name="perm_read" eval="True"/>
         <field name="perm_write" eval="False"/>
@@ -94,7 +96,7 @@
     <record id="rule_smartspend_request_line_vendor" model="ir.rule">
         <field name="name">SmartSpend: lines of orders placed with a vendor</field>
         <field name="model_id" ref="model_smartspend_request_line"/>
-        <field name="domain_force">[('request_id.state', 'in', ['po_confirmed', 'paid'])]</field>
+        <field name="domain_force">[('request_id.state', 'in', ['po_confirmed', 'paid']), ('request_id.partner_id.commercial_partner_id', '=', user.commercial_partner_id.id)]</field>
         <field name="groups" eval="[Command.link(ref('group_smartspend_vendor'))]"/>
         <field name="perm_read" eval="True"/>
         <field name="perm_write" eval="False"/>
@@ -105,7 +107,7 @@
     <record id="rule_smartspend_request_history_vendor" model="ir.rule">
         <field name="name">SmartSpend: timeline of orders placed with a vendor</field>
         <field name="model_id" ref="model_smartspend_request_history"/>
-        <field name="domain_force">[('request_id.state', 'in', ['po_confirmed', 'paid'])]</field>
+        <field name="domain_force">[('request_id.state', 'in', ['po_confirmed', 'paid']), ('request_id.partner_id.commercial_partner_id', '=', user.commercial_partner_id.id)]</field>
         <field name="groups" eval="[Command.link(ref('group_smartspend_vendor'))]"/>
         <field name="perm_read" eval="True"/>
         <field name="perm_write" eval="False"/>

@@ -2246,6 +2246,14 @@ export default function App() {
           setRequests(data);
           return data;
         }
+        // A supplier's list is only ever their own orders. Padding an empty one
+        // with the walkthrough's sample requests showed them orders placed with
+        // other vendors, so a supplier with none sees none.
+        if (Array.isArray(data) && currentUser?.is_vendor) {
+          lastOdooSyncRef.current = JSON.stringify(data);
+          setRequests(data);
+          return data;
+        }
         // Nothing of their own yet — keep the seeded walkthrough requests so the
         // portal still has something to show.
         return null;

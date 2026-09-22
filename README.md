@@ -36,7 +36,8 @@ so the plain URL reaches this stack's Odoo. Odoo's own backend is on
 The three supplier sign-ins are three competing companies, each with its own
 sales contact: `vendor@` is Arjun Nair (Primus Technologies), `vendor2@` Meera
 Krishnan (Apex Systems), `vendor3@` Vikram Desai (SecureNet). Each sees only
-their own invitations, bids and rank.
+their own invitations, bids and rank — and only the purchase orders placed with
+their company, so to acknowledge an order, sign in as the vendor it went to.
 
 > These are demo credentials for a local stack. Change them before exposing
 > this to a network. The database ships with no API keys and no password for
