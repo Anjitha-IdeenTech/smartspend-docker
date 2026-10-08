@@ -25,6 +25,7 @@ import { FALLBACK_METHODS, MethodSelect, methodLabel } from './fulfilment';
 import { VendorAckDialog, showDate } from './vendorAck';
 import { SubscriptionsDesk } from './subscriptions';
 import { NewProductHint, ProductRequestsDesk, ProductRequestsPanel } from './productRequests';
+import { LineAnalytics } from './analytics';
 import { BackorderDialog, BackordersBoard, ShipmentChain } from './backorders';
 import type { ReceiptInfo, Receipt as GoodsReceipt, Shortage } from './backorders';
 import type { MethodOption } from './fulfilment';
@@ -5372,6 +5373,7 @@ export default function App() {
                         <FavoriteToggle fetcher={apiFetch} offline={offlineDemo} userKey={favoritesKey}
                                         productName={editProductName} qty={editProductQty} price={editTargetPrice} />
                         <NewProductHint product={editProductName} fetcher={apiFetch} offline={offlineDemo} onPick={setEditProductName} />
+                        <LineAnalytics requestId={currentOdooRequestName} productName={editProductName} fetcher={apiFetch} offline={offlineDemo} />
                         {extraItems.map((it, idx) => (
                           <React.Fragment key={idx}>
                           <div className="grid grid-cols-12 gap-2 items-center">
@@ -5388,6 +5390,7 @@ export default function App() {
                                           productName={it.productName} qty={it.productQty} price={it.targetPrice} />
                           <NewProductHint product={it.productName} fetcher={apiFetch} offline={offlineDemo}
                                           onPick={name => setExtraItems(prev => prev.map((x, i) => i === idx ? { ...x, productName: name } : x))} />
+                          <LineAnalytics requestId={currentOdooRequestName} productName={it.productName} fetcher={apiFetch} offline={offlineDemo} />
                           </React.Fragment>
                         ))}
                         <button onClick={() => setExtraItems(prev => [...prev, { productName: '', productQty: 1, targetPrice: 0 }])}

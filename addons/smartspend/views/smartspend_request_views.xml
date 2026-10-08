@@ -260,6 +260,9 @@
                                     <field name="description" optional="show"/>
                                     <field name="product_id" optional="hide"/>
                                     <field name="product_category_id" optional="hide"/>
+                                    <field name="analytic_distribution" widget="analytic_distribution"
+                                           optional="show" groups="analytic.group_analytic_accounting"
+                                           options="{'product_field': 'product_id'}"/>
                                     <field name="product_qty"/>
                                     <field name="product_uom_id" optional="show"
                                            options="{'no_create': True}"/>

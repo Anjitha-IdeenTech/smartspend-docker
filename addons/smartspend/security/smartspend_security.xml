@@ -18,7 +18,9 @@
         <field name="name">Requester</field>
         <field name="sequence">10</field>
         <field name="privilege_id" ref="res_groups_privilege_smartspend"/>
-        <field name="implied_ids" eval="[Command.link(ref('base.group_user'))]"/>
+        <!-- Analytic accounting, as Odoo's setting turns on: every requester
+             splits a line's cost across analytic accounts. -->
+        <field name="implied_ids" eval="[Command.link(ref('base.group_user')), Command.link(ref('analytic.group_analytic_accounting'))]"/>
         <field name="comment">Raise purchase requests and follow their own ones.</field>
     </record>
 

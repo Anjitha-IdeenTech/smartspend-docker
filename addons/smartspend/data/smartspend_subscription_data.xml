@@ -24,6 +24,9 @@
         </record>
     </data>
 
+    <!-- A cost-center analytic account for every department (idempotent). -->
+    <function model="smartspend.request" name="_seed_cost_centers"/>
+
     <!-- Raises the purchase orders that have fallen due. Hourly, so an order
          due on the 1st goes out early that day even after a restart. -->
     <record id="ir_cron_smartspend_subscription_orders" model="ir.cron">

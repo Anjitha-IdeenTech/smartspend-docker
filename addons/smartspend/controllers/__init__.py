@@ -6,6 +6,7 @@ from . import fulfilment
 from . import subscription
 from . import receipt
 from . import product_request
+from . import analytic
 from . import chat
 from . import report
 from . import price_history
