@@ -38,13 +38,18 @@ class SmartspendAuctionLaunch(models.TransientModel):
         help="How much lower each vendor's next bid has to be than their last.")
     visibility = fields.Selection(VISIBILITY, string='Vendors See', default='rank', required=True)
     rebid_minutes = fields.Integer(string='Bid Again Round (minutes)', default=REBID_WINDOW_MINUTES)
+    reminder_minutes = fields.Selection(
+        [('0', 'Off'), ('15', '15 minutes before'), ('30', '30 minutes before'),
+         ('60', '1 hour before'), ('1440', '1 day before')],
+        string='Auto-Reminder', default='30', required=True,
+        help="Remind vendors who have not answered the invitation this long before bidding opens.")
     terms = fields.Text(
         string='Terms & Conditions',
         default=lambda self: _(
             "Prices are for the full quantity, delivered to the requesting site, inclusive "
             "of freight and exclusive of GST. The lowest total at the close is L1. The buyer "
-            "may award to L1 or cancel the event; placing a bid is a binding offer valid for "
-            "30 days."))
+            "may award to L1 or to another bidder, or cancel the event; placing a bid is a "
+            "binding offer valid for 30 days."))
 
     @api.model
     def default_get(self, fields_list):
@@ -74,6 +79,7 @@ class SmartspendAuctionLaunch(models.TransientModel):
             min_decrement=self.min_decrement,
             visibility=self.visibility,
             rebid_minutes=self.rebid_minutes,
+            reminder_minutes=int(self.reminder_minutes or 0),
             terms=self.terms,
         )
         return {

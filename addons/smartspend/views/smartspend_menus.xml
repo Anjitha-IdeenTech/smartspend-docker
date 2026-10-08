@@ -55,6 +55,14 @@
               action="smartspend_auction_bid_action"
               sequence="20"/>
 
+    <!-- Recurring purchases: the purchasing desk sets them up. -->
+    <menuitem id="menu_smartspend_subscriptions"
+              name="Subscriptions"
+              parent="menu_smartspend_root"
+              groups="smartspend.group_smartspend_buyer"
+              action="smartspend_subscription_action"
+              sequence="24"/>
+
     <menuitem id="menu_smartspend_budgets"
               name="Budgets"
               parent="menu_smartspend_root"
@@ -77,6 +85,18 @@
               parent="menu_smartspend_orders"
               action="purchase.purchase_form_action"
               sequence="10"/>
+
+    <menuitem id="menu_smartspend_receipts"
+              name="Goods Receipts"
+              parent="menu_smartspend_orders"
+              action="smartspend_receipt_action"
+              sequence="30"/>
+
+    <menuitem id="menu_smartspend_backorders"
+              name="Backorders"
+              parent="menu_smartspend_orders"
+              action="smartspend_backorder_action"
+              sequence="35"/>
 
     <menuitem id="menu_smartspend_order_rfq"
               name="Requests for Quotation"
@@ -108,6 +128,24 @@
               parent="menu_smartspend_config"
               action="smartspend_expense_category_action"
               sequence="30"/>
+
+    <menuitem id="menu_smartspend_config_product_categories"
+              name="Product Categories"
+              parent="menu_smartspend_config"
+              action="smartspend_product_category_action"
+              sequence="35"/>
+
+    <menuitem id="menu_smartspend_config_product_requests"
+              name="Product Creation Requests"
+              parent="menu_smartspend_config"
+              action="smartspend_product_request_action"
+              sequence="36"/>
+
+    <menuitem id="menu_smartspend_config_favorites"
+              name="Favourite Products"
+              parent="menu_smartspend_config"
+              action="smartspend_favorite_product_action"
+              sequence="37"/>
 
     <!-- Who signs what: the approval matrix and the designations it routes to. -->
     <menuitem id="menu_smartspend_config_workflows"

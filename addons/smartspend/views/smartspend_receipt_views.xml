@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="smartspend_receipt_view_list" model="ir.ui.view">
+        <field name="name">smartspend.receipt.list</field>
+        <field name="model">smartspend.receipt</field>
+        <field name="arch" type="xml">
+            <list string="Goods Receipts" create="0" decoration-warning="state == 'waiting' and is_backorder"
+                  decoration-muted="state == 'cancel'">
+                <field name="name"/>
+                <field name="purchase_order_id"/>
+                <field name="request_id" optional="show"/>
+                <field name="partner_id"/>
+                <field name="backorder_of_id" optional="show"/>
+                <field name="scheduled_date" optional="show"/>
+                <field name="date_done"/>
+                <field name="qty_pending" string="Units Pending" optional="show"/>
+                <field name="amount_pending" widget="monetary" optional="show"/>
+                <field name="currency_id" column_invisible="1"/>
+                <field name="is_backorder" column_invisible="1"/>
+                <field name="state" widget="badge" decoration-success="state == 'done'"
+                       decoration-warning="state == 'waiting'" decoration-danger="state == 'cancel'"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="smartspend_receipt_view_form" model="ir.ui.view">
+        <field name="name">smartspend.receipt.form</field>
+        <field name="model">smartspend.receipt</field>
+        <field name="arch" type="xml">
+            <form string="Goods Receipt" create="0">
+                <header>
+                    <button name="action_no_backorder" type="object" string="No Backorder"
+                            invisible="state != 'waiting' or not is_backorder"
+                            groups="smartspend.group_smartspend_manager"
+                            confirm="Close this backorder? The remaining quantity will not be delivered."/>
+                    <field name="state" widget="statusbar" statusbar_visible="waiting,done"/>
+                </header>
+                <sheet>
+                    <div class="oe_title"><h1><field name="name" readonly="1"/></h1></div>
+                    <group>
+                        <group>
+                            <field name="purchase_order_id" readonly="1"/>
+                            <field name="request_id" readonly="1"/>
+                            <field name="partner_id"/>
+                            <field name="backorder_of_id" invisible="not backorder_of_id"/>
+                            <field name="is_backorder" invisible="1"/>
+                        </group>
+                        <group>
+                            <field name="scheduled_date"/>
+                            <field name="date_done" invisible="not date_done"/>
+                            <field name="received_by_id" invisible="not received_by_id"/>
+                            <field name="shipping_method"/>
+                            <field name="no_backorder" invisible="not no_backorder"/>
+                        </group>
+                    </group>
+                    <field name="line_ids" readonly="1">
+                        <list>
+                            <field name="product_name"/>
+                            <field name="qty_demand"/>
+                            <field name="qty_done"/>
+                            <field name="price_unit"/>
+                        </list>
+                    </field>
+                    <field name="backorder_ids" readonly="1" invisible="not backorder_ids">
+                        <list>
+                            <field name="name"/>
+                            <field name="scheduled_date"/>
+                            <field name="state" widget="badge"/>
+                        </list>
+                    </field>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="smartspend_receipt_view_search" model="ir.ui.view">
+        <field name="name">smartspend.receipt.search</field>
+        <field name="model">smartspend.receipt</field>
+        <field name="arch" type="xml">
+            <search string="Goods Receipts">
+                <field name="name"/>
+                <field name="purchase_order_id"/>
+                <field name="partner_id"/>
+                <filter name="backorders" string="Open Backorders"
+                        domain="[('state', '=', 'waiting'), ('is_backorder', '=', True)]"/>
+                <filter name="done" string="Received" domain="[('state', '=', 'done')]"/>
+                <filter name="group_vendor" string="Vendor" context="{'group_by': 'partner_id'}"/>
+            </search>
+        </field>
+    </record>
+
+    <record id="smartspend_receipt_action" model="ir.actions.act_window">
+        <field name="name">Goods Receipts</field>
+        <field name="res_model">smartspend.receipt</field>
+        <field name="view_mode">list,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">No goods received yet</p>
+            <p>Receipts are recorded on the portal's Receive Items screen. A short delivery can leave a backorder for the rest.</p>
+        </field>
+    </record>
+
+    <record id="smartspend_backorder_action" model="ir.actions.act_window">
+        <field name="name">Backorders</field>
+        <field name="res_model">smartspend.receipt</field>
+        <field name="view_mode">list,form</field>
+        <field name="domain">[('is_backorder', '=', True)]</field>
+        <field name="context">{'search_default_backorders': 1}</field>
+    </record>
+
+</odoo>

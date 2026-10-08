@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="smartspend_subscription_view_list" model="ir.ui.view">
+        <field name="name">smartspend.subscription.list</field>
+        <field name="model">smartspend.subscription</field>
+        <field name="arch" type="xml">
+            <list string="Subscriptions" decoration-muted="state in ('ended', 'cancelled')" decoration-warning="state == 'paused'">
+                <field name="name"/>
+                <field name="title"/>
+                <field name="partner_id"/>
+                <field name="frequency"/>
+                <field name="next_order_date"/>
+                <field name="amount_per_cycle" widget="monetary"/>
+                <field name="monthly_cost" widget="monetary" optional="show"/>
+                <field name="annual_cost" widget="monetary" optional="show"/>
+                <field name="currency_id" column_invisible="1"/>
+                <field name="state" widget="badge" decoration-success="state == 'active'"
+                       decoration-warning="state == 'paused'" decoration-info="state == 'draft'"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="smartspend_subscription_view_form" model="ir.ui.view">
+        <field name="name">smartspend.subscription.form</field>
+        <field name="model">smartspend.subscription</field>
+        <field name="arch" type="xml">
+            <form string="Subscription">
+                <header>
+                    <button name="action_activate" type="object" string="Start" class="btn-primary"
+                            invisible="state != 'draft'"/>
+                    <button name="action_generate_now" type="object" string="Raise Next Order Now"
+                            invisible="state != 'active'"
+                            confirm="Raise the next purchase order now instead of waiting for its date?"/>
+                    <button name="action_pause" type="object" string="Pause" invisible="state != 'active'"/>
+                    <button name="action_resume" type="object" string="Resume" class="btn-primary"
+                            invisible="state != 'paused'"/>
+                    <button name="action_end" type="object" string="End"
+                            invisible="state not in ('active', 'paused', 'draft')"
+                            confirm="End this subscription? No further orders will be raised."/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,active,ended"/>
+                </header>
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button class="oe_stat_button" name="action_view_orders" type="object" icon="fa-shopping-cart">
+                            <field name="order_count" widget="statinfo" string="Orders"/>
+                        </button>
+                    </div>
+                    <div class="oe_title">
+                        <span class="text-muted"><field name="name" readonly="1"/></span>
+                        <h1><field name="title" placeholder="e.g. Microsoft 365 Business licences"/></h1>
+                    </div>
+                    <group>
+                        <group string="Schedule">
+                            <field name="partner_id" options="{'no_create': True}"/>
+                            <field name="frequency" widget="radio" options="{'horizontal': true}"/>
+                            <field name="start_date"/>
+                            <field name="end_date"/>
+                            <field name="next_order_date" invisible="not next_order_date"/>
+                            <field name="auto_confirm"/>
+                        </group>
+                        <group string="Cost">
+                            <field name="amount_per_cycle" widget="monetary"/>
+                            <field name="monthly_cost" widget="monetary"/>
+                            <field name="annual_cost" widget="monetary"/>
+                            <field name="ordered_total" widget="monetary"/>
+                            <field name="last_order_id" invisible="not last_order_id"/>
+                            <field name="currency_id" invisible="1"/>
+                        </group>
+                    </group>
+                    <group>
+                        <group>
+                            <field name="department_id"/>
+                            <field name="branch_id"/>
+                        </group>
+                        <group>
+                            <field name="category_id"/>
+                            <field name="owner_id"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Items" name="items">
+                            <field name="line_ids">
+                                <list editable="bottom">
+                                    <field name="sequence" widget="handle"/>
+                                    <field name="product_name"/>
+                                    <field name="product_qty"/>
+                                    <field name="price_unit" widget="monetary"/>
+                                    <field name="subtotal" widget="monetary" sum="Per order"/>
+                                    <field name="currency_id" column_invisible="1"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Orders" name="orders">
+                            <field name="order_ids" readonly="1">
+                                <list>
+                                    <field name="name"/>
+                                    <field name="smartspend_cycle_date"/>
+                                    <field name="date_order"/>
+                                    <field name="amount_total" widget="monetary"/>
+                                    <field name="currency_id" column_invisible="1"/>
+                                    <field name="state" widget="badge"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Notes" name="notes">
+                            <field name="note" placeholder="Licence keys go to IT; renew seats in March…"/>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="smartspend_subscription_view_search" model="ir.ui.view">
+        <field name="name">smartspend.subscription.search</field>
+        <field name="model">smartspend.subscription</field>
+        <field name="arch" type="xml">
+            <search string="Subscriptions">
+                <field name="title"/>
+                <field name="partner_id"/>
+                <filter name="active_subs" string="Active" domain="[('state', '=', 'active')]"/>
+                <filter name="paused" string="Paused" domain="[('state', '=', 'paused')]"/>
+                <separator/>
+                <filter name="monthly" string="Monthly" domain="[('frequency', '=', 'monthly')]"/>
+                <filter name="yearly" string="Yearly" domain="[('frequency', '=', 'yearly')]"/>
+                <filter name="group_vendor" string="Vendor" context="{'group_by': 'partner_id'}"/>
+            </search>
+        </field>
+    </record>
+
+    <record id="smartspend_subscription_action" model="ir.actions.act_window">
+        <field name="name">Subscriptions</field>
+        <field name="res_model">smartspend.subscription</field>
+        <field name="view_mode">list,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Set up a subscription</p>
+            <p>Products needed every month or every year are ordered automatically — a purchase order on the 1st, to the vendor you choose.</p>
+        </field>
+    </record>
+
+</odoo>

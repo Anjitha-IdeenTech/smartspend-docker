@@ -5,7 +5,7 @@ import {
   ArrowRight, User, Settings, CheckCircle2, ChevronRight,
   Play, RefreshCw, X, AlertTriangle, AlertCircle, Check,
   Volume2, ShieldCheck, Landmark, Briefcase, FileInput,
-  Calendar, Layers, Clock, Users, ArrowUpRight, ArrowDownRight, Menu,
+  Calendar, Layers, Tags, Heart, Repeat, Clock, Users, ArrowUpRight, ArrowDownRight, Menu,
   Paperclip, MessageSquare, History, Search, Eye, Filter,
   Truck, Package, Receipt, CreditCard, Moon, Sun, Bell,
   PanelLeftClose,
@@ -14,10 +14,25 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import {
-  DEFAULT_API_URL, OFFLINE_TOKEN, resolveApiUrl, resolveDemoUser,
+  DEFAULT_API_URL, DEMO_ACCOUNTS, OFFLINE_TOKEN, deploymentApiUrl, resolveApiUrl, resolveDemoUser,
 } from './demoMode';
 import { AuctionDesk, VendorAuctions } from './auction';
+import { PrintButton, PrintRow } from './documents';
+import { PriceHistoryStrip } from './priceHistory';
+import { ProductCategoriesMaster } from './productCategories';
+import { MasterDetailPanel, DetailChips, DetailRequests } from './masterDetail';
+import { FALLBACK_METHODS, MethodSelect, methodLabel } from './fulfilment';
+import { VendorAckDialog, showDate } from './vendorAck';
+import { SubscriptionsDesk } from './subscriptions';
+import { NewProductHint, ProductRequestsDesk, ProductRequestsPanel } from './productRequests';
+import { BackorderDialog, BackordersBoard, ShipmentChain } from './backorders';
+import type { ReceiptInfo, Receipt as GoodsReceipt, Shortage } from './backorders';
+import type { MethodOption } from './fulfilment';
+import { FavoritesPage, FavoritesQuickBar, FavoriteToggle } from './favorites';
+import type { FavoriteLine } from './favorites';
 import type { AuctionableRequest } from './auction';
+import { RequestChat } from './requestChat';
+import type { ChatDraft, ChatLine, ChatPreview } from './requestChat';
 
 // Define the Scene IDs and names
 const SCENES = [
@@ -39,7 +54,10 @@ const SCENES = [
   { id: 16, name: "Scene 16: Master Data Console" },
   { id: 17, name: "Scene 17: Questions Raised" },
   { id: 18, name: "Scene 18: Vendor Portal" },
-  { id: 19, name: "Scene 19: Live Reverse Auctions" }
+  { id: 19, name: "Scene 19: Live Reverse Auctions" },
+  { id: 20, name: "Scene 20: Subscriptions" },
+  { id: 21, name: "Scene 21: Backorders" },
+  { id: 22, name: "Scene 22: New Products" }
 ];
 
 /** The signed-in Odoo user, as returned by /api/smartspend/login. */
@@ -68,6 +86,10 @@ interface MasterData {
   statuses: string[];
   /** The configured approval matrix. Absent when talking to an older backend. */
   workflows?: ConfiguredWorkflow[];
+  /** Designations a step can be added for. Absent on an older backend. */
+  designations?: { id: number; name: string; holders: { name: string; login: string }[] }[];
+  /** Internal accounts an approval can be delegated to — never a supplier. */
+  approverUsers?: { id: number; name: string; login: string }[];
 }
 
 /**
@@ -196,6 +218,12 @@ interface ApprovalStep {
   note: string;
   /** Who holds this designation — the account to sign in as to clear the step. */
   holders?: { name: string; login: string }[];
+  /** Set when the step has been handed to somebody else; they sign it instead. */
+  delegatedTo?: string;
+  delegatedBy?: string;
+  delegationNote?: string;
+  /** Added into this chain by an approver, rather than copied from the workflow. */
+  addedIn?: boolean;
 }
 
 interface RequestItem {
@@ -226,6 +254,9 @@ interface RequestItem {
   savings: number;
   history: Array<{ title: string; date: string; desc?: string }>;
   clarificationComments: Array<{ role: 'manager' | 'employee'; text: string; date: string }>;
+  /** Who the approver's "Request Info" question went to — the requester unless another user was picked. */
+  clarificationFrom?: string;
+  clarificationFromLogin?: string;
   vendorBids: Array<{ vendorName: string; price: number; leadTime: string; warranty: string; status: string }>;
   selectedSourcingMethod: 'Negotiation' | 'Multi RFQ' | 'Bidding';
   attachments: string[];
@@ -906,6 +937,18 @@ function ApprovalChain({ request, compact = false }: { request: RequestItem; com
                       {step.holders.map(h => h.login).join(' / ')}
                     </span>
                   )}
+                  {/* A delegated step still names its designation — that is what
+                      the workflow asked for — so say who is actually holding it. */}
+                  {!!step.delegatedTo && (
+                    <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-brand/10 text-brand border border-brand/25">
+                      delegated to {step.delegatedTo}
+                    </span>
+                  )}
+                  {step.addedIn && (
+                    <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-secondary text-textSecondary border border-borderTheme">
+                      added
+                    </span>
+                  )}
                   {step.state === 'pending' && !step.holders?.length && (
                     <span className="text-[10px] font-bold text-gold">no holder assigned</span>
                   )}
@@ -920,6 +963,11 @@ function ApprovalChain({ request, compact = false }: { request: RequestItem; com
                 </div>
                 {!compact && step.note && (
                   <p className="text-[11px] text-textSecondary mt-0.5 italic">“{step.note}”</p>
+                )}
+                {!compact && !!step.delegationNote && (
+                  <p className="text-[11px] text-textSecondary mt-0.5 italic">
+                    {step.delegatedBy ? `${step.delegatedBy}: ` : ''}“{step.delegationNote}”
+                  </p>
                 )}
               </div>
             </li>
@@ -1850,11 +1898,26 @@ export default function App() {
 
   // Post-PO simulation states
   const [grnGenerated, setGrnGenerated] = useState<boolean>(false);
+  // Goods receipts kept in Odoo: the delivery expected on the open request,
+  // what is typed as arrived (by order line), and Odoo's backorder question.
+  const [receiptInfo, setReceiptInfo] = useState<ReceiptInfo | null>(null);
+  const [grnQtys, setGrnQtys] = useState<Record<number, number>>({});
+  const [backorderAsk, setBackorderAsk] = useState<Shortage[] | null>(null);
+  const [grnBusy, setGrnBusy] = useState(false);
+  const [grnError, setGrnError] = useState('');
+  const [grnResult, setGrnResult] = useState<{ receipt: GoodsReceipt; backorder: GoodsReceipt | null } | null>(null);
   const [billPosted, setBillPosted] = useState<boolean>(false);
   const [paymentComplete, setPaymentComplete] = useState<boolean>(false);
   const [deliveredQty, setDeliveredQty] = useState<number>(20);
   const [qualityPassed, setQualityPassed] = useState<boolean>(true);
-  const [paymentMethod, setPaymentMethod] = useState<string>("Bank Transfer");
+  // Required on the vendor invoice (and used by the payment); shipping method
+  // is required on the goods receipt. Both are kept on the request in Odoo.
+  const [paymentMethod, setPaymentMethod] = useState<string>("");
+  const [shippingMethod, setShippingMethod] = useState<string>("");
+  const [methodOptions, setMethodOptions] = useState<{ shippingMethod: MethodOption[]; paymentMethod: MethodOption[] }>(FALLBACK_METHODS);
+  // Which required choice was left empty when its step was attempted.
+  const [methodMissing, setMethodMissing] = useState<{ shipping?: boolean; payment?: boolean }>({});
+  const [methodError, setMethodError] = useState<string>("");
   // What comes off the bill before the vendor is paid. Both are editable: the
   // rate a bill attracts is a judgement made on the bill, not a constant, and
   // retention or a penalty has no rate at all.
@@ -2013,10 +2076,13 @@ export default function App() {
   ]);
 
   // ?api=https://… wins over the stored value, so one hosted build can be
-  // pointed at a tunnelled Odoo for a live demo without being rebuilt.
+  // pointed at a tunnelled Odoo for a live demo without being rebuilt. Next is
+  // what the deployment itself named in config.js — a deployed demo serves the
+  // portal and Odoo under one hostname, so the link to share is the plain URL.
   const [odooApiUrl, setOdooApiUrl] = useState<string>(() => {
     try {
-      return resolveApiUrl(window.location.search, localStorage.getItem("erpApiUrl"));
+      return resolveApiUrl(window.location.search, localStorage.getItem("erpApiUrl"),
+                           DEFAULT_API_URL, deploymentApiUrl());
     } catch {
       return DEFAULT_API_URL;
     }
@@ -2078,6 +2144,33 @@ export default function App() {
   // without touching the network, and the local fallbacks the callers already
   // carry run the walkthrough — which is what they were written for.
   const offlineDemo = authToken === OFFLINE_TOKEN;
+  // A "Request Info" question belongs in the Questions tab of whoever it was
+  // put to. Older questions name nobody and show as before; managers keep
+  // seeing every open question, as they always have.
+  const isMyQuestion = (r: { status: string; clarificationFromLogin?: string }) =>
+    r.status === 'Needs Clarification' && (
+      !r.clarificationFromLogin || !currentUser || !!currentUser.is_manager
+      || r.clarificationFromLogin === currentUser.login);
+  // A manager can delegate a step to any user, a requester included. The step
+  // the request is waiting on then names that one account as its signatory.
+  const isDelegatedToMe = (r: { status: string; approvalChain?: ApprovalStep[] }) => {
+    if (r.status !== 'Pending Approval' || !currentUser) return false;
+    const next = (r.approvalChain ?? []).find(s => s.state === 'pending');
+    return !!next?.delegatedTo && !!next.holders?.some(h => h.login === currentUser.login);
+  };
+  // The step this request waits on was handed to somebody else. Odoo refuses
+  // anyone else's signature on it, so the portal should not offer one.
+  const delegatedElsewhere = (r: { status: string; approvalChain?: ApprovalStep[] }) => {
+    if (r.status !== 'Pending Approval') return null;
+    const next = (r.approvalChain ?? []).find(s => s.state === 'pending');
+    if (!next?.delegatedTo || isDelegatedToMe(r)) return null;
+    return next;
+  };
+  // Ever delegated to me, signed or not. These reach an employee only because
+  // of the delegation, so they are not "my requests".
+  const wasDelegatedToMe = (r: { approvalChain?: ApprovalStep[] }) =>
+    !!currentUser && (r.approvalChain ?? []).some(
+      s => !!s.delegatedTo && !!s.holders?.some(h => h.login === currentUser.login));
   // Whether the first load of requests for the current session has finished.
   // Until it has, `requests` still holds the built-in walkthrough set, and an
   // inbox built from that would miss the request the approver actually came
@@ -2372,6 +2465,7 @@ export default function App() {
    */
   const recordPurchaseOrderStep = async (
     reqId: string, step: 'release' | 'acknowledge', url: string = odooApiUrl,
+    expectedDelivery?: string,
   ) => {
     if (!authToken) return null;
     // Same again, and the same guards the backend applies — the steps run in
@@ -2393,24 +2487,26 @@ export default function App() {
             ...current, poAcknowledged: true,
             history: [...current.history, {
               title: 'Vendor Acknowledged PO', date: 'Now',
-              desc: 'Vendor confirmed delivery commit date & pricing.',
+              desc: `Vendor confirmed pricing and committed to deliver by ${expectedDelivery ? showDate(expectedDelivery) : '—'}.`,
             }],
           };
+      if (step === 'acknowledge' && expectedDelivery) setDeliveryCommitments(prev => ({ ...prev, [reqId]: expectedDelivery }));
       setRequests(prev => prev.map(r => (r.id === reqId ? updated : r)));
       return updated;
     }
-    const fail = (message: string) => noteSyncError({
+    const fail = (message: string) => { setPoStepError(message); noteSyncError({
       key: `po-step:${step}:${reqId}`, id: reqId,
       what: step === 'release'
         ? 'purchase order release was not recorded'
         : 'vendor acknowledgment was not recorded',
       message: message + SIMULATED,
-      retry: () => recordPurchaseOrderStep(reqId, step, url),
-    });
+      retry: () => recordPurchaseOrderStep(reqId, step, url, expectedDelivery),
+    }); };
+    setPoStepError('');
     try {
       const res = await apiFetch(`/api/smartspend/purchase-order/step`, {
         method: 'POST',
-        body: JSON.stringify({ id: reqId, step }),
+        body: JSON.stringify({ id: reqId, step, ...(expectedDelivery ? { expectedDelivery } : {}) }),
       }, url);
       if (res.ok) {
         const updated = await res.json();
@@ -2420,6 +2516,7 @@ export default function App() {
           return newState;
         });
         clearSyncError(`po-step:${step}:${reqId}`);
+        if (step === 'acknowledge' && expectedDelivery) setDeliveryCommitments(prev => ({ ...prev, [updated.id || reqId]: expectedDelivery }));
         return updated as RequestItem;
       }
       const message = await refusalMessage(res);
@@ -2431,6 +2528,19 @@ export default function App() {
     }
     return null;
   };
+
+  // The vendors' committed delivery dates, kept beside the request list.
+  useEffect(() => {
+    if (!authToken || offlineDemo) return;
+    let stale = false;
+    (async () => {
+      try {
+        const res = await apiFetch('/api/smartspend/delivery-commitments', { method: 'GET' });
+        if (res.ok && !stale) setDeliveryCommitments(await res.json());
+      } catch { /* the dates simply stay unshown */ }
+    })();
+    return () => { stale = true; };
+  }, [authToken, offlineDemo, requests.length]);
 
   // Helper to reset Odoo backend database
   const resetOdooDatabase = async (url: string = odooApiUrl) => {
@@ -2539,7 +2649,7 @@ export default function App() {
   }, [selectedRequestId, currentRequest]);
 
   // Employee Portal Local States
-  const [employeeTab, setEmployeeTab] = useState<'chat' | 'list' | 'tracking' | 'clarify'>('chat');
+  const [employeeTab, setEmployeeTab] = useState<'chat' | 'favorites' | 'list' | 'tracking' | 'clarify'>('chat');
   // "My Requests" home filters — three coloured status dots + free-text search.
   const [homeStatusFilter, setHomeStatusFilter] = useState<string>('all');
   // Tiles or rows. Shared, so switching does not have to be done again on the
@@ -2566,13 +2676,13 @@ export default function App() {
   // Drag-to-reorder role nav; first item = landing screen on login (#5).
   // Role-keyed so Employee, SCM Buyer, Manager and CEO each persist their own order.
   const DEFAULT_NAV_ORDER: Record<string, string[]> = {
-    Employee: ['chat', 'list', 'tracking', 'clarify'],
-    Manager: ['queue', 'clarify', 'tracking', 'masters'],
+    Employee: ['chat', 'favorites', 'list', 'tracking', 'clarify'],
+    Manager: ['queue', 'clarify', 'auctions', 'newProducts', 'tracking', 'backorders', 'subscriptions', 'masters'],
     // 'tracking' is here because raising the PO moves the request to "PO
     // Confirmed", which drops it straight out of the To Source queue — and the
     // buyer had no other route to the tracking screen, so the vendor
     // acknowledgment step it owns became unreachable the moment it was due.
-    'SCM Buyer': ['requests', 'auctions', 'discovery', 'tracking'],
+    'SCM Buyer': ['requests', 'auctions', 'subscriptions', 'discovery', 'tracking', 'backorders'],
     CEO: ['analytics', 'tracking', 'masters'],
   };
   const [navOrder, setNavOrder] = useState<Record<string, string[]>>(() => {
@@ -2611,10 +2721,11 @@ export default function App() {
     if (!key) return;
     if (role === 'Employee') {
       if (key === 'masters') { setActiveScene(16); }
-      else { setActiveScene(2); setEmployeeTab(key as 'chat' | 'list' | 'tracking' | 'clarify'); }
+      else if (key === 'approvals') { setActiveScene(10); }
+      else { setActiveScene(2); setEmployeeTab(key as 'chat' | 'favorites' | 'list' | 'tracking' | 'clarify'); }
     }
     else if (role === 'Manager') {
-      setActiveScene(key === 'masters' ? 16 : key === 'tracking' ? 11 : key === 'clarify' ? 17 : 10);
+      setActiveScene(key === 'masters' ? 16 : key === 'tracking' ? 11 : key === 'clarify' ? 17 : key === 'subscriptions' ? 20 : key === 'auctions' ? 19 : key === 'backorders' ? 21 : key === 'newProducts' ? 22 : 10);
     }
     else if (role === 'SCM Buyer') {
       if (key === 'masters') { setActiveScene(16); }
@@ -2631,19 +2742,28 @@ export default function App() {
         setActiveScene(11);
       }
       else if (key === 'auctions') { setActiveScene(19); }
+      else if (key === 'subscriptions') { setActiveScene(20); }
+      else if (key === 'backorders') { setActiveScene(21); }
       else { setActiveScene(6); setScmTab(key === 'discovery' ? 'discovery' : 'requests'); }
     }
     else if (role === 'CEO') { setActiveScene(key === 'masters' ? 16 : key === 'tracking' ? 11 : 15); }
   };
   const navActive = (role: string, key: string): boolean => {
-    if (role === 'Employee') return key === 'masters' ? activeScene === 16 : activeScene === 2 && employeeTab === key;
+    if (role === 'Employee') return key === 'masters' ? activeScene === 16
+      : key === 'approvals' ? activeScene === 10 : activeScene === 2 && employeeTab === key;
     if (role === 'Manager') return key === 'masters' ? activeScene === 16
+      : key === 'subscriptions' ? activeScene === 20
+      : key === 'auctions' ? activeScene === 19
+      : key === 'backorders' ? activeScene === 21
+      : key === 'newProducts' ? activeScene === 22
       : key === 'tracking' ? activeScene === 11
         : key === 'clarify' ? activeScene === 17 : activeScene === 10;
     if (role === 'SCM Buyer') {
       if (key === 'masters') return activeScene === 16;
       if (key === 'tracking') return activeScene === 11;
       if (key === 'auctions') return activeScene === 19;
+      if (key === 'subscriptions') return activeScene === 20;
+      if (key === 'backorders') return activeScene === 21;
       return activeScene === 6 && scmTab === (key === 'discovery' ? 'discovery' : 'requests');
     }
     if (role === 'CEO') return key === 'masters' ? activeScene === 16 : key === 'tracking' ? activeScene === 11 : activeScene === 15;
@@ -2654,16 +2774,24 @@ export default function App() {
       ? <span className={`ml-auto text-[10px] px-2 py-0.5 rounded-full font-bold ${cls} ${pulse ? 'animate-pulse' : ''}`}>{n}</span> : undefined;
     const m: Record<string, { icon: React.ReactNode; label: string; badge?: React.ReactNode }> = {
       'Employee/chat': { icon: <MessageSquare className="h-4 w-4" />, label: 'New Request' },
-      'Employee/list': { icon: <FileText className="h-4 w-4" />, label: 'My Requests', badge: <span className="ml-auto bg-secondary text-textSecondary text-[10px] px-2 py-0.5 rounded-full font-bold">{requests.length}</span> },
+      'Employee/favorites': { icon: <Heart className="h-4 w-4" />, label: 'Favourites' },
+      'Employee/list': { icon: <FileText className="h-4 w-4" />, label: 'My Requests', badge: <span className="ml-auto bg-secondary text-textSecondary text-[10px] px-2 py-0.5 rounded-full font-bold">{requests.filter(r => !wasDelegatedToMe(r)).length}</span> },
+      'Employee/approvals': { icon: <CheckCircle2 className="h-4 w-4" />, label: 'To Approve', badge: pill(requests.filter(isDelegatedToMe).length, 'bg-gold/20 text-gold border border-gold/30', true) },
       'Employee/tracking': { icon: <History className="h-4 w-4" />, label: 'Track Request' },
-      'Employee/clarify': { icon: <AlertTriangle className="h-4 w-4" />, label: 'Questions', badge: pill(requests.filter(r => r.status === 'Needs Clarification').length, 'bg-gold/20 text-gold border border-gold/30', true) },
+      'Employee/clarify': { icon: <AlertTriangle className="h-4 w-4" />, label: 'Questions', badge: pill(requests.filter(isMyQuestion).length, 'bg-gold/20 text-gold border border-gold/30', true) },
       'Employee/masters': { icon: <Boxes className="h-4 w-4" />, label: 'Master Data' },
       'Manager/queue': { icon: <CheckCircle2 className="h-4 w-4" />, label: 'To Approve', badge: pill(requests.filter(r => MANAGER_QUEUE_STATUSES.includes(r.status)).length, 'bg-gold/20 text-gold border border-gold/30') },
       'Manager/clarify': { icon: <AlertTriangle className="h-4 w-4" />, label: 'Questions', badge: pill(requests.filter(r => r.status === 'Needs Clarification').length, 'bg-gold/20 text-gold border border-gold/30', true) },
       'Manager/tracking': { icon: <History className="h-4 w-4" />, label: 'Track Request' },
+      'Manager/subscriptions': { icon: <Repeat className="h-4 w-4" />, label: 'Subscriptions' },
+      'Manager/backorders': { icon: <Truck className="h-4 w-4" />, label: 'Backorders' },
+      'Manager/newProducts': { icon: <Package className="h-4 w-4" />, label: 'New Products', badge: pill(newProductCount, 'bg-gold/20 text-gold border border-gold/30', newProductCount > 0) },
+      'SCM Buyer/backorders': { icon: <Truck className="h-4 w-4" />, label: 'Backorders' },
+      'Manager/auctions': { icon: <Gavel className="h-4 w-4" />, label: 'Auction Approvals', badge: pill(auctionToApproveCount, 'bg-gold/20 text-gold border border-gold/30', auctionToApproveCount > 0) },
       'Manager/masters': { icon: <Boxes className="h-4 w-4" />, label: 'Master Data', badge: pill(pendingDrafts.length, 'bg-brand/20 text-brand border border-brand/30', true) },
       'SCM Buyer/requests': { icon: <Briefcase className="h-4 w-4" />, label: 'To Source', badge: pill(requests.filter(r => BUYER_QUEUE_STATUSES.includes(r.status)).length, 'bg-brand/20 text-brand border border-brand/30') },
       'SCM Buyer/auctions': { icon: <Gavel className="h-4 w-4" />, label: 'Live Auctions', badge: pill(auctionLiveCount + auctionToAwardCount, auctionLiveCount ? 'bg-neg/15 text-neg border border-neg/30' : 'bg-gold/20 text-gold border border-gold/30', auctionLiveCount > 0) },
+      'SCM Buyer/subscriptions': { icon: <Repeat className="h-4 w-4" />, label: 'Subscriptions' },
       'SCM Buyer/tracking': { icon: <History className="h-4 w-4" />, label: 'Track Request', badge: pill(requests.filter(r => r.status === 'PO Confirmed').length, 'bg-brand/20 text-brand border border-brand/30') },
       'SCM Buyer/discovery': { icon: <Search className="h-4 w-4" />, label: 'Find Vendors' },
       'SCM Buyer/masters': { icon: <Boxes className="h-4 w-4" />, label: 'Master Data', badge: pill(pendingDrafts.length, 'bg-brand/20 text-brand border border-brand/30', true) },
@@ -2725,6 +2853,7 @@ export default function App() {
   };
 
   const [chatInputText, setChatInputText] = useState<string>("");
+  const chatInputTextState = chatInputText;
   // Files the requester picked. Held with their content because the request
   // does not exist yet when they are chosen — they are uploaded once it does.
   const [attachedFiles, setAttachedFiles] = useState<{ name: string; data: string }[]>([]);
@@ -2757,6 +2886,7 @@ export default function App() {
   const [extraItems, setExtraItems] = useState<LineItem[]>([]);
   // Products staged directly in the Scene 2 chat composer, before the AI extraction step.
   const [chatItems, setChatItems] = useState<LineItem[]>([]);
+  const chatItemsState = chatItems;
 
   // Poke / reminders (#10)
   const [pokes, setPokes] = useState<Array<{ to: string; from: string; message: string; reqId: string }>>([
@@ -2834,6 +2964,13 @@ export default function App() {
   // Contract selection State
   const [hasContract, setHasContract] = useState<boolean>(false);
   const [masterData, setMasterData] = useState<MasterData | null>(null);
+  // Who "Request Info" can ask: every internal SmartSpend user Odoo lists, or
+  // the demo accounts when no server is connected. Suppliers are never asked.
+  const requestInfoUsers: { name: string; login: string }[] = (masterData?.approverUsers?.length
+    ? masterData.approverUsers
+    : DEMO_ACCOUNTS.filter(a => !a.is_vendor)
+  ).filter(u => u.login !== currentUser?.login)
+    .map(u => ({ name: u.name, login: u.login }));
 
   // Odoo owns these lists now; the hardcoded ones are only a fallback for when
   // the backend is unreachable, so the walkthrough still runs offline.
@@ -2865,6 +3002,8 @@ export default function App() {
   }>({ products: [], categories: [], branches: [], vendors: [], companies: [] });
   // Which master is being added to, and what has been typed so far.
   const [masterForm, setMasterForm] = useState<{ kind: string; values: Record<string, string> } | null>(null);
+  // The record whose detail panel is open on the Master Data console.
+  const [masterDetail, setMasterDetail] = useState<{ kind: 'products' | 'categories' | 'branches' | 'vendors'; key: string } | null>(null);
   const branchRows = [...addedMasters.branches, ...(masterData?.branches.length
     ? masterData.branches.map(b => ({ name: b.name, code: b.code || '—', city: b.city || '—' }))
     : FALLBACK_BRANCHES.map((n, i) => ({
@@ -2926,7 +3065,9 @@ export default function App() {
   // Master Data Console (#16) — which master is open, its search box, and the
   // AI draft-vendor queue. A draft only becomes a vendor when someone approves
   // it here, so the decision is held in state rather than written on discovery.
-  const [mastersTab, setMastersTab] = useState<'products' | 'categories' | 'workflow' | 'company' | 'branches' | 'vendors'>('products');
+  const [mastersTab, setMastersTab] = useState<'products' | 'categories' | 'productCategories' | 'workflow' | 'company' | 'branches' | 'vendors'>('products');
+  // Filled in by the Product Categories tab once Odoo has answered.
+  const [productCategoryCount, setProductCategoryCount] = useState<number | null>(null);
   const [masterSearch, setMasterSearch] = useState<string>("");
   // Tiles or rows, for the masters that render as cards.
   const [masterView, setMasterView] = useState<'grid' | 'list'>('grid');
@@ -3065,7 +3206,7 @@ export default function App() {
   // Just enough about every auction for the sidebar badges and the sourcing
   // queue: which request each belongs to and where it stands. The auction
   // screens poll their own detail; this only keeps the counts honest.
-  const [auctionIndex, setAuctionIndex] = useState<{ id: string; requestId?: string; state: string; meState?: string }[]>([]);
+  const [auctionIndex, setAuctionIndex] = useState<{ id: string; requestId?: string; state: string; meState?: string; approved?: boolean }[]>([]);
   const auctionApi = (path: string, init?: RequestInit) => apiFetch(path, init);
   /** Take the request an auction action changed, without echoing it back as a save. */
   const swapInRequest = (updated: AuctionableRequest) => {
@@ -3076,7 +3217,7 @@ export default function App() {
     });
   };
   useEffect(() => {
-    if (!authToken || offlineDemo || !['SCM Buyer', 'Vendor'].includes(userRole)) { setAuctionIndex([]); return; }
+    if (!authToken || offlineDemo || !['SCM Buyer', 'Vendor', 'Manager'].includes(userRole)) { setAuctionIndex([]); return; }
     let stopped = false;
     const tick = async () => {
       try {
@@ -3084,7 +3225,7 @@ export default function App() {
         if (!res.ok || stopped) return;
         const data = await res.json();
         if (Array.isArray(data) && !stopped) {
-          setAuctionIndex(data.map((a: any) => ({ id: a.id, requestId: a.requestId, state: a.state, meState: a.me?.state })));
+          setAuctionIndex(data.map((a: any) => ({ id: a.id, requestId: a.requestId, state: a.state, meState: a.me?.state, approved: !!a.approval })));
         }
       } catch { /* the badges keep their last value */ }
     };
@@ -3093,7 +3234,26 @@ export default function App() {
     return () => { stopped = true; clearInterval(timer); };
   }, [authToken, offlineDemo, userRole, odooApiUrl, activeScene]);
   const auctionLiveCount = auctionIndex.filter(a => a.state === 'live').length;
-  const auctionToAwardCount = auctionIndex.filter(a => a.state === 'closed').length;
+  // Closed auctions: the manager approves the level first, then the buyer awards.
+  const auctionToAwardCount = auctionIndex.filter(a => a.state === 'closed' && a.approved).length;
+  const auctionToApproveCount = auctionIndex.filter(a => a.state === 'closed' && !a.approved).length;
+  // Product creation requests waiting on the procurement manager, for the sidebar badge.
+  const [newProductCount, setNewProductCount] = useState(0);
+  useEffect(() => {
+    if (!authToken || offlineDemo || userRole !== 'Manager') { setNewProductCount(0); return; }
+    let stopped = false;
+    const tick = async () => {
+      try {
+        const res = await apiFetch('/api/smartspend/product-requests', { method: 'GET' });
+        if (!res.ok || stopped) return;
+        const data = await res.json();
+        if (!stopped) setNewProductCount((data.requests ?? []).filter((r: { state: string }) => r.state === 'pending').length);
+      } catch { /* the badge keeps its last value */ }
+    };
+    void tick();
+    const timer = setInterval(tick, 30000);
+    return () => { stopped = true; clearInterval(timer); };
+  }, [authToken, offlineDemo, userRole]);
   const vendorAuctionCount = auctionIndex.filter(a =>
     (a.state === 'scheduled' && a.meState === 'invited') || (a.state === 'live' && a.meState === 'live')).length;
   const auctionForRequest = (id: string) =>
@@ -3139,12 +3299,29 @@ export default function App() {
   // The two release steps, which go the same way: Odoo decides, and the answer
   // it echoes back replaces the request in the list.
   const [poStepBusy, setPoStepBusy] = useState<string>("");
+  // The order a vendor is confirming: the dialog asks for the delivery date first.
+  const [ackTarget, setAckTarget] = useState<{ req: RequestItem; asBuyer: boolean } | null>(null);
+  const [poStepError, setPoStepError] = useState<string>("");
+  // Delivery date each vendor committed to, by request — from Odoo.
+  const [deliveryCommitments, setDeliveryCommitments] = useState<Record<string, string>>({});
 
   // Manager Clarification Prompt State
   const [managerQueryText, setManagerQueryText] = useState<string>("");
+  // Who "Request Info" asks. Empty means the requester, as before.
+  const [managerQueryLogin, setManagerQueryLogin] = useState<string>("");
   const [showManagerQueryBox, setShowManagerQueryBox] = useState<boolean>(false);
   const [managerApprovalNote, setManagerApprovalNote] = useState<string>("");
   const [showManagerApproveBox, setShowManagerApproveBox] = useState<boolean>(false);
+  // Delegation and the extra approver: both act on the step the request is
+  // waiting on, so they live beside the approve/query boxes and open the same way.
+  const [showManagerDelegateBox, setShowManagerDelegateBox] = useState<boolean>(false);
+  const [delegateLogin, setDelegateLogin] = useState<string>("");
+  const [delegateNote, setDelegateNote] = useState<string>("");
+  const [showAddApproverBox, setShowAddApproverBox] = useState<boolean>(false);
+  const [addApproverDesignation, setAddApproverDesignation] = useState<string>("");
+  const [addApproverPosition, setAddApproverPosition] = useState<'next' | 'last'>('next');
+  const [addApproverNote, setAddApproverNote] = useState<string>("");
+  const [approvalToast, setApprovalToast] = useState<string>("");
 
   // Employee Clarification Reply State
   const [employeeReplyText, setEmployeeReplyText] = useState<string>("");
@@ -3291,8 +3468,20 @@ export default function App() {
     handleSsoLogin(role);
   }, [authToken, currentUser]);
 
-  const handleChatSubmit = async (e?: React.FormEvent) => {
+  /**
+   * Parse what was asked for into a draft request and open the review form.
+   *
+   * ``draft`` comes from the New Request chat: the lines it settled with the
+   * requester, and the branch, department and date it asked for. Without one,
+   * this reads the composer as it always has (the voice screen still does).
+   */
+  const handleChatSubmit = async (
+    e?: React.FormEvent,
+    draft?: { text?: string; items?: LineItem[]; branch?: string; department?: string; neededBy?: string },
+  ) => {
     if (e) e.preventDefault();
+    const chatInputText = draft?.text ?? chatInputTextState;
+    const chatItems = draft?.items ?? chatItemsState;
     if (!chatInputText.trim() && chatItems.length === 0) return;
 
     setIsParsing(true);
@@ -3318,9 +3507,12 @@ export default function App() {
         if (res.ok) {
           const reqData = await res.json();
           if (reqData && reqData.id) {
-            setEditProductName(reqData.productName || "");
-            setEditProductQty(reqData.productQty || 1);
-            setEditTargetPrice(reqData.targetPrice || 0);
+            // The first line's own figures: the request's productQty is the
+            // total over every line, which would inflate line one.
+            const firstLine = reqData.lineItems?.[0];
+            setEditProductName(firstLine?.productName ?? reqData.productName ?? "");
+            setEditProductQty(firstLine?.productQty || reqData.productQty || 1);
+            setEditTargetPrice(firstLine?.targetPrice ?? reqData.targetPrice ?? 0);
             setEditLocation(reqData.location || "Bangalore Office");
             setEditExpenseCategory(reqData.expenseCategory || "IT Hardware & Laptops");
             setEditDepartment(reqData.department || "IT & Infrastructure");
@@ -3342,11 +3534,125 @@ export default function App() {
       parseSpeechText(chatInputText, chatItems);
       setCurrentOdooRequestName("New");
     }
+    // What the requester told the chat outranks the parser's defaults.
+    if (draft?.branch) setEditLocation(draft.branch);
+    if (draft?.department) setEditDepartment(draft.department);
+    if (draft?.neededBy) setEditDeliveryDate(draft.neededBy);
 
     setIsParsing(false);
     setChatInputText("");
     setChatItems([]);
     setActiveScene(4); // Go to extraction form
+  };
+
+  /** What one chat message would become, read by the server's parser without saving it. */
+  const previewChatMessage = async (text: string, items: ChatLine[]): Promise<ChatPreview | null> => {
+    if (!authToken || offlineDemo) return null;
+    try {
+      const res = await apiFetch('/api/smartspend/parse-preview', {
+        method: 'POST', body: JSON.stringify({ text, items }),
+      });
+      return res.ok ? await res.json() : null;
+    } catch {
+      return null;
+    }
+  };
+  /** Favourites picked in one go become the draft request, as a chat would. */
+  const raiseFromFavorites = (lines: FavoriteLine[]) => {
+    void handleChatSubmit(undefined, { text: '', items: lines });
+  };
+  // The open request's shipping and payment method, as Odoo holds them.
+  useEffect(() => {
+    setShippingMethod(''); setPaymentMethod(''); setMethodMissing({}); setMethodError('');
+    const reference = currentRequest?.id;
+    if (!reference || offlineDemo || !authToken) return;
+    let stale = false;
+    (async () => {
+      try {
+        const res = await apiFetch(`/api/smartspend/fulfilment?id=${encodeURIComponent(reference)}`, { method: 'GET' });
+        if (!res.ok || stale) return;
+        const data = await res.json();
+        if (stale) return;
+        setShippingMethod(data.shippingMethod || '');
+        setPaymentMethod(data.paymentMethod || '');
+        if (data.options?.shippingMethod?.length && data.options?.paymentMethod?.length) setMethodOptions(data.options);
+      } catch { /* the choices stay empty, and so required */ }
+    })();
+    return () => { stale = true; };
+  }, [currentRequest?.id, authToken, offlineDemo]);
+
+  /** The receipts of the open request, and the delivery Odoo expects next. */
+  const loadReceipts = async (reference: string | undefined) => {
+    if (!reference || offlineDemo || !authToken) { setReceiptInfo(null); return null; }
+    try {
+      const res = await apiFetch(`/api/smartspend/receipts?requestId=${encodeURIComponent(reference)}`, { method: 'GET' });
+      if (!res.ok) { setReceiptInfo(null); return null; }
+      const info: ReceiptInfo = await res.json();
+      setReceiptInfo(info);
+      setGrnQtys(Object.fromEntries((info.open?.lines ?? []).map(l => [l.poLineId, l.demand])));
+      return info;
+    } catch { setReceiptInfo(null); return null; }
+  };
+  useEffect(() => {
+    setGrnResult(null); setBackorderAsk(null); setGrnError('');
+    void loadReceipts(currentRequest?.id).then(info => { if (info?.open) setGrnGenerated(false); });
+  }, [currentRequest?.id, authToken, offlineDemo]);
+  // Receiving runs against Odoo's receipts whenever the request has a confirmed order.
+  const odooReceipt = !!receiptInfo?.order;
+
+  /** Validate the expected delivery; a short one comes back asking about a backorder. */
+  const validateReceipt = async (backorder?: 'create' | 'none') => {
+    if (!currentRequest) return;
+    setGrnBusy(true); setGrnError('');
+    try {
+      const res = await apiFetch('/api/smartspend/receipts/validate', {
+        method: 'POST',
+        body: JSON.stringify({ requestId: currentRequest.id, quantities: grnQtys, backorder, shippingMethod, qualityPassed }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (res.status === 409 && body?.needsBackorderDecision) { setBackorderAsk(body.shortages); return; }
+      if (!res.ok) { setGrnError(body?.error || 'The receipt was not validated.'); setBackorderAsk(null); return; }
+      setBackorderAsk(null);
+      setGrnResult({ receipt: body.receipt, backorder: body.backorder });
+      // The bill for this delivery is for what arrived in it.
+      const fold = (x: string) => x.trim().toLowerCase();
+      setDeliveredQtys(currentLines.map(l => body.receipt.lines
+        .filter((rl: any) => fold(rl.product) === fold(l.productName) || fold(rl.product).includes(fold(l.productName)) || fold(l.productName).includes(fold(rl.product)))
+        .reduce((t: number, rl: any) => t + Number(rl.done || 0), 0)));
+      setGrnGenerated(true);
+      await loadReceipts(currentRequest.id);
+      void fetchRequestsFromOdoo();
+    } catch (e) {
+      setGrnError(e instanceof Error ? e.message : 'The receipt was not validated.');
+    } finally { setGrnBusy(false); }
+  };
+
+  /** Store a method on the request in Odoo. False, with the reason shown, when refused. */
+  const saveMethod = async (key: 'shippingMethod' | 'paymentMethod', value: string): Promise<boolean> => {
+    setMethodError('');
+    if (offlineDemo || !authToken) return true;
+    try {
+      const res = await apiFetch('/api/smartspend/fulfilment', {
+        method: 'POST', body: JSON.stringify({ id: currentRequest.id, [key]: value }),
+      });
+      if (!res.ok) { setMethodError(await refusalMessage(res)); return false; }
+      return true;
+    } catch (e) {
+      setMethodError(unreachableMessage(e, odooApiUrl));
+      return false;
+    }
+  };
+
+  // Whose favourites are on screen: a different sign-in loads a different list.
+  const favoritesKey = authToken && currentUser ? `${currentUser.id}:${authToken.slice(0, 8)}` : '';
+
+  /** The chat is done: its lines and answers become the draft request, as the old box did. */
+  const submitChatDraft = (draft: ChatDraft | null, rawText?: string) => {
+    if (!draft) { void handleChatSubmit(undefined, { text: rawText ?? '', items: [] }); return; }
+    void handleChatSubmit(undefined, {
+      text: '', items: draft.lines,
+      branch: draft.branch, department: draft.department, neededBy: draft.neededBy,
+    });
   };
 
   /** Open the file picker. The attachment used to be a name with no file. */
@@ -3511,7 +3817,7 @@ export default function App() {
    * request thread and returns the saved record.
    * Returns null when the backend is unreachable, so the caller can simulate.
    */
-  const decideInOdoo = async (id: string, decision: 'approve' | 'reject' | 'clarify', comment?: string) => {
+  const decideInOdoo = async (id: string, decision: 'approve' | 'reject' | 'clarify', comment?: string, askLogin?: string) => {
     if (!authToken) return null;
     // Returning null is the signal the caller already understands: apply the
     // decision locally. No sync-error row — nothing is out of step with Odoo
@@ -3522,12 +3828,12 @@ export default function App() {
         : 'clarification request was not recorded';
     const fail = (message: string) => noteSyncError({
       key: `decide:${id}`, id, what,
-      message: message + SIMULATED, retry: () => decideInOdoo(id, decision, comment),
+      message: message + SIMULATED, retry: () => decideInOdoo(id, decision, comment, askLogin),
     });
     try {
       const res = await apiFetch(`/api/smartspend/decide`, {
         method: 'POST',
-        body: JSON.stringify({ id, decision, comment: comment || '' }),
+        body: JSON.stringify({ id, decision, comment: comment || '', ...(askLogin ? { ask_login: askLogin } : {}) }),
       });
       if (res.ok) {
         const updated = await res.json();
@@ -3541,7 +3847,16 @@ export default function App() {
       }
       const message = await refusalMessage(res);
       console.warn("The server refused the decision:", message);
-      fail(message);
+      // Odoo answered and said no — the step is someone else's, or the request
+      // has moved on. Showing it approved anyway is how a request reached
+      // "PO Confirmed" with no signature behind it and no order Odoo would raise.
+      // So nothing is applied locally: the caller hears `false` and stops.
+      noteSyncError({
+        key: `decide:${id}`, id, what, message,
+        retry: () => decideInOdoo(id, decision, comment, askLogin),
+      });
+      setApprovalToast(message);
+      return false;
     } catch (e) {
       console.warn("Failed to send the decision:", e);
       fail(unreachableMessage(e, odooApiUrl));
@@ -3549,10 +3864,111 @@ export default function App() {
     return null;
   };
 
+  /**
+   * Hand the step a request is waiting on to somebody else.
+   *
+   * Odoo owns the rule — only whoever may sign the step can give it away — so
+   * this posts and renders whatever comes back rather than deciding anything
+   * itself. With no backend behind the demo there is nothing to delegate to,
+   * and the caller says so.
+   */
+  const delegateInOdoo = async (id: string, login: string, note?: string) => {
+    if (!authToken || offlineDemo) return null;
+    const fail = (message: string) => noteSyncError({
+      key: `delegate:${id}`, id, what: 'delegation was not recorded',
+      message: message + SIMULATED, retry: () => delegateInOdoo(id, login, note),
+    });
+    try {
+      const res = await apiFetch(`/api/smartspend/delegate`, {
+        method: 'POST',
+        body: JSON.stringify({ id, login, note: note || '' }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setRequests(prev => {
+          const newState = prev.map(r => (r.id === id ? updated : r));
+          lastOdooSyncRef.current = JSON.stringify(newState);
+          return newState;
+        });
+        clearSyncError(`delegate:${id}`);
+        return updated as RequestItem;
+      }
+      fail(await refusalMessage(res));
+    } catch (e) {
+      fail(unreachableMessage(e, odooApiUrl));
+    }
+    return null;
+  };
+
+  /** Add one more signature to a chain already running, for this request only. */
+  const addApproverInOdoo = async (
+    id: string, designation: string, position: 'next' | 'last', note?: string,
+  ) => {
+    if (!authToken || offlineDemo) return null;
+    const fail = (message: string) => noteSyncError({
+      key: `add-approver:${id}`, id, what: 'extra approver was not added',
+      message: message + SIMULATED, retry: () => addApproverInOdoo(id, designation, position, note),
+    });
+    try {
+      const res = await apiFetch(`/api/smartspend/add-approver`, {
+        method: 'POST',
+        body: JSON.stringify({ id, designation, position, note: note || '' }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setRequests(prev => {
+          const newState = prev.map(r => (r.id === id ? updated : r));
+          lastOdooSyncRef.current = JSON.stringify(newState);
+          return newState;
+        });
+        clearSyncError(`add-approver:${id}`);
+        return updated as RequestItem;
+      }
+      fail(await refusalMessage(res));
+    } catch (e) {
+      fail(unreachableMessage(e, odooApiUrl));
+    }
+    return null;
+  };
+
+  const handleDelegate = async (id: string) => {
+    if (!delegateLogin) return;
+    const updated = await delegateInOdoo(id, delegateLogin, delegateNote);
+    if (!updated) {
+      setApprovalToast('Delegation needs the backend — nothing was recorded.');
+    } else {
+      const step = updated.approvalChain?.find(a => a.state === 'pending');
+      setApprovalToast(`${id} delegated to ${step?.delegatedTo || delegateLogin}.`);
+    }
+    setShowManagerDelegateBox(false);
+    setDelegateLogin("");
+    setDelegateNote("");
+    window.setTimeout(() => setApprovalToast(""), 6000);
+  };
+
+  const handleAddApprover = async (id: string) => {
+    if (!addApproverDesignation) return;
+    const updated = await addApproverInOdoo(
+      id, addApproverDesignation, addApproverPosition, addApproverNote);
+    if (!updated) {
+      setApprovalToast('Adding an approver needs the backend — nothing was recorded.');
+    } else {
+      setApprovalToast(
+        `${addApproverDesignation} added to ${id} — ${updated.approvalTotal ?? 0} signatures now.`);
+    }
+    setShowAddApproverBox(false);
+    setAddApproverDesignation("");
+    setAddApproverNote("");
+    setAddApproverPosition('next');
+    window.setTimeout(() => setApprovalToast(""), 6000);
+  };
+
   // Manager Approval Action
   const handleManagerApprove = async (id: string, note?: string) => {
     const approvalNote = (note ?? "").trim();
     const decided = await decideInOdoo(id, 'approve', approvalNote || undefined);
+    // Refused by Odoo: nothing was approved, so nothing moves on.
+    if (decided === false) { setShowManagerApproveBox(false); return; }
     if (!decided) {
       setRequests(prev => prev.map(r => {
         if (r.id === id) {
@@ -3608,6 +4024,7 @@ export default function App() {
 
   const handleManagerReject = async (id: string) => {
     const decided = await decideInOdoo(id, 'reject');
+    if (decided === false) return;
     if (!decided) {
       setRequests(prev => prev.map(r => r.id === id ? {
         ...r,
@@ -3621,11 +4038,14 @@ export default function App() {
   const handleRequestInfoSubmit = async (id: string) => {
     if (!managerQueryText.trim()) return;
 
-    const decided = await decideInOdoo(id, 'clarify', managerQueryText);
+    const asked = requestInfoUsers.find(u => u.login === managerQueryLogin);
+    const sentTo = asked ? asked.name : "the employee";
+    const decided = await decideInOdoo(id, 'clarify', managerQueryText, asked?.login);
     if (decided) {
       setManagerQueryText("");
+      setManagerQueryLogin("");
       setShowManagerQueryBox(false);
-      alert("Clarification request sent back to the employee.");
+      alert(`Clarification request sent to ${sentTo}.`);
       return;
     }
 
@@ -3634,24 +4054,56 @@ export default function App() {
         return {
           ...r,
           status: "Needs Clarification",
+          clarificationFrom: asked?.name ?? '',
+          clarificationFromLogin: asked?.login ?? '',
           clarificationComments: [
             ...r.clarificationComments,
             { role: 'manager', text: managerQueryText, date: "Now" }
           ],
-          history: [...r.history, { title: "Info Requested", date: "Now", desc: `Query: "${managerQueryText}"` }]
+          history: [...r.history, {
+            title: "Info Requested", date: "Now",
+            desc: asked ? `Asked ${asked.name}: "${managerQueryText}"` : `Query: "${managerQueryText}"`,
+          }]
         };
       }
       return r;
     }));
 
     setManagerQueryText("");
+    setManagerQueryLogin("");
     setShowManagerQueryBox(false);
-    alert("Clarification request sent back to the employee.");
+    alert(`Clarification request sent to ${sentTo}.`);
   };
 
   // Employee responds to manager request
-  const handleEmployeeReplySubmit = (id: string) => {
+  const handleEmployeeReplySubmit = async (id: string) => {
     if (!employeeReplyText.trim()) return;
+
+    // With Odoo behind the portal the answer goes through its own endpoint:
+    // the person asked may not be the requester and cannot save the request.
+    if (authToken && !offlineDemo) {
+      try {
+        const res = await apiFetch(`/api/smartspend/clarify-reply`, {
+          method: 'POST',
+          body: JSON.stringify({ id, text: employeeReplyText }),
+        });
+        if (res.ok) {
+          const updated = await res.json();
+          setRequests(prev => {
+            const newState = prev.map(r => (r.id === id ? updated : r));
+            lastOdooSyncRef.current = JSON.stringify(newState);
+            return newState;
+          });
+          setEmployeeReplyText("");
+          alert("Clarification submitted. Re-routed to manager approval queue.");
+          setEmployeeTab('list');
+          return;
+        }
+        console.warn("The server refused the clarification reply:", await refusalMessage(res));
+      } catch (e) {
+        console.warn("Failed to send the clarification reply:", e);
+      }
+    }
 
     setRequests(prev => prev.map(r => {
       if (r.id === id) {
@@ -3662,7 +4114,10 @@ export default function App() {
             ...r.clarificationComments,
             { role: 'employee', text: employeeReplyText, date: "Now" }
           ],
-          history: [...r.history, { title: "Clarified by Employee", date: "Now", desc: `Response: "${employeeReplyText}"` }]
+          history: [...r.history, {
+            title: "Clarified by Employee", date: "Now",
+            desc: r.clarificationFrom ? `${r.clarificationFrom}: "${employeeReplyText}"` : `Response: "${employeeReplyText}"`,
+          }]
         };
       }
       return r;
@@ -3922,6 +4377,7 @@ export default function App() {
                 <Sparkles className="h-5 w-5 text-onbrand" />
               </div>
               {userRole !== "Vendor" && navOrder[userRole]?.map(key => renderRailItem(userRole, key))}
+              {userRole === "Employee" && requests.some(isDelegatedToMe) && renderRailItem(userRole, 'approvals')}
               {userRole === "Vendor" && VENDOR_TABS.map(t => (
                 <button
                   key={t.key}
@@ -3984,6 +4440,8 @@ export default function App() {
                     <span className="text-[9px] text-textFaint px-3 flex items-center gap-1 mb-1"><Layers className="h-3 w-3" /> Drag to reorder · top tab loads first on login</span>
                   )}
                   {userRole !== "Vendor" && navOrder[userRole]?.map((key, idx) => renderNavItem(userRole, key, idx))}
+                  {/* Shown only while a manager has delegated a step to them. */}
+                  {userRole === "Employee" && requests.some(isDelegatedToMe) && renderNavItem(userRole, 'approvals', -1)}
 
                   {userRole === "Vendor" && VENDOR_TABS.map(t => {
                     const active = activeScene === 18 && vendorTab === t.key;
@@ -4181,6 +4639,14 @@ export default function App() {
               {pokeToast && (
                 <div className="fixed bottom-6 right-6 z-50 px-4 py-3 rounded-xl bg-surface border border-brand/30 shadow-xl text-sm font-semibold text-textPrimary animate-fadeIn">
                   {pokeToast}
+                </div>
+              )}
+
+              {/* Delegation / added approver. Sits above the poke toast so the
+                  two never land on top of each other. */}
+              {approvalToast && (
+                <div className="fixed bottom-24 right-6 z-50 px-4 py-3 rounded-xl bg-surface border border-brand/30 shadow-xl text-sm font-semibold text-textPrimary animate-fadeIn">
+                  {approvalToast}
                 </div>
               )}
 
@@ -4413,6 +4879,12 @@ export default function App() {
                     >
                       New Request
                     </button>
+                    <button
+                      onClick={() => setEmployeeTab('favorites')}
+                      className={`px-4 py-2 text-sm font-semibold border-b-2 transition-all inline-flex items-center gap-1.5 ${employeeTab === 'favorites' ? 'border-brand text-primary' : 'border-transparent text-textSecondary hover:text-textPrimary'}`}
+                    >
+                      <Heart className="h-3.5 w-3.5" />Favourites
+                    </button>
                     <button 
                       onClick={() => setEmployeeTab('list')} 
                       className={`px-4 py-2 text-sm font-semibold border-b-2 transition-all ${employeeTab === 'list' ? 'border-brand text-primary' : 'border-transparent text-textSecondary hover:text-textPrimary'}`}
@@ -4433,6 +4905,14 @@ export default function App() {
                     </button>
                   </div>
 
+                  {/* Favourites: what this requester orders again and again. */}
+                  {employeeTab === 'favorites' && (
+                    <div className="py-6">
+                      <FavoritesPage fetcher={apiFetch} offline={offlineDemo} userKey={favoritesKey}
+                                     onRaise={raiseFromFavorites} busy={isParsing} />
+                    </div>
+                  )}
+
                   {/* Tab 1: Raise Request (ChatGPT/WhatsApp Consolidated Search Style) */}
                   {employeeTab === 'chat' && (
                     <div className="max-w-6xl mx-auto space-y-12 py-10">
@@ -4441,171 +4921,37 @@ export default function App() {
                         <p className="text-base text-textSecondary">Ask for any item or service in plain words — we handle the rest.</p>
                       </div>
 
-                      {/* File Attached Success Banner */}
-                      {attachedFiles.length > 0 && (
-                        <div className="p-3 bg-brand/10 border border-brand/25 rounded-xl space-y-2 animate-fadeIn">
-                          <span className="flex items-center gap-2 text-xs font-bold text-brand">
-                            <Paperclip className="h-4 w-4" />
-                            {attachedFiles.length} file{attachedFiles.length === 1 ? '' : 's'} attached
-                            <span className="font-medium text-textFaint">· uploaded when the request is raised</span>
-                          </span>
-                          <div className="flex flex-wrap gap-2">
-                            {attachedFiles.map(f => (
-                              <span key={f.name} className="inline-flex items-center gap-2 px-2.5 py-1 rounded-lg bg-surface border border-borderTheme text-[11px] text-textSecondary">
-                                {f.name}
-                                <button
-                                  onClick={() => setAttachedFiles(prev => prev.filter(x => x.name !== f.name))}
-                                  title={`Remove ${f.name}`}
-                                  className="text-textFaint hover:text-neg"
-                                >
-                                  <X className="h-3 w-3" />
-                                </button>
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Multi-product composer + AI sub-category suggestions, stacked above the bar */}
-                      <div className="max-w-3xl mx-auto w-full space-y-3">
-                        {chatItems.length > 0 && (
-                          <div className="p-3 rounded-2xl bg-surface border border-borderTheme shadow-sm space-y-2 animate-fadeIn">
-                            <div className="flex items-center justify-between">
-                              <span className="text-[10px] font-bold uppercase tracking-wider text-textFaint">Products in this request ({chatItems.length})</span>
-                              <button type="button" onClick={() => setChatItems([])} className="text-[10px] font-semibold text-textSecondary hover:text-neg">Clear all</button>
-                            </div>
-                            {chatItems.map((it, idx) => (
-                              <div key={idx} className="grid grid-cols-12 gap-2 items-center">
-                                <input
-                                  type="text"
-                                  value={it.productName}
-                                  onChange={(e) => setChatItems(prev => prev.map((x, i) => i === idx ? { ...x, productName: e.target.value } : x))}
-                                  placeholder="Product description"
-                                  className="col-span-8 bg-secondary border border-line2 rounded-lg px-2.5 py-1.5 text-xs text-primary focus:outline-none focus:border-brand"
-                                />
-                                <div className="col-span-3 flex items-center gap-1.5">
-                                  <input
-                                    type="number"
-                                    min={1}
-                                    value={it.productQty}
-                                    onChange={(e) => setChatItems(prev => prev.map((x, i) => i === idx ? { ...x, productQty: Number(e.target.value) } : x))}
-                                    className="w-full bg-secondary border border-line2 rounded-lg px-2.5 py-1.5 text-xs text-primary focus:outline-none focus:border-brand"
-                                  />
-                                  <span className="text-[10px] text-textFaint">qty</span>
-                                </div>
-                                <button type="button" onClick={() => setChatItems(prev => prev.filter((_, i) => i !== idx))} className="col-span-1 flex justify-center text-textFaint hover:text-neg" title="Remove product">
-                                  <X className="h-3.5 w-3.5" />
-                                </button>
-                              </div>
-                            ))}
-                            <div className="flex items-center justify-between pt-1">
-                              <button type="button" onClick={() => setChatItems(prev => [...prev, { productName: '', productQty: 1, targetPrice: 0 }])}
-                                className="text-[11px] font-semibold text-brand hover:underline flex items-center gap-1"><span className="text-sm leading-none">+</span> Add another product</button>
-                              <span className="text-[10px] text-textFaint">{linesQty(chatItems)} units staged</span>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Sub-product categories the AI infers from what's being typed */}
-                        {(() => {
-                          const cat = subCatalogFor(chatInputText);
-                          if (!cat) return null;
-                          const staged = new Set(chatItems.map(i => i.productName));
-                          return (
-                            <div className="px-1 space-y-2 animate-fadeIn">
-                              <span className="text-[11px] text-textSecondary flex items-center gap-1.5">
-                                <Sparkles className="h-3.5 w-3.5 text-brand" />
-                                Detected <strong className="text-textPrimary">{cat.category}</strong> — commonly requested together:
-                              </span>
-                              <div className="flex flex-wrap gap-2">
-                                {cat.items.map(name => (
-                                  <button
-                                    key={name}
-                                    type="button"
-                                    disabled={staged.has(name)}
-                                    onClick={() => setChatItems(prev => [...prev, { productName: name, productQty: 1, targetPrice: 0 }])}
-                                    className={`px-3 py-1.5 rounded-full border text-[11px] font-semibold transition-all ${staged.has(name)
-                                      ? 'bg-brand/10 border-brand/30 text-brand cursor-default'
-                                      : 'bg-surface border-borderTheme text-textSecondary hover:border-brand hover:text-brand'}`}
-                                  >
-                                    {staged.has(name) ? '✓ ' : '+ '}{name}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          );
-                        })()}
-
-                        {/* Unified Input Bar (Matching user's attachment screenshot exactly) */}
-                        <form onSubmit={handleChatSubmit} className="relative flex items-center bg-surface border border-borderTheme/70 rounded-full px-5 py-3.5 focus-within:border-brand/60 shadow-xl transition-all w-full">
-                          {/* Attach button — opens the picker below */}
-                          <input
-                            ref={fileInputRef}
-                            type="file"
-                            multiple
-                            className="hidden"
-                            onChange={e => handleFilesPicked(e.target.files)}
-                          />
-                          <button 
-                            type="button"
-                            onClick={handleAttachmentAdd}
-                            className="p-1.5 rounded-full hover:bg-secondary text-textSecondary hover:text-textPrimary transition-all mr-3"
-                            title="Add attachment"
-                          >
-                            <Paperclip className="h-5 w-5" />
-                          </button>
-
-                          {/* Text input area */}
-                          <input 
-                            type="text"
-                            value={chatInputText}
-                            onChange={(e) => setChatInputText(e.target.value)}
-                            placeholder="Mention the product, branch, quantity and expected delivery date…"
-                            className="flex-grow bg-transparent text-sm text-primary placeholder-textFaint focus:outline-none pr-28"
-                          />
-
-                          {/* Integration Logos & Voice Action Group */}
-                          <div className="absolute right-3 flex items-center space-x-2">
-                            <span className="text-textFaint font-bold text-lg">|</span>
-
-                            {/* Voice Mic Icon */}
-                            <button
-                              type="button"
-                              onClick={() => setActiveScene(3)}
-                              className="p-1.5 rounded-full hover:bg-secondary text-textSecondary hover:text-primary transition-all"
-                              title="Voice Procurement"
-                            >
-                              <Mic className="h-4.5 w-4.5" />
-                            </button>
-
-                            {/* Send Button */}
-                            <button 
-                              type="submit"
-                              className="p-2 rounded-full bg-brand hover:bg-brand text-onbrand transition-all"
-                            >
-                              <Send className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        </form>
-                      </div>
-
-                      {/* Suggested Prompts */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-6 max-w-3xl mx-auto">
-                        <div 
-                          onClick={() => setChatInputText("I need 20 Dell Latitude laptops for the Bangalore office")}
-                          className="cursor-pointer p-4 rounded-xl bg-surface/60 border border-borderTheme hover:border-line2 transition-all text-left text-xs space-y-1"
-                        >
-                          <span className="font-semibold text-textPrimary block">💻 Request IT Hardware</span>
-                          <span className="text-textSecondary">"I need 20 Dell Latitude laptops for the Bangalore office..."</span>
-                        </div>
-                        <div 
-                          onClick={() => setChatInputText("Requesting 10 ergonomic conference chairs for the Mumbai office")}
-                          className="cursor-pointer p-4 rounded-xl bg-surface/60 border border-borderTheme hover:border-line2 transition-all text-left text-xs space-y-1"
-                        >
-                          <span className="font-semibold text-textPrimary block">🪑 Request Office Furniture</span>
-                          <span className="text-textSecondary">"Requesting 10 ergonomic conference chairs for Mumbai..."</span>
-                        </div>
-                      </div>
+                      {/* The request is raised in a conversation: the assistant drafts it
+                          as the requester talks, and asks for whatever it still needs. It
+                          carries over what the single input bar offered — attachments,
+                          voice, the commonly-requested-together suggestions, several
+                          products at once, and the two example requests. */}
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        multiple
+                        className="hidden"
+                        onChange={e => handleFilesPicked(e.target.files)}
+                      />
+                      <ProductRequestsPanel fetcher={apiFetch} offline={offlineDemo} userKey={favoritesKey} />
+                      <FavoritesQuickBar
+                        fetcher={apiFetch} offline={offlineDemo} userKey={favoritesKey}
+                        onRaise={raiseFromFavorites} onManage={() => setEmployeeTab('favorites')} busy={isParsing}
+                      />
+                      <RequestChat
+                        userName={currentUser?.name || ''}
+                        branches={branchOptions}
+                        departments={departmentOptions}
+                        preview={previewChatMessage}
+                        onSubmit={submitChatDraft}
+                        busy={isParsing}
+                        offline={offlineDemo}
+                        attachments={attachedFiles}
+                        onAttach={handleAttachmentAdd}
+                        onRemoveAttachment={name => setAttachedFiles(prev => prev.filter(x => x.name !== name))}
+                        onVoice={() => setActiveScene(3)}
+                        suggestFor={subCatalogFor}
+                      />
 
                       {/* My Requests — status dots + search + redesigned cards (#2) */}
                       {(() => {
@@ -4656,7 +5002,8 @@ export default function App() {
 
                   {/* Tab 2: My Requests — full list, same card + filters as the home grid */}
                   {employeeTab === 'list' && (() => {
-                    const listFiltered = filterRequests(requests, homeStatusFilter, homeSearch);
+                    const mine = requests.filter(r => !wasDelegatedToMe(r));
+                    const listFiltered = filterRequests(mine, homeStatusFilter, homeSearch);
                     return (
                       <div className="space-y-4 animate-fadeIn">
                         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -4665,7 +5012,7 @@ export default function App() {
                             <span className="text-xs text-textFaint">Tap any request to see where it is</span>
                           </div>
                           <div className="flex items-center gap-3 flex-wrap">
-                            <StatusDots value={homeStatusFilter} onChange={setHomeStatusFilter} requests={requests} />
+                            <StatusDots value={homeStatusFilter} onChange={setHomeStatusFilter} requests={mine} />
                             <RequestSearch value={homeSearch} onChange={setHomeSearch} />
                             <ViewToggle value={requestView} onChange={setRequestView} />
                           </div>
@@ -4708,9 +5055,14 @@ export default function App() {
                           <span className="text-xs text-brand font-bold block">{currentRequest.id} Tracking</span>
                           <h3 className="font-outfit font-extrabold text-xl text-primary">{currentRequest.productQty}x {reqSummary(currentRequest)}</h3>
                         </div>
-                        <span className="px-3 py-1 bg-secondary rounded-full border border-borderTheme text-xs font-bold text-textSecondary">
-                          Status: {currentRequest.status}
-                        </span>
+                        <div className="flex items-center gap-3">
+                          {odooConnected && !offlineDemo && (
+                            <PrintRow api={auctionApi} id={currentRequest.id} />
+                          )}
+                          <span className="px-3 py-1 bg-secondary rounded-full border border-borderTheme text-xs font-bold text-textSecondary">
+                            Status: {currentRequest.status}
+                          </span>
+                        </div>
                       </div>
 
                       {/* Timeline Nodes */}
@@ -4792,7 +5144,7 @@ export default function App() {
                     <div className="space-y-6 animate-fadeIn">
                       <h3 className="font-outfit font-extrabold text-xl text-primary">Clarification Requests</h3>
                       
-                      {requests.filter(r => r.status === 'Needs Clarification').length === 0 ? (
+                      {requests.filter(isMyQuestion).length === 0 ? (
                         <div className="p-8 text-center bg-surface/40 border border-borderTheme rounded-2xl text-textSecondary">
                           <CheckCircle2 className="h-8 w-8 mx-auto text-pos mb-2" />
                           <p className="text-sm font-semibold">Your inbox is clear!</p>
@@ -4800,7 +5152,7 @@ export default function App() {
                         </div>
                       ) : (
                         <div className="space-y-4">
-                          {requests.filter(r => r.status === 'Needs Clarification').map(req => (
+                          {requests.filter(isMyQuestion).map(req => (
                             <div key={req.id} className="p-6 rounded-2xl bg-surface border border-gold/30 space-y-4">
                               <div className="flex items-center justify-between border-b border-borderTheme pb-3">
                                 <div>
@@ -4812,7 +5164,9 @@ export default function App() {
 
                               {/* Manager Comment Display */}
                               <div className="p-4 bg-secondary border border-borderTheme rounded-xl">
-                                <span className="text-[10px] text-textFaint font-bold uppercase tracking-wider block">Manager Query:</span>
+                                <span className="text-[10px] text-textFaint font-bold uppercase tracking-wider block">
+                                  Manager Query{req.clarificationFrom ? ` — asked of ${req.clarificationFrom}` : ''}:
+                                </span>
                                 <p className="text-xs text-textSecondary mt-1 font-medium italic">
                                   "{req.clarificationComments[req.clarificationComments.length - 1]?.text || 'Please provide details.'}"
                                 </p>
@@ -5014,8 +5368,13 @@ export default function App() {
                             className="col-span-3 bg-secondary border border-line2 rounded-lg p-2 text-sm text-primary focus:outline-none focus:border-brand" />
                           <span className="col-span-1 text-center text-brand" title="Primary item">★</span>
                         </div>
+                        <PriceHistoryStrip product={editProductName} unitPrice={editTargetPrice} fetcher={apiFetch} />
+                        <FavoriteToggle fetcher={apiFetch} offline={offlineDemo} userKey={favoritesKey}
+                                        productName={editProductName} qty={editProductQty} price={editTargetPrice} />
+                        <NewProductHint product={editProductName} fetcher={apiFetch} offline={offlineDemo} onPick={setEditProductName} />
                         {extraItems.map((it, idx) => (
-                          <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+                          <React.Fragment key={idx}>
+                          <div className="grid grid-cols-12 gap-2 items-center">
                             <input type="text" value={it.productName} onChange={(e) => setExtraItems(prev => prev.map((x, i) => i === idx ? { ...x, productName: e.target.value } : x))} placeholder="Product description"
                               className="col-span-6 bg-secondary border border-line2 rounded-lg p-2 text-sm text-primary focus:outline-none focus:border-brand" />
                             <input type="number" value={it.productQty} onChange={(e) => setExtraItems(prev => prev.map((x, i) => i === idx ? { ...x, productQty: Number(e.target.value) } : x))}
@@ -5024,6 +5383,12 @@ export default function App() {
                               className="col-span-3 bg-secondary border border-line2 rounded-lg p-2 text-sm text-primary focus:outline-none focus:border-brand" />
                             <button onClick={() => setExtraItems(prev => prev.filter((_, i) => i !== idx))} className="col-span-1 flex justify-center text-neg" title="Remove line"><X className="h-4 w-4" /></button>
                           </div>
+                          <PriceHistoryStrip product={it.productName} unitPrice={it.targetPrice} fetcher={apiFetch} />
+                          <FavoriteToggle fetcher={apiFetch} offline={offlineDemo} userKey={favoritesKey}
+                                          productName={it.productName} qty={it.productQty} price={it.targetPrice} />
+                          <NewProductHint product={it.productName} fetcher={apiFetch} offline={offlineDemo}
+                                          onPick={name => setExtraItems(prev => prev.map((x, i) => i === idx ? { ...x, productName: name } : x))} />
+                          </React.Fragment>
                         ))}
                         <button onClick={() => setExtraItems(prev => [...prev, { productName: '', productQty: 1, targetPrice: 0 }])}
                           className="text-xs font-semibold text-brand hover:underline flex items-center gap-1"><span className="text-base leading-none">+</span> Add another product</button>
@@ -5243,6 +5608,11 @@ export default function App() {
                     subtitle="We look for existing supplier contracts and agreed rates."
                     right={
                       <div className="flex items-center gap-2">
+                        {/* The agreement itself, printable, when this request is on one. */}
+                        {odooConnected && !offlineDemo && currentRequest.contract && (
+                          <PrintButton api={auctionApi} kind="contract" id={currentRequest.contract}
+                                       label="Print contract" variant="soft" className="mr-1" />
+                        )}
                         <span className="text-[10px] font-bold uppercase tracking-wider text-textFaint">Contract exists?</span>
                         <button
                           onClick={() => setHasContract(true)}
@@ -5928,11 +6298,15 @@ export default function App() {
                     subtitle="Everything you need to approve a request — no complex menus."
                     className="mb-5"
                     stats={[
-                      { label: 'Awaiting you', value: String(requests.filter(r => r.status === 'Pending Approval').length) },
+                      { label: 'Awaiting you', value: String(requests.filter(r => userRole === 'Manager' ? r.status === 'Pending Approval' : isDelegatedToMe(r)).length) },
                       { label: 'AI savings', value: `₹${Math.round(requests.reduce((s, r) => s + r.savings, 0) / 1000)}K` },
                     ]}
                   />
 
+                  {/* The overview is the manager's. A user signing a step delegated
+                      to them sees their queue alone — these would count their own
+                      requests as if they were waiting on them. */}
+                  {userRole === 'Manager' && (<>
                   {/* Status-wise approval counts (#7) — gradient spotlight tiles */}
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 mb-5">
                     {(['Pending Approval', 'Approved', 'Sourcing', 'PO Confirmed', 'Needs Clarification', 'Rejected']).map((st, i) => {
@@ -6001,11 +6375,15 @@ export default function App() {
                       </div>
                     </div>
                   </div>
+                  </>)}
                   
                   {(() => {
                     // Newest first: the request that was just submitted is the
                     // one the approver came here to find.
-                    const pendingAll = newestFirst(requests.filter(r => MANAGER_QUEUE_STATUSES.includes(r.status)));
+                    // Anyone else here was delegated a step: their queue is just those.
+                    const pendingAll = newestFirst(userRole === 'Manager'
+                      ? requests.filter(r => MANAGER_QUEUE_STATUSES.includes(r.status))
+                      : requests.filter(isDelegatedToMe));
                     const mgrList = pendingAll.filter(r => requestHaystack(r).includes(mgrSearch.trim().toLowerCase()));
                     if (pendingAll.length === 0) return (
                       <div className="p-8 text-center bg-surface border border-borderTheme rounded-2xl text-textSecondary shadow-sm">
@@ -6117,7 +6495,12 @@ export default function App() {
                             {/* Manager clarification comments history */}
                             {req.clarificationComments.length > 0 && (
                               <div className="p-4 bg-secondary rounded-xl space-y-2 border border-borderTheme text-xs">
-                                <span className="font-bold text-textSecondary block border-b border-borderTheme pb-1">Clarification Thread</span>
+                                <span className="font-bold text-textSecondary block border-b border-borderTheme pb-1">
+                                  Clarification Thread
+                                  {req.status === 'Needs Clarification' && req.clarificationFrom && (
+                                    <span className="font-medium text-accent-approvals"> · waiting on {req.clarificationFrom}</span>
+                                  )}
+                                </span>
                                 {req.clarificationComments.map((c, cidx) => (
                                   <p key={cidx} className="mt-1 text-[11px] leading-relaxed">
                                     <strong className={c.role === 'manager' ? 'text-accent-approvals' : 'text-accent-budget'}>
@@ -6130,8 +6513,17 @@ export default function App() {
                             )}
                           </div>
 
+                          {delegatedElsewhere(req) && (
+                            <div className="flex items-center gap-2 border-t border-borderTheme pt-4 text-xs text-textSecondary">
+                              <Clock className="h-4 w-4 text-gold shrink-0" />
+                              <span>
+                                Delegated to <b className="text-textPrimary">{delegatedElsewhere(req)?.delegatedTo}</b> — waiting on their decision.
+                                {delegatedElsewhere(req)?.delegatedBy ? ` Handed over by ${delegatedElsewhere(req)?.delegatedBy}.` : ''}
+                              </span>
+                            </div>
+                          )}
                           {/* Action Buttons group (Approve, Reject, Request Info) */}
-                          <div className="flex flex-wrap justify-end gap-2 border-t border-borderTheme pt-4">
+                          <div className={`flex flex-wrap justify-end gap-2 border-t border-borderTheme pt-4 ${delegatedElsewhere(req) ? 'hidden' : ''}`}>
                             <button 
                               onClick={() => {
                                 handleManagerReject(req.id);
@@ -6141,6 +6533,42 @@ export default function App() {
                               Reject
                             </button>
                             
+                            {/* Delegating and adding approvers stay with managers: a
+                                user signing a step delegated to them decides it,
+                                they do not pass it on or reshape the chain. */}
+                            {userRole === 'Manager' && (<>
+                            {/* Delegate — hand this level to somebody else. Only
+                                offered while the chain is actually waiting on a
+                                level: there is nothing to hand over otherwise. */}
+                            <button
+                              onClick={() => {
+                                setSelectedRequestId(req.id);
+                                setShowManagerQueryBox(false);
+                                setShowManagerApproveBox(false);
+                                setShowAddApproverBox(false);
+                                setShowManagerDelegateBox(true);
+                              }}
+                              className="px-4 py-2 border border-borderTheme hover:bg-brand/10 hover:border-brand text-xs font-semibold rounded-lg text-textSecondary hover:text-brand transition-all"
+                            >
+                              Delegate
+                            </button>
+
+                            {/* Add Approver — one more signature on this request
+                                only; the workflow master is left alone. */}
+                            <button
+                              onClick={() => {
+                                setSelectedRequestId(req.id);
+                                setShowManagerQueryBox(false);
+                                setShowManagerApproveBox(false);
+                                setShowManagerDelegateBox(false);
+                                setShowAddApproverBox(true);
+                              }}
+                              className="px-4 py-2 border border-borderTheme hover:bg-brand/10 hover:border-brand text-xs font-semibold rounded-lg text-textSecondary hover:text-brand transition-all"
+                            >
+                              Add Approver
+                            </button>
+                            </>)}
+
                             {/* Request Info button triggers dialog */}
                             <button 
                               onClick={() => {
@@ -6201,10 +6629,128 @@ export default function App() {
                             </div>
                           )}
 
+                          {/* Delegate this level to another account */}
+                          {showManagerDelegateBox && selectedRequestId === req.id && (
+                            <div className="p-4 bg-secondary rounded-xl border border-brand/20 space-y-3 text-xs animate-fadeIn">
+                              <label className="font-bold text-textPrimary block">
+                                Delegate {(req.approvalTotal ?? 0) > 1
+                                  ? `level ${(req.approvalDone ?? 0) + 1} of ${req.approvalTotal}`
+                                  : 'this approval'} to:
+                              </label>
+                              <select
+                                value={delegateLogin}
+                                onChange={(e) => setDelegateLogin(e.target.value)}
+                                className="w-full bg-surface border border-borderTheme rounded-lg p-2.5 text-textPrimary focus:outline-none focus:border-textPrimary"
+                              >
+                                <option value="">Choose a user…</option>
+                                {(masterData?.approverUsers ?? [])
+                                  .filter(u => u.login !== currentUser?.login)
+                                  .map(u => (
+                                    <option key={u.login} value={u.login}>{u.name} · {u.login}</option>
+                                  ))}
+                              </select>
+                              <input
+                                type="text"
+                                value={delegateNote}
+                                onChange={(e) => setDelegateNote(e.target.value)}
+                                placeholder="Reason (optional) — e.g. On leave until the 24th."
+                                className="w-full bg-surface border border-borderTheme rounded-lg p-2.5 text-textPrimary focus:outline-none focus:border-textPrimary"
+                              />
+                              <p className="text-[11px] text-textSecondary">
+                                They sign in their own account; the step keeps its place in the chain,
+                                and you can no longer sign it yourself.
+                              </p>
+                              <div className="flex justify-end space-x-2">
+                                <button
+                                  onClick={() => { setShowManagerDelegateBox(false); setDelegateLogin(""); setDelegateNote(""); }}
+                                  className="px-3 py-1.5 text-textSecondary hover:text-textPrimary transition-all"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  onClick={() => handleDelegate(req.id)}
+                                  disabled={!delegateLogin}
+                                  className="px-4 py-1.5 bg-brand text-onbrand font-bold rounded-lg hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                                >
+                                  Delegate
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Add one more signature to this request's chain */}
+                          {showAddApproverBox && selectedRequestId === req.id && (
+                            <div className="p-4 bg-secondary rounded-xl border border-brand/20 space-y-3 text-xs animate-fadeIn">
+                              <label className="font-bold text-textPrimary block">Add an approver to this request:</label>
+                              <select
+                                value={addApproverDesignation}
+                                onChange={(e) => setAddApproverDesignation(e.target.value)}
+                                className="w-full bg-surface border border-borderTheme rounded-lg p-2.5 text-textPrimary focus:outline-none focus:border-textPrimary"
+                              >
+                                <option value="">Choose a designation…</option>
+                                {(masterData?.designations ?? []).map(d => (
+                                  <option key={d.id} value={d.name}>
+                                    {d.name}{d.holders.length ? ` · ${d.holders.map(h => h.login).join(', ')}` : ' · nobody holds this yet'}
+                                  </option>
+                                ))}
+                              </select>
+                              <div className="flex flex-wrap gap-2">
+                                {([['next', 'Signs next'], ['last', 'Signs last']] as const).map(([key, label]) => (
+                                  <button
+                                    key={key}
+                                    onClick={() => setAddApproverPosition(key)}
+                                    className={`px-3 py-1.5 rounded-lg border text-[11px] font-bold transition-all ${
+                                      addApproverPosition === key
+                                        ? 'bg-brand text-onbrand border-brand'
+                                        : 'bg-surface text-textSecondary border-borderTheme hover:border-brand'}`}
+                                  >
+                                    {label}
+                                  </button>
+                                ))}
+                              </div>
+                              <input
+                                type="text"
+                                value={addApproverNote}
+                                onChange={(e) => setAddApproverNote(e.target.value)}
+                                placeholder="Reason (optional) — e.g. Above the delegation limit, CFO to countersign."
+                                className="w-full bg-surface border border-borderTheme rounded-lg p-2.5 text-textPrimary focus:outline-none focus:border-textPrimary"
+                              />
+                              <p className="text-[11px] text-textSecondary">
+                                This request only — the workflow master is not changed, so requests
+                                already in flight keep the chain they started with.
+                              </p>
+                              <div className="flex justify-end space-x-2">
+                                <button
+                                  onClick={() => { setShowAddApproverBox(false); setAddApproverDesignation(""); setAddApproverNote(""); }}
+                                  className="px-3 py-1.5 text-textSecondary hover:text-textPrimary transition-all"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  onClick={() => handleAddApprover(req.id)}
+                                  disabled={!addApproverDesignation}
+                                  className="px-4 py-1.5 bg-brand text-onbrand font-bold rounded-lg hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                                >
+                                  Add Approver
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
                           {/* Request Info Dialogue Card */}
                           {showManagerQueryBox && selectedRequestId === req.id && (
                             <div className="p-4 bg-secondary rounded-xl border border-accent-approvals/20 space-y-3 text-xs animate-fadeIn">
-                              <label className="font-bold text-textPrimary block">Ask Initiator for clarification:</label>
+                              <label className="font-bold text-textPrimary block">Ask for clarification from:</label>
+                              <select
+                                value={managerQueryLogin}
+                                onChange={(e) => setManagerQueryLogin(e.target.value)}
+                                className="w-full bg-surface border border-borderTheme rounded-lg p-2.5 text-textPrimary focus:outline-none focus:border-textPrimary"
+                              >
+                                <option value="">Requisition initiator (requester)</option>
+                                {requestInfoUsers.map(u => (
+                                  <option key={u.login} value={u.login}>{u.name} · {u.login}</option>
+                                ))}
+                              </select>
                               <input 
                                 type="text"
                                 value={managerQueryText}
@@ -6213,7 +6759,7 @@ export default function App() {
                                 className="w-full bg-surface border border-borderTheme rounded-lg p-2.5 text-textPrimary focus:outline-none focus:border-textPrimary"
                               />
                               <div className="flex justify-end space-x-2">
-                                <button onClick={() => setShowManagerQueryBox(false)} className="px-3 py-1.5 text-textSecondary hover:text-textPrimary transition-all">Cancel</button>
+                                <button onClick={() => { setShowManagerQueryBox(false); setManagerQueryLogin(""); }} className="px-3 py-1.5 text-textSecondary hover:text-textPrimary transition-all">Cancel</button>
                                 <button 
                                   onClick={() => handleRequestInfoSubmit(req.id)} 
                                   className="px-4 py-1.5 bg-accent-approvals hover:opacity-90 text-surface font-bold rounded transition-all shadow-sm"
@@ -6311,6 +6857,9 @@ export default function App() {
                     icon={History}
                     title="Track Your Request"
                     subtitle="A simple, order-tracking style view of where your request is."
+                    right={odooConnected && !offlineDemo
+                      ? <PrintRow api={auctionApi} id={currentRequest.id} />
+                      : undefined}
                   />
                   
                   <div className="p-6 rounded-2xl bg-surface border border-borderTheme space-y-8 shadow-sm">
@@ -6543,11 +7092,7 @@ export default function App() {
                               {poApprovedByHead && !poAcknowledgedByVendor && (
                                 canRecordVendorReply ? (
                                   <button
-                                    onClick={async () => {
-                                      setPoStepBusy('acknowledge');
-                                      await recordPurchaseOrderStep(currentRequest.id, 'acknowledge');
-                                      setPoStepBusy('');
-                                    }}
+                                    onClick={() => { setPoStepError(''); setAckTarget({ req: currentRequest, asBuyer: true }); }}
                                     disabled={poStepBusy === 'acknowledge'}
                                     className="mt-2 px-3 py-1.5 bg-accent-savings hover:opacity-90 disabled:opacity-50 text-[10px] font-bold text-surface rounded shadow-sm transition-all"
                                   >
@@ -6560,7 +7105,10 @@ export default function App() {
                                 )
                               )}
                               {poAcknowledgedByVendor && (
-                                <p className="text-[10px] text-accent-savings font-semibold mt-1">✓ Vendor Acknowledged (PO Confirmed)</p>
+                                <p className="text-[10px] text-accent-savings font-semibold mt-1">
+                                  ✓ Vendor Acknowledged (PO Confirmed)
+                                  {deliveryCommitments[currentRequest.id] && <> · delivery committed for <b>{showDate(deliveryCommitments[currentRequest.id])}</b></>}
+                                </p>
                               )}
                               {!poApprovedByHead && (
                                 <p className="text-[10px] text-textSecondary/60 font-semibold mt-1 italic">Locked: Awaiting Purchase Head approval</p>
@@ -6611,6 +7159,10 @@ export default function App() {
                     icon={Truck}
                     title="Receive Items"
                     subtitle="Check the delivered items and record what arrived."
+                    right={odooConnected && !offlineDemo
+                      ? <PrintButton api={auctionApi} kind="grn" id={currentRequest.id}
+                                     label="Print goods receipt" variant="soft" />
+                      : undefined}
                   />
 
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
@@ -6638,8 +7190,74 @@ export default function App() {
                             <span className="text-xs text-textSecondary font-bold uppercase tracking-wider block mb-1">Company GSTIN</span>
                             <span className="text-sm font-semibold text-textPrimary bg-secondary border border-borderTheme rounded-lg p-2 block font-mono">{companyForBranch(currentRequest.location).gstin}</span>
                           </div>
+                          <MethodSelect label="Shipping method" value={shippingMethod} options={methodOptions.shippingMethod}
+                                        onChange={v => { setShippingMethod(v); setMethodMissing(m => ({ ...m, shipping: false })); }}
+                                        missing={methodMissing.shipping} disabled={grnGenerated} />
                         </div>
 
+                        {odooReceipt ? (
+                          <div className="space-y-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-xs text-textSecondary font-bold uppercase tracking-wider">
+                                {receiptInfo!.open ? (receiptInfo!.open.isBackorder ? 'Backorder delivery' : 'Products on this delivery') : 'Deliveries'}
+                              </span>
+                              {receiptInfo!.open?.isBackorder && (
+                                <span className="rounded-full border border-gold/40 bg-gold/10 px-2 py-0.5 text-[10px] font-bold text-gold">
+                                  {receiptInfo!.open.name} · backorder of {receiptInfo!.open.backorderOf}
+                                </span>
+                              )}
+                              <span className="ml-auto text-[10px] font-mono text-textFaint">{receiptInfo!.order}</span>
+                            </div>
+                            {receiptInfo!.open ? (
+                              <div className="rounded-xl border border-borderTheme overflow-hidden">
+                                <div className="overflow-x-auto">
+                                  <table className="w-full text-xs min-w-[520px]">
+                                    <thead>
+                                      <tr className="bg-secondary/60 text-[10px] uppercase tracking-wider text-textFaint">
+                                        <th className="text-left font-bold px-3 py-2">Product</th>
+                                        <th className="text-right font-bold px-3 py-2">Ordered</th>
+                                        <th className="text-right font-bold px-3 py-2">Received before</th>
+                                        <th className="text-right font-bold px-3 py-2">Expected now</th>
+                                        <th className="text-right font-bold px-3 py-2 text-accent-budget">Arrived</th>
+                                        <th className="text-right font-bold px-3 py-2">Status</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {receiptInfo!.open.lines.map(line => {
+                                        const ordered = receiptInfo!.lines.find(o => o.poLineId === line.poLineId);
+                                        const got = grnQtys[line.poLineId] ?? line.demand;
+                                        const short = got < line.demand;
+                                        return (
+                                          <tr key={line.poLineId} className="border-t border-borderTheme/60">
+                                            <td className="px-3 py-2 text-textPrimary font-semibold">{line.product}</td>
+                                            <td className="px-3 py-2 text-right text-textSecondary tabular-nums">{ordered?.ordered ?? line.demand}</td>
+                                            <td className="px-3 py-2 text-right text-textSecondary tabular-nums">{ordered?.received ?? 0}</td>
+                                            <td className="px-3 py-2 text-right text-textSecondary tabular-nums">{line.demand}</td>
+                                            <td className="px-3 py-2 text-right">
+                                              <input type="number" min={0} max={line.demand} value={got} disabled={grnGenerated}
+                                                     onChange={e => setGrnQtys(q => ({ ...q, [line.poLineId]: Math.max(0, Math.min(line.demand, Number(e.target.value) || 0)) }))}
+                                                     className="w-20 bg-secondary border border-accent-budget/50 rounded-lg px-2 py-1 text-xs text-textPrimary text-right focus:outline-none focus:border-textPrimary font-semibold tabular-nums disabled:opacity-60" />
+                                            </td>
+                                            <td className={`px-3 py-2 text-right font-bold ${short ? 'text-accent-approvals' : 'text-accent-savings'}`}>
+                                              {short ? `Short by ${line.demand - got}` : 'Full'}
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            ) : (
+                              <p className="rounded-xl border border-pos/30 bg-pos/10 px-3 py-2.5 text-xs font-semibold text-pos">
+                                Nothing more is expected on {receiptInfo!.order} — every delivery has been received or closed.
+                              </p>
+                            )}
+                            {Object.entries(grnQtys).some(([id, q]) => q < (receiptInfo!.open?.lines.find(l => l.poLineId === Number(id))?.demand ?? 0)) && !grnGenerated && (
+                              <p className="text-[11px] text-gold font-semibold">Arriving short — on validating you choose whether the rest becomes a backorder.</p>
+                            )}
+                          </div>
+                        ) : (<>
                         {/* Per-line receiving — every requested product is inspected and received */}
                         <div>
                           <span className="text-xs text-textSecondary font-bold uppercase tracking-wider block mb-1">Products on this delivery</span>
@@ -6696,6 +7314,8 @@ export default function App() {
                           </div>
                         </div>
 
+                        </>)}
+
                         <div className="pt-2">
                           <label className="flex items-center space-x-2.5 cursor-pointer select-none">
                             <input 
@@ -6709,23 +7329,41 @@ export default function App() {
                         </div>
                       </div>
 
+                      {methodError && (
+                        <p className="text-xs text-neg bg-neg/10 border border-neg/25 rounded-lg px-3 py-2">{methodError}</p>
+                      )}
+                      {grnError && (
+                        <p className="text-xs text-neg bg-neg/10 border border-neg/25 rounded-lg px-3 py-2">{grnError}</p>
+                      )}
+                      {backorderAsk && receiptInfo && (
+                        <BackorderDialog order={receiptInfo.order} shortages={backorderAsk} busy={grnBusy}
+                                         onChoose={choice => validateReceipt(choice)} onCancel={() => setBackorderAsk(null)} />
+                      )}
                       {grnGenerated ? (
                         <div className="p-4 bg-accent-savings/10 border border-accent-savings/20 rounded-xl space-y-3 animate-fadeIn shadow-sm">
                           <div className="flex items-start space-x-3 text-accent-savings text-xs">
                             <CheckCircle2 className="h-5 w-5 mt-0.5 flex-shrink-0" />
                             <div>
-                              <p className="font-bold text-textPrimary">Goods Receipt Note (GRN-2026-089) Generated</p>
-                              <p className="mt-1 text-textSecondary">Successfully posted. Stock levels updated at Bangalore Warehouse. Handing off to Accounts Payable.</p>
+                              <p className="font-bold text-textPrimary">Goods Receipt Note ({grnResult?.receipt.name || 'GRN-2026-089'}) Generated</p>
+                              <p className="mt-1 text-textSecondary">
+                                {grnResult?.backorder
+                                  ? <>Received what arrived. <b className="text-textPrimary">Backorder {grnResult.backorder.name}</b> keeps {grnResult.backorder.lines.map(l => `${l.demand} × ${l.product}`).join(', ')} open for the next delivery — follow it under Backorders.</>
+                                  : grnResult?.receipt.noBackorder
+                                    ? <>Received short with <b className="text-textPrimary">no backorder</b> — the missing quantity will not be delivered, and the order is billed for what arrived.</>
+                                    : <>Successfully posted. Stock levels updated at Bangalore Warehouse. Handing off to Accounts Payable.</>}
+                              </p>
                             </div>
                           </div>
                           <div className="flex justify-end pt-2">
                             <button 
                               onClick={() => {
+                                // Odoo already wrote the receipt onto the timeline.
+                                if (grnResult) { setActiveScene(13); return; }
                                 setRequests(prev => prev.map(r => {
                                   if (r.id === selectedRequestId) {
                                     return {
                                       ...r,
-                                      history: [...r.history, { title: "Goods Received (GRN-2026-089)", date: "Now", desc: `Received ${deliveredQty}/${r.productQty} units. Quality inspect: PASSED.` }]
+                                      history: [...r.history, { title: "Goods Received (GRN-2026-089)", date: "Now", desc: `Received ${deliveredQty}/${r.productQty} units via ${methodLabel(methodOptions.shippingMethod, shippingMethod)}. Quality inspect: PASSED.` }]
                                     };
                                   }
                                   return r;
@@ -6743,13 +7381,29 @@ export default function App() {
                         <div className="pt-2 flex justify-end space-x-3">
                           {canRunFulfilment ? (
                             <button 
-                              onClick={() => {
+                              onClick={async () => {
+                                if (!shippingMethod) {
+                                  setMethodMissing(m => ({ ...m, shipping: true }));
+                                  return;
+                                }
                                 if (!qualityPassed) {
                                   alert("Please perform quality inspection before generating GRN.");
                                   return;
                                 }
+                                if (odooReceipt) {
+                                  if (!receiptInfo?.open) { setGrnGenerated(true); return; }
+                                  // Short? Ask first, as Odoo does, before anything is written.
+                                  const short = receiptInfo.open.lines
+                                    .map(l => ({ product: l.product, demand: l.demand, done: grnQtys[l.poLineId] ?? l.demand, missing: l.demand - (grnQtys[l.poLineId] ?? l.demand) }))
+                                    .filter(x => x.missing > 0);
+                                  if (short.length) { setBackorderAsk(short); return; }
+                                  await validateReceipt();
+                                  return;
+                                }
+                                if (!(await saveMethod('shippingMethod', shippingMethod))) return;
                                 setGrnGenerated(true);
                               }}
+                              disabled={grnBusy}
                               className="px-5 py-2.5 bg-accent-savings hover:opacity-90 text-xs font-bold rounded-lg text-surface transition-all flex items-center space-x-1 shadow-sm"
                             >
                               <span>Validate &amp; Generate GRN</span>
@@ -6768,9 +7422,27 @@ export default function App() {
                         <h4 className="font-outfit font-extrabold text-sm text-textPrimary">Warehouse Status</h4>
                       </div>
                       <div className="space-y-3 text-xs font-outfit">
+                        {odooReceipt && receiptInfo!.receipts.length > 0 && (
+                          <div className="space-y-1.5 pb-2 border-b border-borderTheme">
+                            <span className="text-textSecondary">Shipments:</span>
+                            <ShipmentChain chain={receiptInfo!.receipts.map(r => ({
+                              name: r.name, state: r.state, isBackorder: r.isBackorder, noBackorder: !!r.noBackorder,
+                              qty: r.lines.reduce((t, l) => t + (r.state === 'done' ? l.done : l.demand), 0), at: r.doneAt || r.createdAt || '' }))} />
+                          </div>
+                        )}
+                        <div className="flex justify-between">
+                          <span className="text-textSecondary">Committed delivery:</span>
+                          <span className="font-semibold text-textPrimary">{deliveryCommitments[currentRequest.id] ? showDate(deliveryCommitments[currentRequest.id]) : '—'}</span>
+                        </div>
                         <div className="flex justify-between">
                           <span className="text-textSecondary">Destination:</span>
                           <span className="font-semibold text-textPrimary">Bangalore Warehouse</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-textSecondary">Shipping method:</span>
+                          <span className={`font-semibold ${shippingMethod ? 'text-textPrimary' : 'text-neg'}`}>
+                            {shippingMethod ? methodLabel(methodOptions.shippingMethod, shippingMethod) : 'Not selected'}
+                          </span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-textSecondary">Carrier:</span>
@@ -6793,6 +7465,16 @@ export default function App() {
                     icon={ShieldCheck}
                     title="Invoice Check"
                     subtitle="We match the order, the delivery and the invoice automatically."
+                    right={odooConnected && !offlineDemo
+                      ? <div className="flex items-center gap-1.5">
+                          <PrintButton api={auctionApi} kind="po" id={currentRequest.id}
+                                       label="Order" variant="ghost" />
+                          <PrintButton api={auctionApi} kind="grn" id={currentRequest.id}
+                                       label="Receipt" variant="ghost" />
+                          <PrintButton api={auctionApi} kind="invoice" id={currentRequest.id}
+                                       label="Invoice" variant="soft" />
+                        </div>
+                      : undefined}
                   />
 
                   <div className="p-6 rounded-2xl bg-surface border border-borderTheme space-y-6 shadow-sm">
@@ -6996,6 +7678,19 @@ export default function App() {
                       </div>
                     </div>
 
+                    {/* How this bill will be paid — required before it is posted. */}
+                    <div className="p-4 rounded-xl bg-surface border border-borderTheme shadow-sm grid grid-cols-1 sm:grid-cols-2 gap-4 items-end">
+                      <MethodSelect label="Payment method" value={paymentMethod} options={methodOptions.paymentMethod}
+                                    onChange={v => { setPaymentMethod(v); setMethodMissing(m => ({ ...m, payment: false })); }}
+                                    missing={methodMissing.payment} disabled={billPosted} />
+                      <p className="text-[11px] text-textFaint">
+                        Printed on the vendor invoice and carried to the payment step.
+                      </p>
+                    </div>
+                    {methodError && activeScene === 13 && (
+                      <p className="text-xs text-neg bg-neg/10 border border-neg/25 rounded-lg px-3 py-2">{methodError}</p>
+                    )}
+
                     {billPosted ? (
                       <div className="p-4 bg-secondary border border-borderTheme rounded-xl flex justify-between items-center animate-fadeIn text-xs shadow-sm">
                         <span className="text-textSecondary">Vendor Bill successfully posted to accounts payable.</span>
@@ -7005,7 +7700,7 @@ export default function App() {
                               if (r.id === selectedRequestId) {
                                 return {
                                   ...r,
-                                  history: [...r.history, { title: "Vendor Bill Posted (BILL-2026-045)", date: "Now", desc: `Posted total AP liability of ₹${r.totalCost.toLocaleString()}.` }]
+                                  history: [...r.history, { title: "Vendor Bill Posted (BILL-2026-045)", date: "Now", desc: `Posted total AP liability of ₹${r.totalCost.toLocaleString()}. To be paid by ${methodLabel(methodOptions.paymentMethod, paymentMethod)}.` }]
                                 };
                               }
                                 return r;
@@ -7022,7 +7717,14 @@ export default function App() {
                       <div className="flex justify-end pt-2">
                         {canRunFulfilment ? (
                           <button 
-                            onClick={() => setBillPosted(true)}
+                            onClick={async () => {
+                              if (!paymentMethod) {
+                                setMethodMissing(m => ({ ...m, payment: true }));
+                                return;
+                              }
+                              if (!(await saveMethod('paymentMethod', paymentMethod))) return;
+                              setBillPosted(true);
+                            }}
                             className="px-5 py-2.5 bg-accent-savings hover:opacity-90 text-xs font-bold rounded-lg text-surface transition-all flex items-center space-x-1 shadow-sm"
                           >
                             <span>Post Vendor Bill to Ledger</span>
@@ -7044,6 +7746,10 @@ export default function App() {
                     icon={CreditCard}
                     title="Make Payment"
                     subtitle="Approve the payment and reconcile the bank records automatically."
+                    right={odooConnected && !offlineDemo
+                      ? <PrintButton api={auctionApi} kind="invoice" id={currentRequest.id}
+                                     label="Print invoice" variant="soft" />
+                      : undefined}
                   />
 
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
@@ -7086,16 +7792,11 @@ export default function App() {
 
                         <div className="grid grid-cols-2 gap-4">
                           <div>
-                            <label className="text-accent-budget font-bold uppercase tracking-wider block mb-1">Payment Method</label>
-                            <select 
-                              value={paymentMethod}
-                              onChange={(e) => setPaymentMethod(e.target.value)}
-                              className="w-full bg-secondary border border-borderTheme rounded-lg p-2.5 text-textPrimary focus:outline-none focus:border-textPrimary font-semibold"
-                            >
-                              <option value="Bank Transfer" className="bg-surface text-textPrimary">Bank Transfer (NEFT/RTGS)</option>
-                              <option value="Corporate Card" className="bg-surface text-textPrimary">Corporate Card</option>
-                              <option value="UPI Pay" className="bg-surface text-textPrimary">UPI Corporate Pay</option>
-                            </select>
+                            {/* Chosen on the invoice; can still be changed here, and is
+                                required before the payment is authorised. */}
+                            <MethodSelect label="Payment method" value={paymentMethod} options={methodOptions.paymentMethod}
+                                          onChange={v => { setPaymentMethod(v); setMethodMissing(m => ({ ...m, payment: false })); }}
+                                          missing={methodMissing.payment} disabled={paymentComplete} />
                           </div>
                           <div>
                             <span className="text-textSecondary font-bold uppercase tracking-wider block mb-1">Value Date</span>
@@ -7125,7 +7826,7 @@ export default function App() {
                                         title: "Payment Cleared & Reconciled", date: "Now",
                                         // What was actually transferred, and the
                                         // reference it can be traced by.
-                                        desc: `Paid ₹${netPayable.toLocaleString('en-IN')} via ${paymentMethod}`
+                                        desc: `Paid ₹${netPayable.toLocaleString('en-IN')} via ${methodLabel(methodOptions.paymentMethod, paymentMethod)}`
                                           + ` (₹${billGross.toLocaleString('en-IN')} billed, less ₹${tdsAmount.toLocaleString('en-IN')} TDS`
                                           + (otherDeduction > 0 ? ` and ₹${otherDeduction.toLocaleString('en-IN')} ${otherLabel.trim() || 'other'}` : '')
                                           + `). Ref: ${paymentNote.trim() || 'TXN-98402517'}`,
@@ -7161,10 +7862,20 @@ export default function App() {
                               className="w-full bg-secondary border border-borderTheme rounded-xl p-3 text-xs text-textPrimary focus:outline-none focus:border-brand"
                             />
                           </div>
+                          {methodError && (
+                            <p className="text-xs text-neg bg-neg/10 border border-neg/25 rounded-lg px-3 py-2">{methodError}</p>
+                          )}
                           <div className="flex justify-end">
                           {canRunFulfilment ? (
                             <button 
-                              onClick={() => setPaymentComplete(true)}
+                              onClick={async () => {
+                                if (!paymentMethod) {
+                                  setMethodMissing(m => ({ ...m, payment: true }));
+                                  return;
+                                }
+                                if (!(await saveMethod('paymentMethod', paymentMethod))) return;
+                                setPaymentComplete(true);
+                              }}
                               className="px-5 py-2.5 bg-accent-savings hover:opacity-90 text-xs font-bold rounded-lg text-surface transition-all flex items-center space-x-1 shadow-sm"
                             >
                               <span>Authorize &amp; Pay Invoice</span>
@@ -7709,6 +8420,7 @@ export default function App() {
                   ))}
 
                   {/* ---------- RECEIPTS ---------- */}
+                  {vendorTab === 'receipts' && <BackordersBoard fetcher={apiFetch} offline={offlineDemo} vendor />}
                   {vendorTab === 'receipts' && (vendorReceipts.length === 0 ? (
                     <Empty what="Deliveries show here once you have confirmed an order." />
                   ) : (
@@ -7775,11 +8487,7 @@ export default function App() {
                                 </p>
                               </div>
                               <button
-                                onClick={async () => {
-                                  setPoStepBusy(r.id);
-                                  await recordPurchaseOrderStep(r.id, 'acknowledge');
-                                  setPoStepBusy('');
-                                }}
+                                onClick={() => { setPoStepError(''); setAckTarget({ req: r, asBuyer: false }); }}
                                 disabled={poStepBusy === r.id}
                                 className="px-4 py-2 rounded-lg bg-accent-savings text-surface text-xs font-bold hover:opacity-90 disabled:opacity-50 transition-all whitespace-nowrap"
                               >
@@ -7806,6 +8514,7 @@ export default function App() {
                                     <th className="px-4 py-2.5 font-bold">Order</th>
                                     <th className="px-4 py-2.5 font-bold">Items</th>
                                     <th className="px-4 py-2.5 font-bold">Deliver to</th>
+                                    <th className="px-4 py-2.5 font-bold">Delivery by</th>
                                     <th className="px-4 py-2.5 font-bold text-right">Order value</th>
                                     <th className="px-4 py-2.5 font-bold">State</th>
                                   </tr>
@@ -7820,6 +8529,7 @@ export default function App() {
                                       </td>
                                       <td className="px-4 py-3 text-xs font-bold text-textPrimary">{r.productQty}× {reqSummary(r)}</td>
                                       <td className="px-4 py-3 text-xs text-textSecondary whitespace-nowrap">{r.location}</td>
+                                      <td className="px-4 py-3 text-xs font-semibold text-textPrimary whitespace-nowrap">{deliveryCommitments[r.id] ? showDate(deliveryCommitments[r.id]) : '—'}</td>
                                       <td className="px-4 py-3 text-xs font-bold text-textPrimary tabular-nums text-right whitespace-nowrap">{money(r.totalCost)}</td>
                                       <td className="px-4 py-3">
                                         <span className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2 py-0.5 rounded-full bg-pos/10 text-pos border border-pos/25">
@@ -7953,16 +8663,14 @@ export default function App() {
 
                       <div className="flex justify-between items-center gap-3 px-6 py-4 border-t border-borderTheme">
                         <span className="text-[11px] text-textFaint">
-                          {r.poAcknowledged ? 'You have confirmed this order.' : r.poReleased ? 'This order is waiting on your confirmation.' : ''}
+                          {r.poAcknowledged
+                            ? `You have confirmed this order${deliveryCommitments[r.id] ? ` — delivery committed for ${showDate(deliveryCommitments[r.id])}` : ''}.`
+                            : r.poReleased ? 'This order is waiting on your confirmation.' : ''}
                         </span>
                         <div className="flex items-center gap-2">
                           {r.poReleased && !r.poAcknowledged && (
                             <button
-                              onClick={async () => {
-                                setPoStepBusy(r.id);
-                                await recordPurchaseOrderStep(r.id, 'acknowledge');
-                                setPoStepBusy('');
-                              }}
+                              onClick={() => { setPoStepError(''); setAckTarget({ req: r, asBuyer: false }); }}
                               disabled={poStepBusy === r.id}
                               className="px-4 py-2 rounded-lg bg-accent-savings text-surface text-xs font-bold hover:opacity-90 disabled:opacity-50 transition-all"
                             >
@@ -7986,6 +8694,7 @@ export default function App() {
                   <AuctionDesk
                     api={auctionApi}
                     offline={offlineDemo}
+                    approver={userRole === 'Manager'}
                     requests={requests}
                     launchFor={auctionLaunchFor}
                     onLaunchHandled={() => setAuctionLaunchFor(null)}
@@ -8004,6 +8713,47 @@ export default function App() {
                   />
                 </div>
               )}
+
+              {/* A vendor confirms an order with the delivery date it commits to. */}
+              {ackTarget && (
+                <VendorAckDialog
+                  target={{
+                    id: ackTarget.req.id,
+                    order: ackTarget.req.purchaseOrders?.join(', ') || ackTarget.req.id,
+                    items: `${ackTarget.req.productQty}× ${reqSummary(ackTarget.req)}`,
+                    location: ackTarget.req.location,
+                    neededBy: ackTarget.req.deliveryDate,
+                    value: `₹${Math.round(ackTarget.req.totalCost || 0).toLocaleString('en-IN')}`,
+                  }}
+                  asBuyer={ackTarget.asBuyer}
+                  error={poStepError}
+                  onCancel={() => setAckTarget(null)}
+                  onConfirm={async (date) => {
+                    setPoStepBusy(ackTarget.asBuyer ? 'acknowledge' : ackTarget.req.id);
+                    const done = await recordPurchaseOrderStep(ackTarget.req.id, 'acknowledge', odooApiUrl, date);
+                    setPoStepBusy('');
+                    return !!done;
+                  }}
+                />
+              )}
+
+              {/* --- SCENE 22: NEW PRODUCTS (procurement manager) --- */}
+              {activeScene === 22 && (
+                <div className="max-w-6xl mx-auto animate-fadeIn">
+                  <ProductRequestsDesk fetcher={apiFetch} offline={offlineDemo} onCount={setNewProductCount} />
+                </div>
+              )}
+
+              {/* --- SCENE 21: BACKORDERS (purchase manager + SCM buyer) --- */}
+              {activeScene === 21 && (
+                <div className="max-w-6xl mx-auto animate-fadeIn">
+                  <BackordersBoard fetcher={apiFetch} offline={offlineDemo}
+                                   onReceive={canRunFulfilment ? (id) => { setSelectedRequestId(id); setGrnGenerated(false); setActiveScene(12); } : undefined} />
+                </div>
+              )}
+
+              {/* --- SCENE 20: SUBSCRIPTIONS (SCM buyer) --- */}
+              {activeScene === 20 && <SubscriptionsDesk fetcher={apiFetch} offline={offlineDemo} />}
 
               {/* --- SCENE 16: MASTER DATA CONSOLE --- */}
               {activeScene === 16 && (
@@ -8026,6 +8776,7 @@ export default function App() {
                       {([
                         { key: 'products', label: 'Products', icon: Package, count: productRows.length },
                         { key: 'categories', label: 'Expense Categories', icon: Layers, count: allCategoryRows.length },
+                        { key: 'productCategories', label: 'Product Categories', icon: Tags, count: productCategoryCount ?? '…' },
                         { key: 'workflow', label: 'Workflow', icon: Activity, count: configuredWorkflows.length || MASTER_WORKFLOW.length },
                         { key: 'company', label: 'Companies', icon: Landmark, count: companyRows.length },
                         { key: 'branches', label: 'Branches', icon: Building2, count: branchRows.length },
@@ -8082,6 +8833,7 @@ export default function App() {
                       )}
                       <span className="text-[11px] text-textFaint">
                         {masterData ? 'Live data' : 'Offline fallback list — server not reachable'}
+                        {['products', 'categories', 'productCategories', 'branches', 'vendors'].includes(mastersTab) && ' · click any record for its details'}
                       </span>
                     </div>
                   )}
@@ -8102,7 +8854,7 @@ export default function App() {
                             {productRows
                               .filter(p => `${p.code} ${p.name} ${p.category} ${p.vendor}`.toLowerCase().includes(masterSearch.toLowerCase()))
                               .map(p => (
-                                <tr key={p.code} className="border-t border-borderTheme hover:bg-secondary/60 transition-colors">
+                                <tr key={p.code} onClick={() => setMasterDetail({ kind: 'products', key: p.code })} className="border-t border-borderTheme hover:bg-secondary/60 transition-colors cursor-pointer" title="Open details">
                                   <td className="px-4 py-3 text-[11px] font-mono text-textFaint">{p.code}</td>
                                   <td className="px-4 py-3 text-xs font-bold text-textPrimary">{p.name}</td>
                                   <td className="px-4 py-3 text-xs text-textSecondary">{p.category}</td>
@@ -8128,6 +8880,12 @@ export default function App() {
                     </div>
                   )}
 
+                  {/* ---------- PRODUCT CATEGORIES (Odoo, with their vendors) ---------- */}
+                  {mastersTab === 'productCategories' && (
+                    <ProductCategoriesMaster fetcher={apiFetch} offline={offlineDemo}
+                                             search={masterSearch} onCount={setProductCategoryCount} />
+                  )}
+
                   {/* ---------- EXPENSE CATEGORIES ---------- */}
                   {mastersTab === 'categories' && masterView === 'list' && (
                     <div className="rounded-2xl bg-surface border border-borderTheme shadow-sm overflow-hidden">
@@ -8146,7 +8904,7 @@ export default function App() {
                             {allCategoryRows
                               .filter(c => `${c.name} ${c.expenseType} ${c.glCode}`.toLowerCase().includes(masterSearch.toLowerCase()))
                               .map(c => (
-                                <tr key={c.name} className="border-t border-borderTheme hover:bg-secondary/60 transition-colors">
+                                <tr key={c.name} onClick={() => setMasterDetail({ kind: 'categories', key: c.name })} className="border-t border-borderTheme hover:bg-secondary/60 transition-colors cursor-pointer" title="Open details">
                                   <td className="px-4 py-3 text-xs font-bold text-textPrimary">{c.name}</td>
                                   <td className="px-4 py-3 text-xs text-textSecondary">{c.expenseType}</td>
                                   <td className="px-4 py-3 text-[11px] font-mono text-textFaint">{c.glCode}</td>
@@ -8170,7 +8928,7 @@ export default function App() {
                           const capex = /cap/i.test(c.expenseType);
                           const tone = capex ? '99 86 168' : '12 150 137';
                           return (
-                            <div key={c.name} className="req-tile p-5 pl-6" style={{ '--tint': tone } as React.CSSProperties}>
+                            <div key={c.name} onClick={() => setMasterDetail({ kind: 'categories', key: c.name })} title="Open details" className="req-tile p-5 pl-6 cursor-pointer" style={{ '--tint': tone } as React.CSSProperties}>
                               <div className="flex items-start justify-between gap-3">
                                 <div>
                                   <h4 className="font-outfit font-extrabold text-base text-textPrimary">{c.name}</h4>
@@ -8385,6 +9143,178 @@ export default function App() {
                       </p>
                     </div>
                   )}
+
+                  {/* The open record's detail panel. Every figure in it comes
+                      from the same rows and requests the console already
+                      holds, so it can never disagree with the lists. */}
+                  {masterDetail && (() => {
+                    const close = () => setMasterDetail(null);
+                    const go = (kind: 'products' | 'categories' | 'branches' | 'vendors', key: string) => setMasterDetail({ kind, key });
+                    const openRequest = (id: string) => { setMasterDetail(null); setSelectedRequestId(id); setActiveScene(11); };
+                    const money = (n: number) => `₹${Math.round(n || 0).toLocaleString('en-IN')}`;
+                    const fold = (x?: string) => (x || '').trim().toLowerCase();
+                    const same = (a?: string, b?: string) => {
+                      const x = fold(a), y = fold(b);
+                      return !!x && !!y && (x.includes(y) || y.includes(x));
+                    };
+                    const summary = (list: RequestItem[]) => {
+                      const newest = [...list].sort((a, b) => (b.submittedAt || '').localeCompare(a.submittedAt || ''));
+                      return {
+                        stats: [
+                          { label: 'Requests', value: String(list.length) },
+                          { label: 'In progress', value: String(list.filter(r => !['Paid', 'Rejected', 'Draft'].includes(r.status)).length) },
+                          { label: 'Total value', value: money(list.reduce((t, r) => t + (r.totalCost || 0), 0)), hint: 'of those requests' },
+                        ],
+                        recent: newest.slice(0, 6).map(r => ({
+                          id: r.id,
+                          productName: r.productName + (r.lineItems && r.lineItems.length > 1 ? ` +${r.lineItems.length - 1} more` : ''),
+                          status: r.status, totalCost: r.totalCost, createdDate: r.createdDate, color: statusColor(r.status),
+                        })),
+                      };
+                    };
+                    const recentSection = (recent: ReturnType<typeof summary>['recent'], what: string) => ({
+                      title: 'Recent requests',
+                      hint: `The latest requests ${what} you can see — click one to track it.`,
+                      content: <DetailRequests requests={recent} onOpen={openRequest} />,
+                    });
+                    const productByName = (name: string) => productRows.find(p => p.name === name);
+                    // The catalogue says "IT Hardware", Odoo "IT Hardware & Laptops": match loosely.
+                    const categoryLike = (name: string) => allCategoryRows.find(c => c.name === name)
+                      ?? allCategoryRows.find(c => same(c.name, name) || fold(c.name).split(/[\s&]+/)[0] === fold(name).split(/[\s&]+/)[0]);
+                    const vendorKnown = (name: string) => vendorRows.some(v => v.name === name);
+                    const link = (label: string, onClick: () => void) => (
+                      <button onClick={onClick} className="text-brand hover:underline text-left">{label}</button>
+                    );
+
+                    if (masterDetail.kind === 'products') {
+                      const p = productRows.find(x => x.code === masterDetail.key);
+                      if (!p) return null;
+                      const sum = summary(requests.filter(r => same(r.productName, p.name) || (r.lineItems || []).some(l => same(l.productName, p.name))));
+                      const sellers = (CAT_VENDORS[p.category] || []).map(v => v.name);
+                      return (
+                        <MasterDetailPanel
+                          icon={Package} kind="Product" title={p.name} subtitle={`${p.code} · ${p.category}`} onClose={close}
+                          badges={p.onContract ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-pos/10 text-pos border border-pos/25"><ShieldCheck className="h-3 w-3" /> On contract</span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-gold/10 text-gold border border-gold/25"><Search className="h-3 w-3" /> Needs sourcing</span>
+                          )}
+                          stats={sum.stats}
+                          facts={[
+                            { label: 'Product code', value: p.code, mono: true },
+                            { label: 'Expense category', value: (() => { const c = categoryLike(p.category); return c ? link(c.name, () => go('categories', c.name)) : p.category; })() },
+                            { label: 'Unit of measure', value: p.uom },
+                            { label: 'Contract rate', value: p.contract ? money(p.contract) : '—' },
+                            { label: 'Default vendor', value: vendorKnown(p.vendor) ? link(p.vendor, () => go('vendors', p.vendor)) : p.vendor },
+                            { label: 'Status', value: p.onContract ? 'On a running rate contract' : 'Sourced per request' },
+                          ]}
+                          sections={[
+                            { title: 'Price history', hint: 'What was actually paid on confirmed purchase orders in Odoo.',
+                              content: <><PriceHistoryStrip product={p.name} unitPrice={p.contract} fetcher={apiFetch} /></> },
+                            { title: 'Vendors for this category', content: <DetailChips items={sellers} empty="No vendors listed for this category." onPick={n => vendorKnown(n) && go('vendors', n)} /> },
+                            recentSection(sum.recent, 'for this product'),
+                          ]}
+                        />
+                      );
+                    }
+
+                    if (masterDetail.kind === 'categories') {
+                      const c = allCategoryRows.find(x => x.name === masterDetail.key);
+                      if (!c) return null;
+                      const items = productRows.filter(p => categoryLike(p.category)?.name === c.name);
+                      const sellers = vendorRows.filter(v => categoryLike(v.category)?.name === c.name).map(v => v.name);
+                      const sum = summary(requests.filter(r => fold(r.expenseCategory) === fold(c.name)));
+                      const capex = /cap/i.test(c.expenseType);
+                      return (
+                        <MasterDetailPanel
+                          icon={Layers} kind="Expense category" title={c.name} subtitle={`${c.glCode} · owned by ${c.owner}`} onClose={close}
+                          badges={<span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-brand/10 text-brand border border-brand/25">{capex ? 'CapEx' : 'OpEx'}</span>}
+                          stats={sum.stats}
+                          facts={[
+                            { label: 'Expense type', value: capex ? 'Capital expenditure (CapEx)' : 'Operating expenditure (OpEx)' },
+                            { label: 'GL code', value: c.glCode, mono: true },
+                            { label: 'Auto-approve up to', value: c.limit ? money(c.limit) : '—' },
+                            { label: 'Owning department', value: c.owner },
+                            { label: 'Products', value: String(items.length) },
+                            { label: 'Vendors', value: String(sellers.length) },
+                          ]}
+                          sections={[
+                            { title: 'Products in this category', content: <DetailChips items={items.map(p => p.name)} empty="No products in this category yet." onPick={n => { const p = productByName(n); if (p) go('products', p.code); }} /> },
+                            { title: 'Vendors', content: <DetailChips items={sellers} empty="No vendors listed for this category." onPick={n => go('vendors', n)} /> },
+                            recentSection(sum.recent, 'in this category'),
+                          ]}
+                        />
+                      );
+                    }
+
+                    if (masterDetail.kind === 'branches') {
+                      const b = branchRows.find(x => x.name === masterDetail.key);
+                      if (!b) return null;
+                      const company = companyForBranch(b.name);
+                      const mine = requests.filter(r => fold(r.location) === fold(b.name));
+                      const sum = summary(mine);
+                      const departments = [...new Set(mine.map(r => r.department).filter(Boolean))];
+                      const siblings = company.branches.filter(n => n !== b.name && branchRows.some(x => x.name === n));
+                      return (
+                        <MasterDetailPanel
+                          icon={Building2} kind="Branch" title={b.name} subtitle={`${b.code} · ${b.city}`} onClose={close}
+                          badges={<span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-pos/10 text-pos border border-pos/25"><CheckCircle2 className="h-3 w-3" /> Active</span>}
+                          stats={sum.stats}
+                          facts={[
+                            { label: 'Branch code', value: b.code, mono: true },
+                            { label: 'City', value: b.city },
+                            { label: 'Company', value: company.name },
+                            { label: 'Registered state', value: company.state },
+                            { label: 'GSTIN', value: company.gstin, mono: true },
+                            { label: 'CIN', value: company.cin, mono: true },
+                          ]}
+                          sections={[
+                            { title: `Other branches of ${company.short}`, content: <DetailChips items={siblings} empty="The only branch of this company." onPick={n => go('branches', n)} /> },
+                            { title: 'Departments ordering here', content: <DetailChips items={departments} empty="No requests raised for this branch yet." /> },
+                            recentSection(sum.recent, 'for this branch'),
+                          ]}
+                        />
+                      );
+                    }
+
+                    const v = vendorRows.find(x => x.name === masterDetail.key);
+                    if (!v) return null;
+                    const involved = requests.filter(r => r.vendor === v.name || r.contractVendor === v.name || (r.vendorBids || []).some(bid => bid.vendorName === v.name));
+                    const won = involved.filter(r => r.vendor === v.name);
+                    const sum = summary(involved);
+                    const served = Object.entries(CAT_VENDORS).filter(([, list]) => list.some(x => x.name === v.name)).map(([cat]) => cat);
+                    const supplies = productRows.filter(p => p.vendor === v.name).map(p => p.name);
+                    const contracts = [...new Set(involved.filter(r => r.contractVendor === v.name && r.contract).map(r => r.contract as string))];
+                    return (
+                      <MasterDetailPanel
+                        icon={Handshake} kind="Vendor" title={v.name} subtitle={`${v.code} · ${v.category}`} onClose={close}
+                        badges={<>
+                          <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${v.status === 'Active' ? 'bg-pos/10 text-pos border-pos/25' : 'bg-gold/10 text-gold border-gold/25'}`}>{v.status}</span>
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-textPrimary"><Star className="h-3 w-3 text-gold fill-gold" /> {v.rating.toFixed(1)}</span>
+                          {v.origin === 'AI Discovered' && <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-brand/10 text-brand border border-brand/25"><Sparkles className="h-3 w-3" /> AI discovered</span>}
+                        </>}
+                        stats={[
+                          { label: 'Requests', value: String(involved.length), hint: 'quoted, contracted or won' },
+                          { label: 'Won', value: String(won.length) },
+                          { label: 'Value won', value: money(won.reduce((t, r) => t + (r.totalCost || 0), 0)) },
+                        ]}
+                        facts={[
+                          { label: 'Vendor code', value: v.code, mono: true },
+                          { label: 'Primary category', value: (() => { const c = categoryLike(v.category); return c ? link(c.name, () => go('categories', c.name)) : v.category; })() },
+                          { label: 'Rating', value: `${v.rating.toFixed(1)} / 5` },
+                          { label: 'Payment terms', value: v.terms },
+                          { label: 'Vendor since', value: v.since },
+                          { label: 'Onboarded', value: v.origin === 'AI Discovered' ? 'AI discovery, approved here' : 'Standard onboarding' },
+                        ]}
+                        sections={[
+                          { title: 'Categories served', content: <DetailChips items={served.length ? served : [v.category]} empty="—" onPick={n => { const c = categoryLike(n); if (c) go('categories', c.name); }} /> },
+                          { title: 'Default vendor for', content: <DetailChips items={supplies} empty="Not the default vendor of any catalogue product." onPick={n => { const p = productByName(n); if (p) go('products', p.code); }} /> },
+                          { title: 'Rate contracts', content: <DetailChips items={contracts} empty="No running contract on the requests you can see." /> },
+                          recentSection(sum.recent, 'this vendor quoted on or won'),
+                        ]}
+                      />
+                    );
+                  })()}
 
                   {/* Adding a record to whichever master is open. One panel
                       for all of them; the fields come from MASTER_FORMS. */}
@@ -8612,7 +9542,7 @@ export default function App() {
                             {branchRows
                               .filter(b => `${b.name} ${b.code} ${b.city}`.toLowerCase().includes(masterSearch.toLowerCase()))
                               .map(b => (
-                                <tr key={b.name} className="border-t border-borderTheme hover:bg-secondary/60 transition-colors">
+                                <tr key={b.name} onClick={() => setMasterDetail({ kind: 'branches', key: b.name })} className="border-t border-borderTheme hover:bg-secondary/60 transition-colors cursor-pointer" title="Open details">
                                   <td className="px-4 py-3 text-[11px] font-mono text-textFaint">{b.code}</td>
                                   <td className="px-4 py-3 text-xs font-bold text-textPrimary">{b.name}</td>
                                   <td className="px-4 py-3 text-xs text-textSecondary">{b.city}</td>
@@ -8630,7 +9560,7 @@ export default function App() {
                       {branchRows
                         .filter(b => `${b.name} ${b.code} ${b.city}`.toLowerCase().includes(masterSearch.toLowerCase()))
                         .map((b, i) => (
-                          <div key={b.name} className="p-5 rounded-2xl bg-surface border border-borderTheme shadow-sm glow-card">
+                          <div key={b.name} onClick={() => setMasterDetail({ kind: 'branches', key: b.name })} title="Open details" className="p-5 rounded-2xl bg-surface border border-borderTheme shadow-sm glow-card cursor-pointer">
                             <div className="flex items-start justify-between gap-2">
                               <span className="grid h-10 w-10 place-items-center rounded-xl bg-brand/10 text-brand">
                                 <Building2 className="h-5 w-5" />
@@ -8707,7 +9637,7 @@ export default function App() {
                                 {vendorRows
                                   .filter(v => `${v.name} ${v.category} ${v.code}`.toLowerCase().includes(masterSearch.toLowerCase()))
                                   .map(v => (
-                                    <tr key={v.code + v.name} className={`border-t border-borderTheme hover:bg-secondary/60 transition-colors ${
+                                    <tr key={v.code + v.name} onClick={() => setMasterDetail({ kind: 'vendors', key: v.name })} title="Open details" className={`cursor-pointer border-t border-borderTheme hover:bg-secondary/60 transition-colors ${
                                       v.origin === 'AI Discovered' ? 'bg-pos/5' : ''}`}>
                                       <td className="px-4 py-3 text-[11px] font-mono text-textFaint">{v.code}</td>
                                       <td className="px-4 py-3 text-xs font-bold text-textPrimary">{v.name}</td>

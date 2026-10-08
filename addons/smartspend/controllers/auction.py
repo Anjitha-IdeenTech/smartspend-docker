@@ -102,13 +102,18 @@ class SmartSpendAuctionApi(http.Controller):
 
     @http.route('/api/smartspend/auction-vendors', type='json2', auth='none',
                 methods=['GET'], cors='*', readonly=True)
-    def auction_vendors(self, **kwargs):
+    def auction_vendors(self, requestId=None, **kwargs):
         """Suppliers a buyer can invite, and whether each can sign in to bid.
 
         A supplier with a portal login accepts and bids for itself; one without
         can still be invited, but then the buyer answers and bids on its behalf.
         The self-serve suppliers are listed first, so a live auction is set up
         with bidders who can actually take part.
+
+        :param requestId: optional — the request being put up for auction. The
+            suppliers who have served its expense category before are then
+            marked ``suggested``, with the reason, and listed first — those
+            assigned on its expense or product category ahead of the rest.
         """
         error = _authenticate()
         if error:
@@ -117,9 +122,12 @@ class SmartSpendAuctionApi(http.Controller):
             return _error(_("Only an SCM buyer invites vendors to an auction."), 403)
         Auction = request.env['smartspend.auction']
         contracted = request.env['smartspend.contract'].search([('is_running', '=', True)]).partner_id
+        reference = (requestId or request.httprequest.args.get('requestId') or '').strip()
+        reasons = self._category_suggestions(reference) if reference else {}
         rows = []
         for vendor in request.env['res.partner'].search([('supplier_rank', '>', 0)], limit=200):
             login = Auction._portal_user_for(vendor)
+            assigned, reason = reasons.get(vendor.commercial_partner_id.name.casefold(), (False, ''))
             rows.append({
                 'id': vendor.id,
                 'name': vendor.name,
@@ -127,15 +135,97 @@ class SmartSpendAuctionApi(http.Controller):
                 'onContract': vendor in contracted,
                 'login': login.login or '',
                 'contact': login.name or '',
+                'suggested': bool(reason),
+                'suggestedReason': reason,
+                'assignedToCategory': assigned,
             })
-        rows.sort(key=lambda row: (not row['login'], row['name'].casefold()))
+        # Vendors assigned on the category master first, then those its
+        # history suggests, then everyone else.
+        rows.sort(key=lambda row: (not row['assignedToCategory'], not row['suggested'],
+                                   not row['login'], row['name'].casefold()))
         return rows
+
+    def _category_suggestions(self, reference):
+        """Why each supplier suits the request's expense category.
+
+        A supplier suits it when the category master lists it among its
+        vendors, when a product category of the request's items (or a parent
+        of one) lists it, or when it was the vendor on, or sent a quote for, other
+        requests of the same category. Drafts, rejected and cancelled requests
+        say nothing about who supplies what, so they are left out. Quotes carry
+        only the vendor's name, so suppliers are matched by name; the result is
+        keyed by the case-folded supplier name.
+        """
+        Request = request.env['smartspend.request']
+        record = Request.search([('name', '=', reference)], limit=1)
+        by_product = self._product_category_vendors(record)
+        if not record.category_id:
+            return {name: (True, _("Assigned to product category %s", ', '.join(cats)))
+                    for name, cats in by_product.items()}
+        category = record.category_id
+        assigned = {name.casefold() for name in category.vendor_ids.commercial_partner_id.mapped('name')}
+        history = Request.search([
+            ('category_id', '=', category.id),
+            ('id', '!=', record.id),
+            ('state', 'not in', ('draft', 'rejected', 'cancelled')),
+        ])
+        supplied, quoted = {}, {}
+        for past in history:
+            vendor = (past.partner_id.commercial_partner_id.name or '').casefold()
+            if vendor:
+                supplied[vendor] = supplied.get(vendor, 0) + 1
+            for name in {(bid.vendor_name or '').strip().casefold() for bid in past.bid_ids} - {'', vendor}:
+                quoted[name] = quoted.get(name, 0) + 1
+        def requests(count):
+            return _("%(count)s past %(noun)s", count=count,
+                     noun=_("request") if count == 1 else _("requests"))
+
+        reasons = {}
+        for name in assigned | set(by_product) | set(supplied) | set(quoted):
+            parts = []
+            if name in assigned:
+                parts.append(_("Assigned to %s", category.name))
+            if name in by_product:
+                parts.append(_("Assigned to product category %s", ', '.join(by_product[name])))
+            if supplied.get(name):
+                parts.append(_("supplied %s", requests(supplied[name])))
+            if quoted.get(name):
+                parts.append(_("quoted on %s", requests(quoted[name])))
+            reason = ' · '.join(parts)
+            listed = name in assigned or name in by_product
+            if not listed:
+                # Without the master's word, say which category the history is in.
+                reason = _("%(category)s: %(history)s", category=category.name, history=reason)
+            reasons[name] = (listed, reason[:1].upper() + reason[1:])
+        return reasons
+
+    def _product_category_vendors(self, record):
+        """Suppliers assigned to the request's product categories, by name.
+
+        The product categories are those of the request's items, and the one
+        its expense category maps to. A supplier assigned to a parent category
+        serves its sub-categories too.
+
+        :return: ``{case-folded supplier name: [product category names]}``
+        """
+        categories = record.line_ids.product_category_id | record.category_id.product_category_id
+        if not categories:
+            return {}
+        ancestors = categories.browse({
+            int(part) for path in categories.mapped('parent_path') for part in (path or '').split('/') if part
+        }) | categories
+        found = {}
+        for product_category in ancestors.sorted('complete_name'):
+            for vendor in product_category.smartspend_vendor_ids.commercial_partner_id:
+                found.setdefault(vendor.name.casefold(), []).append(product_category.complete_name)
+        return found
 
     @http.route('/api/smartspend/auctions/launch', type='json2', auth='none',
                 methods=['POST'], cors='*', readonly=False)
-    def launch_auction(self, requestId=None, vendorIds=None, startInMinutes=None,
+    def launch_auction(self, requestId=None, vendorIds=None, startAt=None, startInMinutes=None,
                        durationMinutes=None, extensionWindow=2, extensionMinutes=2,
-                       minDecrement=0, visibility='rank', rebidMinutes=15, terms=None, **kwargs):
+                       minDecrement=0, visibility='rank', rebidMinutes=15, terms=None,
+                       reminderMinutes=None, **kwargs):
         """Put a request up for auction and send the invitations."""
         error = _authenticate()
         if error:
@@ -153,11 +243,22 @@ class SmartSpendAuctionApi(http.Controller):
             duration = int(durationMinutes or 10)
         except (TypeError, ValueError):
             return _error(_("Vendors, start and duration have to be numbers."), 400)
+        # The buyer picks the day and time; the portal sends it in UTC. Older
+        # clients still say "in N minutes", which is what the fallback is for.
+        opens_at = fields.Datetime.now() + timedelta(minutes=start_in)
+        if startAt:
+            stamp = str(startAt).strip().replace('T', ' ').replace('Z', '').split('.')[0]
+            try:
+                opens_at = fields.Datetime.to_datetime(stamp)
+            except (ValueError, TypeError):
+                opens_at = None
+            if not opens_at:
+                return _error(_("Could not read the date and time bidding should open."), 400)
         partners = request.env['res.partner'].browse(ids).exists()
         try:
             auction = request.env['smartspend.auction']._launch_for_request(
                 record, partners,
-                start_at=fields.Datetime.now() + timedelta(minutes=start_in),
+                start_at=opens_at,
                 duration_minutes=duration,
                 extension_window=extensionWindow,
                 extension_minutes=extensionMinutes,
@@ -165,6 +266,7 @@ class SmartSpendAuctionApi(http.Controller):
                 visibility=visibility,
                 rebid_minutes=rebidMinutes,
                 terms=(terms or '').strip() or False,
+                **({'reminder_minutes': reminderMinutes} if reminderMinutes is not None else {}),
             )
         except (UserError, ValidationError, AccessError) as exc:
             return _refused(exc)
@@ -172,8 +274,15 @@ class SmartSpendAuctionApi(http.Controller):
 
     @http.route('/api/smartspend/auctions/<string:reference>/action', type='json2', auth='none',
                 methods=['POST'], cors='*', readonly=False)
-    def auction_action(self, reference=None, action=None, **kwargs):
-        """The buyer's controls: start, award, bid_again, cancel."""
+    def auction_action(self, reference=None, action=None, participantId=None, reason=None, note=None, **kwargs):
+        """The buyer's controls: start, award, bid_again, cancel.
+
+        ``award`` goes to L1 unless ``participantId`` names another bidder
+        (L2, L3…); ``reason`` is kept with the award. ``remind`` nudges every
+        pending vendor, or only ``participantId``; ``note`` is added to it.
+        ``approve`` (procurement manager only) picks the level the buyer may
+        award — ``participantId``, L1 when left out — with ``reason`` as its note.
+        """
         error = _authenticate()
         if error:
             return error
@@ -185,16 +294,21 @@ class SmartSpendAuctionApi(http.Controller):
             return _error(_("No reverse auction named %s.", reference or '—'), 404)
         handlers = {
             'start': auction.action_start,
-            'award': auction.action_award,
+            'award': lambda: auction.action_award(participant=participantId or None, reason=reason),
+            'approve': lambda: auction.action_approve_award(participant=participantId or None, note=reason or note),
             'bid_again': auction.action_bid_again,
             'cancel': auction.action_cancel,
+            'remind': lambda: auction.action_send_reminders(
+                participants=[participantId] if participantId else None, note=note),
         }
         handler = handlers.get((action or '').strip().lower())
         if not handler:
             return _error(_("Action must be one of: %s.", ", ".join(handlers)), 400)
+        if (action or '').strip().lower() == 'approve' and not user.has_group('smartspend.group_smartspend_manager'):
+            return _error(_("Only a procurement manager approves which vendor is awarded."), 403)
         try:
             handler()
-        except (UserError, ValidationError, AccessError) as exc:
+        except (UserError, ValidationError, AccessError, ValueError) as exc:
             return _refused(exc)
         return _envelope(auction.sudo(), user)
 

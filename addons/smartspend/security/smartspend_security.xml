@@ -183,6 +183,123 @@
         <field name="groups" eval="[Command.link(ref('group_smartspend_buyer'))]"/>
     </record>
 
+    <!-- An approver can put a question to someone other than the requester.
+         That person reads the request so they can answer it — read only; the
+         answer itself goes through /api/smartspend/clarify-reply. -->
+    <record id="rule_smartspend_request_asked" model="ir.rule">
+        <field name="name">SmartSpend: requests I was asked about</field>
+        <field name="model_id" ref="model_smartspend_request"/>
+        <field name="domain_force">[('clarification_user_id', '=', user.id)]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_user'))]"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+    <record id="rule_smartspend_request_line_asked" model="ir.rule">
+        <field name="name">SmartSpend: lines of requests I was asked about</field>
+        <field name="model_id" ref="model_smartspend_request_line"/>
+        <field name="domain_force">[('request_id.clarification_user_id', '=', user.id)]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_user'))]"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+    <record id="rule_smartspend_request_bid_asked" model="ir.rule">
+        <field name="name">SmartSpend: bids on requests I was asked about</field>
+        <field name="model_id" ref="model_smartspend_request_bid"/>
+        <field name="domain_force">[('request_id.clarification_user_id', '=', user.id)]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_user'))]"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+    <record id="rule_smartspend_request_history_asked" model="ir.rule">
+        <field name="name">SmartSpend: timeline of requests I was asked about</field>
+        <field name="model_id" ref="model_smartspend_request_history"/>
+        <field name="domain_force">[('request_id.clarification_user_id', '=', user.id)]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_user'))]"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+    <record id="rule_smartspend_request_comment_asked" model="ir.rule">
+        <field name="name">SmartSpend: clarifications I was asked about</field>
+        <field name="model_id" ref="model_smartspend_request_comment"/>
+        <field name="domain_force">[('request_id.clarification_user_id', '=', user.id)]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_user'))]"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+    <record id="rule_smartspend_request_document_asked" model="ir.rule">
+        <field name="name">SmartSpend: documents of requests I was asked about</field>
+        <field name="model_id" ref="model_smartspend_request_document"/>
+        <field name="domain_force">[('request_id.clarification_user_id', '=', user.id)]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_user'))]"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+
+    <!-- A manager can delegate an approval step to any internal user, not only
+         another manager. That user has to read the request to decide it — read
+         only; the decision goes through /api/smartspend/decide, which checks
+         the step is still theirs. -->
+    <record id="rule_smartspend_request_delegated" model="ir.rule">
+        <field name="name">SmartSpend: requests delegated to me for approval</field>
+        <field name="model_id" ref="model_smartspend_request"/>
+        <field name="domain_force">[('approval_ids.delegate_user_id', '=', user.id)]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_user'))]"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+    <record id="rule_smartspend_request_line_delegated" model="ir.rule">
+        <field name="name">SmartSpend: lines of requests delegated to me</field>
+        <field name="model_id" ref="model_smartspend_request_line"/>
+        <field name="domain_force">[('request_id.approval_ids.delegate_user_id', '=', user.id)]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_user'))]"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+    <record id="rule_smartspend_request_bid_delegated" model="ir.rule">
+        <field name="name">SmartSpend: bids on requests delegated to me</field>
+        <field name="model_id" ref="model_smartspend_request_bid"/>
+        <field name="domain_force">[('request_id.approval_ids.delegate_user_id', '=', user.id)]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_user'))]"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+    <record id="rule_smartspend_request_history_delegated" model="ir.rule">
+        <field name="name">SmartSpend: timeline of requests delegated to me</field>
+        <field name="model_id" ref="model_smartspend_request_history"/>
+        <field name="domain_force">[('request_id.approval_ids.delegate_user_id', '=', user.id)]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_user'))]"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+    <record id="rule_smartspend_request_comment_delegated" model="ir.rule">
+        <field name="name">SmartSpend: clarifications on requests delegated to me</field>
+        <field name="model_id" ref="model_smartspend_request_comment"/>
+        <field name="domain_force">[('request_id.approval_ids.delegate_user_id', '=', user.id)]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_user'))]"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+    <record id="rule_smartspend_request_document_delegated" model="ir.rule">
+        <field name="name">SmartSpend: documents of requests delegated to me</field>
+        <field name="model_id" ref="model_smartspend_request_document"/>
+        <field name="domain_force">[('request_id.approval_ids.delegate_user_id', '=', user.id)]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_user'))]"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+
     <record id="rule_smartspend_request_company" model="ir.rule">
         <field name="name">SmartSpend: request multi-company</field>
         <field name="model_id" ref="model_smartspend_request"/>
@@ -204,6 +321,36 @@
         <field name="model_id" ref="model_smartspend_auction"/>
         <field name="domain_force">['|', ('company_id', '=', False), ('company_id', 'in', company_ids)]</field>
         <field name="global" eval="True"/>
+    </record>
+
+    <!-- Favourite products: each user keeps their own; a procurement manager sees all. -->
+    <record id="rule_smartspend_favorite_product_own" model="ir.rule">
+        <field name="name">SmartSpend: own favourite products</field>
+        <field name="model_id" ref="model_smartspend_favorite_product"/>
+        <field name="domain_force">[('user_id', '=', user.id)]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_user'))]"/>
+    </record>
+
+    <record id="rule_smartspend_favorite_product_all" model="ir.rule">
+        <field name="name">SmartSpend: all favourite products</field>
+        <field name="model_id" ref="model_smartspend_favorite_product"/>
+        <field name="domain_force">[(1, '=', 1)]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_manager'))]"/>
+    </record>
+
+    <!-- Product creation requests: a requester sees their own; buyers and managers all. -->
+    <record id="rule_smartspend_product_request_own" model="ir.rule">
+        <field name="name">SmartSpend: own product creation requests</field>
+        <field name="model_id" ref="model_smartspend_product_request"/>
+        <field name="domain_force">[('requested_by_id', '=', user.id)]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_user'))]"/>
+    </record>
+
+    <record id="rule_smartspend_product_request_all" model="ir.rule">
+        <field name="name">SmartSpend: all product creation requests</field>
+        <field name="model_id" ref="model_smartspend_product_request"/>
+        <field name="domain_force">[(1, '=', 1)]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_buyer'))]"/>
     </record>
 
 </odoo>

@@ -260,7 +260,7 @@ class SmartSpendApi(http.Controller):
 
     @http.route('/api/smartspend/purchase-order/step', type='json2', auth='none',
                 methods=['POST'], cors='*', readonly=False)
-    def purchase_order_step(self, id=None, step=None, **kwargs):
+    def purchase_order_step(self, id=None, step=None, expectedDelivery=None, **kwargs):
         """Record one of the two steps that follow the order, and echo the request back.
 
         The portal used to hold both in component state, which forgot them on
@@ -268,6 +268,8 @@ class SmartSpendApi(http.Controller):
 
         :param step: ``release`` — the purchase head approves the financial
             release terms; ``acknowledge`` — the vendor confirms the order.
+        :param expectedDelivery: ``acknowledge`` only, and required there — the
+            delivery date (YYYY-MM-DD) the vendor commits to.
         """
         error = _authenticate()
         if error:
@@ -308,10 +310,14 @@ class SmartSpendApi(http.Controller):
             return _error(_("No purchase request named %s.", reference), 404)
 
         try:
+            commit = fields.Date.to_date(str(expectedDelivery or '').strip()[:10] or None)
+        except ValueError:
+            return _error(_("The expected delivery date has to be a date (YYYY-MM-DD)."), 400)
+        try:
             if step == 'release':
                 record.action_release_purchase_order()
             else:
-                record.action_acknowledge_purchase_order()
+                record.action_acknowledge_purchase_order(delivery_date=commit)
         except (UserError, AccessError) as exc:
             return _refused(exc)
         return record._to_portal_dict()
@@ -441,6 +447,30 @@ class SmartSpendApi(http.Controller):
                  'expenseType': dict(category._fields['expense_type'].selection)[category.expense_type]}
                 for category in env['smartspend.expense.category'].search([])
             ],
+            # Who a step can be handed to, and which designations can be added to
+            # a chain. The portal used to have neither, so its manager screen
+            # could only approve, reject or ask — the two actions below had
+            # nothing to offer as a target.
+            'designations': [{
+                'id': designation.id,
+                'name': designation.name,
+                'holders': [{'name': holder.name, 'login': holder.login}
+                            for holder in designation.user_ids],
+            } for designation in env['smartspend.designation'].sudo().search([])],
+            'approverUsers': [{
+                'id': user.id, 'name': user.name, 'login': user.login,
+            } for user in env['res.users'].sudo().search([
+                ('share', '=', False),
+                ('all_group_ids', 'in', [
+                    env.ref('smartspend.group_smartspend_user').id,
+                    env.ref('smartspend.group_smartspend_buyer').id,
+                    env.ref('smartspend.group_smartspend_manager').id,
+                ]),
+                # A supplier account holds the requester group by implication,
+                # which would offer the buying side's signature to the other
+                # side of the table.
+                ('all_group_ids', 'not in', [env.ref('smartspend.group_smartspend_vendor').id]),
+            ])],
             'urgencies': [label for _key, label in URGENCY_LABELS],
             'sourcingMethods': [label for _key, label in SOURCING_LABELS],
             'statuses': [label for _key, label in STATE_LABELS],
@@ -488,21 +518,35 @@ class SmartSpendApi(http.Controller):
 
     @http.route('/api/smartspend/decide', type='json2', auth='none',
                 methods=['POST'], cors='*', readonly=False)
-    def decide_request(self, id=None, decision=None, comment=None, **kwargs):
+    def decide_request(self, id=None, decision=None, comment=None, ask_login=None, **kwargs):
         """Approve, reject or query one request, and echo it back.
 
         :param decision: ``approve``, ``reject`` or ``clarify``.
         :param comment: the approver's note — required to ask for clarification,
             recorded on the request's thread either way.
+        :param ask_login: for ``clarify`` only — the login of the user who should
+            answer. Omitted, the question goes to the requester.
         """
         error = _authenticate()
         if error:
             return error
-        if not request.env.user.has_group('smartspend.group_smartspend_manager'):
-            return _error(_("Only a procurement manager can approve or reject."), 403)
+        user = request.env.user
+        is_manager = user.has_group('smartspend.group_smartspend_manager')
 
         reference = (id or '').strip()
         record = request.env['smartspend.request'].search([('name', '=', reference)], limit=1)
+        if not is_manager:
+            # A manager may hand a step to anyone on the buying side, not only
+            # to another manager. That user decides this one request, and only
+            # while the step it is waiting on is theirs.
+            step = record.sudo().approval_next_id
+            if not (record and record.state == 'to_approve'
+                    and step.delegate_user_id == user):
+                return _error(_("Only a procurement manager, or the user an approval "
+                                "was delegated to, can approve or reject."), 403)
+            # They hold no write rights on the request itself. Elevated, the
+            # decision is still recorded under their name: sudo() keeps the user.
+            record = record.sudo()
         if not record:
             return _error(_("No purchase request named %s.", reference or '—'), 404)
 
@@ -512,6 +556,13 @@ class SmartSpendApi(http.Controller):
             return _error(_("Decision must be one of: approve, reject, clarify."), 400)
         if decision == 'clarify' and not comment:
             return _error(_("Say what needs clarifying."), 400)
+        ask_user = None
+        ask_login = (ask_login or '').strip()
+        if decision == 'clarify' and ask_login:
+            ask_user = request.env['res.users'].sudo().search(
+                [('login', '=', ask_login), ('share', '=', False)], limit=1)
+            if not ask_user:
+                return _error(_("No internal user signs in as %s.", ask_login), 404)
 
         try:
             if decision == 'approve':
@@ -521,13 +572,117 @@ class SmartSpendApi(http.Controller):
             elif decision == 'reject':
                 record.action_reject()
             else:
-                record.action_request_clarification()
+                record.action_request_clarification(ask_user=ask_user)
             if comment and decision != 'approve':
                 record.comment_ids = [fields.Command.create({
                     'role': 'manager',
                     'text': comment,
                 })]
                 record.message_post(body=comment)
+        except (UserError, AccessError) as exc:
+            return _refused(exc)
+        return record._to_portal_dict()
+
+    @http.route('/api/smartspend/clarify-reply', type='json2', auth='none',
+                methods=['POST'], cors='*', readonly=False)
+    def clarify_reply(self, id=None, text=None, **kwargs):
+        """Answer an approver's question and send the request back for approval.
+
+        Open to whoever the question was put to, the requester, and managers —
+        the person asked may be neither the requester nor an approver.
+        """
+        error = _authenticate()
+        if error:
+            return error
+        reference = (id or '').strip()
+        # Searched as the caller, so the record rules decide whether they may
+        # see the request at all.
+        record = request.env['smartspend.request'].search([('name', '=', reference)], limit=1)
+        if not record:
+            return _error(_("No purchase request named %s.", reference or '—'), 404)
+        text = (text or '').strip()
+        if not text:
+            return _error(_("Write an answer first."), 400)
+        user = request.env.user
+        asked = record.sudo().clarification_user_id
+        if not (user == asked or user == record.sudo().user_id
+                or user.has_group('smartspend.group_smartspend_manager')):
+            return _error(_("This question was put to %s.", asked.name or _('someone else')), 403)
+        try:
+            record._apply_clarification_reply(text)
+        except (UserError, AccessError) as exc:
+            return _refused(exc)
+        return record._to_portal_dict()
+
+    @http.route('/api/smartspend/delegate', type='json2', auth='none',
+                methods=['POST'], cors='*', readonly=False)
+    def delegate_approval(self, id=None, login=None, note=None, order=None, **kwargs):
+        """Hand the step this request is waiting on to another user.
+
+        Gated like /decide, and then a second time by the model: only whoever
+        may sign the step today can give it away, so a manager cannot quietly
+        move somebody else's signature.
+
+        :param login: the Odoo login of the user taking the step over.
+        :param note: why it is being handed over. Optional, recorded either way.
+        """
+        error = _authenticate()
+        if error:
+            return error
+        if not request.env.user.has_group('smartspend.group_smartspend_manager'):
+            return _error(_("Only a procurement manager can delegate an approval."), 403)
+
+        reference = (id or '').strip()
+        record = request.env['smartspend.request'].search([('name', '=', reference)], limit=1)
+        if not record:
+            return _error(_("No purchase request named %s.", reference or '—'), 404)
+
+        login = (login or '').strip()
+        if not login:
+            return _error(_("Say who the approval is being delegated to."), 400)
+        user = request.env['res.users'].sudo().search(
+            [('login', '=', login), ('share', '=', False)], limit=1)
+        if not user:
+            return _error(_("No internal user signs in as %s.", login), 404)
+
+        try:
+            record._apply_delegate(user, note, order=order)
+        except (UserError, AccessError) as exc:
+            return _refused(exc)
+        return record._to_portal_dict()
+
+    @http.route('/api/smartspend/add-approver', type='json2', auth='none',
+                methods=['POST'], cors='*', readonly=False)
+    def add_approver(self, id=None, designation=None, position='next', note=None, **kwargs):
+        """Add one more signature to a chain that is already running.
+
+        :param designation: the designation being added, by name.
+        :param position: ``next`` (signs after the level now waiting) or ``last``.
+        """
+        error = _authenticate()
+        if error:
+            return error
+        if not request.env.user.has_group('smartspend.group_smartspend_manager'):
+            return _error(_("Only a procurement manager can add an approver."), 403)
+
+        reference = (id or '').strip()
+        record = request.env['smartspend.request'].search([('name', '=', reference)], limit=1)
+        if not record:
+            return _error(_("No purchase request named %s.", reference or '—'), 404)
+
+        name = (designation or '').strip()
+        if not name:
+            return _error(_("Say which designation is being added."), 400)
+        record_designation = request.env['smartspend.designation'].sudo().search(
+            [('name', '=ilike', name)], limit=1)
+        if not record_designation:
+            return _error(_("There is no designation called %s.", name), 404)
+        position = (position or 'next').strip().lower()
+        if position not in ('next', 'last'):
+            return _error(_("Position must be one of: next, last."), 400)
+
+        try:
+            record._apply_add_approver(record_designation, position, note)
         except (UserError, AccessError) as exc:
             return _refused(exc)
         return record._to_portal_dict()

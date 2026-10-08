@@ -28,6 +28,15 @@
                 </button>
             </xpath>
 
+            <!-- The same history, from the order's own lines: appended, so it
+                 lands as the last column rather than between Odoo's. -->
+            <xpath expr="//field[@name='order_line']/list" position="inside">
+                <button name="action_product_history" type="object"
+                        string="History" title="What this product has cost before"
+                        icon="fa-history" class="text-center"
+                        groups="smartspend.group_smartspend_buyer"/>
+            </xpath>
+
             <xpath expr="//group[@name='other_info']" position="inside">
                 <field name="smartspend_request_id" readonly="1"
                        invisible="not smartspend_request_id"/>

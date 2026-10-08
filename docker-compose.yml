@@ -36,7 +36,11 @@ services:
   # 8079, which the module's controllers allow (cors='*').
   ui:
     image: nginx:alpine
-    ports: ["8090:80"]
+    # 80 as well as 8090, so the demo has a plain address on this machine:
+    # http://smartspend.localhost (every *.localhost name resolves to this
+    # machine by itself, so nothing has to be installed or edited to use it).
+    # 8090 stays exactly as it was.
+    ports: ["8090:80", "80:80"]
     volumes:
       - ./site:/usr/share/nginx/html:ro
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro

@@ -43,6 +43,14 @@
             <field name="group_ids" eval="[Command.link(ref('smartspend.group_smartspend_vendor'))]"/>
         </record>
 
+        <!-- The office-furniture supplier. -->
+        <record id="user_demo_vendor_featherlite" model="res.users">
+            <field name="name">Rohan Mehta</field>
+            <field name="login">featherlite@smartspend.demo</field>
+            <field name="password">featherlite</field>
+            <field name="group_ids" eval="[Command.link(ref('smartspend.group_smartspend_vendor'))]"/>
+        </record>
+
     </data>
 
     <!-- Outside the noupdate block on purpose: re-run on every upgrade, and a

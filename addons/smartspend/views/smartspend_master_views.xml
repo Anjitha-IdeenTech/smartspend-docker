@@ -131,6 +131,7 @@
                 <field name="name"/>
                 <field name="expense_type"/>
                 <field name="product_category_id"/>
+                <field name="vendor_ids" widget="many2many_tags" optional="show"/>
                 <field name="request_count" string="Requests" readonly="1"/>
                 <field name="company_id" groups="base.group_multi_company"/>
             </list>
@@ -163,6 +164,11 @@
                             <field name="product_category_id"/>
                             <field name="company_id" groups="base.group_multi_company"/>
                         </group>
+                    </group>
+                    <group string="Vendors">
+                        <field name="vendor_ids" widget="many2many_tags" nolabel="1" colspan="2"
+                               placeholder="Suppliers suggested when bidding on this category"
+                               options="{'no_create': True}"/>
                     </group>
                 </sheet>
             </form>

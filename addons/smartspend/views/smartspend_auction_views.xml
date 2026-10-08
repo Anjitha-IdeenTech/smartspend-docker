@@ -95,9 +95,14 @@
                     <button name="action_start" type="object" string="Open Bidding Now"
                             class="oe_highlight" invisible="state != 'scheduled'"
                             confirm="Open bidding now? Vendors who have not accepted yet are dropped."/>
-                    <button name="action_award" type="object" string="Award to L1"
-                            class="oe_highlight" invisible="state != 'closed'"
-                            confirm="Award this auction to the lowest bidder and reprice the request at their bid?"/>
+                    <button name="action_send_reminders_button" type="object" string="Send Reminders"
+                            icon="fa-bell" invisible="state not in ('scheduled', 'live')"
+                            groups="smartspend.group_smartspend_buyer"/>
+                    <field name="approved_participant_id" invisible="1"/>
+                    <button name="action_award" type="object" string="Award to Approved Vendor"
+                            class="oe_highlight" invisible="state != 'closed' or not approved_participant_id"
+                            groups="smartspend.group_smartspend_buyer"
+                            confirm="Award this auction to the vendor the manager approved, and reprice the request at their bid?"/>
                     <button name="action_bid_again" type="object" string="Bid Again"
                             invisible="state != 'closed'"
                             confirm="Reopen bidding for another round?"/>
@@ -146,6 +151,7 @@
                                    invisible="not extension_count"/>
                             <field name="duration_minutes" readonly="state not in ('draft', 'scheduled')"/>
                             <field name="start_mode" invisible="not start_mode"/>
+                            <field name="round_no"/>
                             <field name="extension_count"/>
                             <field name="closed_on" invisible="not closed_on"/>
                         </group>
@@ -162,12 +168,23 @@
                                    readonly="state not in ('draft', 'scheduled')"/>
                             <field name="visibility" readonly="state not in ('draft', 'scheduled')"/>
                             <field name="rebid_minutes" readonly="state in ('awarded', 'cancelled')"/>
+                            <field name="reminder_minutes" readonly="state != 'scheduled' or reminder_sent"/>
+                            <field name="reminder_sent" string="Auto-Reminder Sent" invisible="not reminder_minutes"/>
+                        </group>
+                        <group string="Award Approval" invisible="not approved_participant_id">
+                            <field name="approved_rank"/>
+                            <field name="approved_total" widget="monetary"/>
+                            <field name="approved_by_id"/>
+                            <field name="approved_on"/>
+                            <field name="approval_note" invisible="not approval_note"/>
                         </group>
                         <group string="Outcome" invisible="state not in ('awarded', 'cancelled')">
                             <field name="winner_id" invisible="not winner_id"/>
                             <field name="awarded_total" widget="monetary" invisible="not winner_id"/>
                             <field name="awarded_on" invisible="not winner_id"/>
                             <field name="awarded_by_id" invisible="not winner_id"/>
+                            <field name="awarded_rank" invisible="not winner_id"/>
+                            <field name="award_reason" invisible="not award_reason"/>
                             <field name="cancel_reason" invisible="not cancel_reason"/>
                         </group>
                         <group>
@@ -193,12 +210,22 @@
                                     <field name="bid_count" string="Bids"/>
                                     <field name="improved_on" optional="show"/>
                                     <field name="responded_on" optional="hide"/>
+                                    <field name="reminder_count" optional="show"/>
+                                    <field name="last_reminded_on" optional="show"/>
                                     <field name="response_note" optional="hide" readonly="1"/>
                                     <field name="currency_id" column_invisible="1"/>
                                     <button name="action_accept" type="object" string="Accept"
                                             icon="fa-check" invisible="state != 'invited'"/>
                                     <button name="action_decline" type="object" string="Decline"
                                             icon="fa-times" invisible="state not in ('invited', 'accepted')"/>
+                                    <button name="action_remind" type="object" string="Remind"
+                                            icon="fa-bell" groups="smartspend.group_smartspend_buyer"
+                                            invisible="parent.state not in ('scheduled', 'live') or state not in ('invited', 'accepted', 'live') or (parent.state == 'scheduled' and state != 'invited') or (parent.state == 'live' and bid_count)"/>
+                                    <!-- The manager picks any bidder's level; the buyer then awards it. -->
+                                    <button name="action_approve_this" type="object" string="Approve"
+                                            icon="fa-check-circle" groups="smartspend.group_smartspend_manager"
+                                            invisible="parent.state != 'closed' or not rank"
+                                            confirm="Approve awarding the auction to this vendor at their final total?"/>
                                 </list>
                             </field>
                         </page>
@@ -206,6 +233,7 @@
                             <field name="bid_ids" readonly="1">
                                 <list>
                                     <field name="placed_on"/>
+                                    <field name="round_no" string="Round" optional="show"/>
                                     <field name="partner_id"/>
                                     <field name="total" widget="monetary"/>
                                     <field name="rank_after" string="Rank"/>
@@ -292,6 +320,7 @@
             <list string="Bid Log" create="0" edit="0" delete="0">
                 <field name="placed_on"/>
                 <field name="auction_id"/>
+                <field name="round_no" string="Round" optional="show"/>
                 <field name="partner_id"/>
                 <field name="total" widget="monetary"/>
                 <field name="rank_after" string="Rank"/>
@@ -384,6 +413,7 @@
                         <field name="min_decrement" widget="monetary"/>
                         <field name="visibility" widget="radio"/>
                         <field name="rebid_minutes"/>
+                        <field name="reminder_minutes"/>
                     </group>
                 </group>
                 <group string="Terms &amp; Conditions">

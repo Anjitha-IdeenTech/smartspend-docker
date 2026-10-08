@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- What each user keeps one tap away on the portal. -->
+    <record id="smartspend_favorite_product_view_list" model="ir.ui.view">
+        <field name="name">smartspend.favorite.product.list</field>
+        <field name="model">smartspend.favorite.product</field>
+        <field name="arch" type="xml">
+            <list string="Favourite Products" editable="bottom">
+                <field name="sequence" widget="handle"/>
+                <field name="user_id"/>
+                <field name="product_name"/>
+                <field name="category_id" optional="show"/>
+                <field name="default_qty"/>
+                <field name="target_price"/>
+                <field name="note" optional="show"/>
+                <field name="company_id" groups="base.group_multi_company"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="smartspend_favorite_product_view_search" model="ir.ui.view">
+        <field name="name">smartspend.favorite.product.search</field>
+        <field name="model">smartspend.favorite.product</field>
+        <field name="arch" type="xml">
+            <search string="Favourite Products">
+                <field name="product_name"/>
+                <field name="user_id"/>
+                <filter name="mine" string="My Favourites" domain="[('user_id', '=', uid)]"/>
+                <filter name="group_user" string="User" context="{'group_by': 'user_id'}"/>
+            </search>
+        </field>
+    </record>
+
+    <record id="smartspend_favorite_product_action" model="ir.actions.act_window">
+        <field name="name">Favourite Products</field>
+        <field name="res_model">smartspend.favorite.product</field>
+        <field name="view_mode">list</field>
+        <field name="context">{'search_default_group_user': 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">No favourites yet</p>
+            <p>Users star the products they order often on the portal, and raise a request from them in one tap.</p>
+        </field>
+    </record>
+
+</odoo>

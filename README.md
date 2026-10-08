@@ -3,12 +3,16 @@
 Three containers: the React demo behind nginx, the Odoo 19 module, and Postgres
 with the demo data already in it. Clone, start, restore, open.
 
-    Browser ──▶ nginx :8090   serves the built demo
-       └──────▶ Odoo  :8079   the smartspend module's REST API
-                  └──▶ Postgres :5433
+    Browser ──▶ nginx :8090 ──▶ /        the built demo
+                            └──▶ /api/…  the smartspend module's REST API
+                                   Odoo :8079 ──▶ Postgres :5433
 
-nginx never talks to Odoo. It hands the browser the page; the browser then calls
-Odoo itself, which is why the module's controllers carry `cors='*'`.
+The portal and its backend answer on one hostname: nginx serves the page and
+passes `/api/` to Odoo. That is what makes the link a plain one — no `?api=`
+and no `127.0.0.1`, which on anyone else's laptop is their own machine — and it
+is what `deploy/` puts on a public hostname. Odoo is still reachable directly on
+8079, and the module's controllers still carry `cors='*'`, so a build opened
+from somewhere else can be pointed at it with `?api=`.
 
 ## Run it
 
@@ -19,9 +23,13 @@ Then restore the demo database (once):
     zcat database/odoo_19.sql.gz | docker compose exec -T db psql -U odoo -d odoo_19
     docker compose restart web
 
-Open **http://127.0.0.1:8090/** — nginx redirects to `?api=http://127.0.0.1:8079`
-so the plain URL reaches this stack's Odoo. Odoo's own backend is on
-**http://127.0.0.1:8079**.
+Open **http://127.0.0.1:8090/** — nothing to add to it: the page asks
+`/config.js` which backend to call and is told this origin, and nginx passes
+`/api/` on to Odoo. Odoo's own backend is on **http://127.0.0.1:8079**.
+
+To put this in front of a client on a real hostname, see **[deploy/README.md](deploy/README.md)**:
+the same containers with Caddy in front for HTTPS, one `ship.sh` from here and
+one `bootstrap.sh` there.
 
 | Login | Password | Portal |
 |---|---|---|

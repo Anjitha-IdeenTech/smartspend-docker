@@ -92,6 +92,12 @@
                     <button name="action_reject" type="object" string="Reject"
                             invisible="state not in ('to_approve', 'clarification')"
                             groups="smartspend.group_smartspend_manager"/>
+                    <button name="action_delegate" type="object" string="Delegate"
+                            invisible="state not in ('to_approve', 'clarification')"
+                            groups="smartspend.group_smartspend_manager"/>
+                    <button name="action_add_approver" type="object" string="Add Approver"
+                            invisible="state not in ('to_approve', 'clarification')"
+                            groups="smartspend.group_smartspend_manager"/>
                     <button name="action_check_contract" type="object" string="Check Rate Contract"
                             invisible="state in ('rejected', 'paid')"/>
                     <button name="action_apply_contract_rates" type="object" string="Apply Contract Rates"
@@ -182,6 +188,14 @@
                             <field name="vendor_name"/>
                         </group>
                     </group>
+                    <!-- Chosen on the portal's goods receipt and vendor invoice,
+                         where both are required before the step can be completed. -->
+                    <group invisible="state not in ('po_confirmed', 'paid')">
+                        <group string="Receipt &amp; Payment">
+                            <field name="shipping_method"/>
+                            <field name="payment_method"/>
+                        </group>
+                    </group>
                     <group>
                         <group string="Rate Contract">
                             <field name="contract_id"
@@ -222,6 +236,8 @@
                         <group string="Order Release" invisible="not purchase_order_count">
                             <field name="po_released"/>
                             <field name="po_acknowledged"/>
+                            <field name="vendor_delivery_date" invisible="not vendor_delivery_date"/>
+                            <field name="product_request_ids" widget="many2many_tags" invisible="not product_request_ids"/>
                         </group>
                         <group string="Audit" invisible="not submitted_on and not cancelled_on">
                             <field name="submitted_by_id" invisible="not submitted_on"/>
@@ -254,6 +270,13 @@
                                     <field name="notes" optional="hide"/>
                                     <field name="currency_id" column_invisible="1"/>
                                     <field name="company_id" column_invisible="1"/>
+                                    <!-- Last column, with a header of its own so it
+                                         lines up under it instead of floating in
+                                         the gap before the row's delete control. -->
+                                    <button name="action_product_history" type="object"
+                                            string="History" title="What this product has cost before"
+                                            icon="fa-history" class="text-center"
+                                            groups="smartspend.group_smartspend_buyer"/>
                                 </list>
                             </field>
                         </page>
@@ -267,6 +290,27 @@
                                     <field name="warranty"/>
                                     <field name="bid_status"/>
                                     <field name="currency_id" column_invisible="1"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Approvals" name="approvals">
+                            <group>
+                                <field name="workflow_id" readonly="1"/>
+                                <field name="approval_level" readonly="1"/>
+                                <field name="approval_done" readonly="1"/>
+                                <field name="approval_total" readonly="1"/>
+                            </group>
+                            <field name="approval_ids" readonly="1">
+                                <list>
+                                    <field name="sequence" string="Order"/>
+                                    <field name="designation_id"/>
+                                    <field name="state"/>
+                                    <field name="delegate_user_id" string="Delegated To" optional="show"/>
+                                    <field name="delegated_by_id" string="Delegated By" optional="hide"/>
+                                    <field name="user_id" string="Decided By" widget="many2one_avatar_user"/>
+                                    <field name="decided_on" optional="hide"/>
+                                    <field name="added_by_id" string="Added By" optional="hide"/>
+                                    <field name="note" optional="show"/>
                                 </list>
                             </field>
                         </page>

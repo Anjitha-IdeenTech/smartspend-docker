@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="smartspend_request_add_approver_view_form" model="ir.ui.view">
+        <field name="name">smartspend.request.add.approver.form</field>
+        <field name="model">smartspend.request.add.approver</field>
+        <field name="arch" type="xml">
+            <form string="Add Approver">
+                <p class="text-muted">
+                    This adds a step to this request only. The workflow master is left
+                    as it is, so requests already in flight keep the chain they started with.
+                </p>
+                <group>
+                    <field name="request_ids" widget="many2many_tags" readonly="1"/>
+                    <field name="designation_id" options="{'no_create': True}"/>
+                    <field name="position" widget="radio"/>
+                    <field name="note" placeholder="e.g. Above the delegation limit — CFO to countersign."/>
+                </group>
+                <footer>
+                    <button name="action_confirm" type="object" string="Add Approver"
+                            class="btn-primary" data-hotkey="q"/>
+                    <button string="Discard" class="btn-secondary" special="cancel" data-hotkey="x"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+</odoo>

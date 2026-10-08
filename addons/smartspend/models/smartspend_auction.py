@@ -62,6 +62,8 @@ MIN_BIDDERS = 2
 REBID_WINDOW_MINUTES = 15
 # How far ahead of the start the vendors are reminded, as in the original.
 REMINDER_MINUTES = 30
+# How long before bidding opens the automatic reminder can go out. 0 is off.
+AUTO_REMINDER_CHOICES = (0, 15, 30, 60, 1440)
 
 # Demo supplier logins, and the supplier company each one bids for.
 # Demo supplier logins: the supplier company each one bids for, the person
@@ -82,6 +84,10 @@ DEMO_VENDOR_ACCOUNTS = {
         'supplier': 'SecureNet', 'person': 'Vikram Desai', 'job': 'Regional Sales Manager',
         'login': 'securenet@smartspend.demo', 'password': 'securenet',
         'seeded': {'names': ('SecureNet Sales Desk',), 'logins': ('vendor3@smartspend.demo',)}},
+    'smartspend.user_demo_vendor_featherlite': {
+        'supplier': 'Featherlite Office', 'person': 'Rohan Mehta', 'job': 'Sales Manager',
+        'login': 'featherlite@smartspend.demo', 'password': 'featherlite',
+        'seeded': {'names': ('Rohan Mehta',), 'logins': ('featherlite@smartspend.demo',)}},
 }
 
 
@@ -155,6 +161,10 @@ class SmartspendAuction(models.Model):
         string='Extension Duration (minutes)', default=2,
         help="How many minutes a last-moment bid adds to the close.")
     extension_count = fields.Integer(string='Time Extensions', readonly=True, copy=False)
+    round_no = fields.Integer(
+        string='Round', default=1, readonly=True, copy=False,
+        help="Bidding rounds held. Bid Again opens another one: vendors start from the "
+             "opening price again, and every earlier bid stays in the log.")
     start_mode = fields.Selection([
         ('schedule', 'At the scheduled time'),
         ('buyer', 'Opened early by the buyer'),
@@ -176,6 +186,10 @@ class SmartspendAuction(models.Model):
         string='Terms & Conditions',
         help="What a vendor agrees to when they accept the invitation.")
     reminder_sent = fields.Boolean(copy=False, readonly=True)
+    reminder_minutes = fields.Integer(
+        string='Auto-Reminder (minutes before opening)', default=REMINDER_MINUTES,
+        help="Vendors who have not answered the invitation are reminded this long before "
+             "bidding opens; vendors who accepted are told when it opens. 0 turns it off.")
 
     line_ids = fields.One2many('smartspend.auction.line', 'auction_id', string='Items', copy=True)
     participant_ids = fields.One2many(
@@ -204,6 +218,24 @@ class SmartspendAuction(models.Model):
     awarded_total = fields.Monetary(string='Awarded Value', readonly=True, copy=False)
     awarded_on = fields.Datetime(string='Awarded On', readonly=True, copy=False)
     awarded_by_id = fields.Many2one('res.users', string='Awarded By', readonly=True, copy=False)
+    awarded_rank = fields.Integer(
+        string='Awarded Level', readonly=True, copy=False,
+        help="The winner's rank at the close: 1 is L1, the lowest total. The buyer "
+             "may award any vendor who bid, not only L1.")
+    award_reason = fields.Char(
+        string='Award Reason', readonly=True, copy=False,
+        help="Why this vendor was chosen — recorded when the award goes past L1.")
+    # -- Manager approval of the award --------------------------------------
+    # Once bidding closes the procurement manager chooses the level (L1, L2…)
+    # and approves it; only then may the buyer award, and only to that vendor.
+    approved_participant_id = fields.Many2one(
+        'smartspend.auction.participant', string='Approved Vendor', readonly=True, copy=False,
+        help="The bidder the manager approved the award to.")
+    approved_rank = fields.Integer(string='Approved Level', readonly=True, copy=False)
+    approved_total = fields.Monetary(string='Approved Value', readonly=True, copy=False)
+    approval_note = fields.Char(string='Approval Note', readonly=True, copy=False)
+    approved_by_id = fields.Many2one('res.users', string='Approved By', readonly=True, copy=False)
+    approved_on = fields.Datetime(string='Approved On', readonly=True, copy=False)
     cancel_reason = fields.Char(string='Cancellation Reason', readonly=True, copy=False)
 
     _name_uniq = models.Constraint(
@@ -335,7 +367,8 @@ class SmartspendAuction(models.Model):
     @api.model
     def _launch_for_request(self, request, partners, start_at, duration_minutes,
                             extension_window=2, extension_minutes=2, min_decrement=0.0,
-                            visibility='rank', rebid_minutes=REBID_WINDOW_MINUTES, terms=False):
+                            visibility='rank', rebid_minutes=REBID_WINDOW_MINUTES, terms=False,
+                            reminder_minutes=REMINDER_MINUTES):
         """Create the auction for ``request``, invite ``partners`` and schedule it."""
         request.ensure_one()
         if request.state not in LAUNCHABLE_REQUEST_STATES:
@@ -387,6 +420,7 @@ class SmartspendAuction(models.Model):
             'min_decrement': max(float(min_decrement or 0.0), 0.0),
             'visibility': visibility if visibility in dict(VISIBILITY) else 'rank',
             'rebid_minutes': max(int(rebid_minutes or 0), 0) or REBID_WINDOW_MINUTES,
+            'reminder_minutes': max(int(reminder_minutes or 0), 0),
             'terms': terms or False,
             'line_ids': [fields.Command.create({
                 'request_line_id': line.id,
@@ -528,6 +562,69 @@ class SmartspendAuction(models.Model):
         self._post_to_request(_("Reverse Auction Cancelled"), note)
         self.message_post(body=note)
 
+    def action_send_reminders(self, participants=None, note=None, auto=False):
+        """Remind the vendors who still owe an answer or a bid.
+
+        Before bidding opens, those who have not answered the invitation; once
+        it is live, those who accepted but have not bid. Each reminder is kept
+        on the vendor's invitation — the portal shows it to them — posted on
+        the auction, and emailed to vendors with an address.
+
+        :param participants: optional subset; every pending vendor when left out.
+        :param note: optional message from the buyer, added to the reminder.
+        :param auto: sent by the scheduler, not by the buyer.
+        :return: the number of vendors reminded.
+        """
+        self.ensure_one()
+        self._sync_state()
+        if self.state not in ('scheduled', 'live'):
+            raise UserError(_("%s is not open for answers or bids, so there is no one to remind.", self.name))
+        if participants is not None:
+            participants = self.env['smartspend.auction.participant'].browse(
+                participants.ids if hasattr(participants, 'ids') else [int(p) for p in participants])
+            foreign = participants - self.participant_ids
+            if foreign:
+                raise UserError(_("That vendor was not invited to %s.", self.name))
+        pending = (participants if participants is not None else self.participant_ids).filtered(
+            lambda p: p._reminder_kind())
+        if not pending:
+            if participants is not None and len(participants) == 1:
+                raise UserError(_("%s has nothing pending — they have already answered%s.",
+                                  participants.partner_id.name, _(" and bid") if self.state == 'live' else ''))
+            raise UserError(_("Every vendor in %s has already answered%s — nobody to remind.",
+                              self.name, _(" and bid") if self.state == 'live' else ''))
+        note = (note or '').strip()
+        now = fields.Datetime.now()
+        opens = fields.Datetime.context_timestamp(self, self.start_date).strftime('%b %d, %H:%M')
+        closes = fields.Datetime.context_timestamp(self, self.end_date).strftime('%b %d, %H:%M') if self.end_date else ''
+        for participant in pending:
+            kind = participant._reminder_kind()
+            if kind == 'respond':
+                body = _("Reminder: please accept or decline the invitation to %(auction)s (%(title)s). "
+                         "Bidding opens on %(opens)s.", auction=self.name, title=self.request_id.sudo().product_name or '', opens=opens)
+            else:
+                body = _("Reminder: %(auction)s (%(title)s) is open for bids until %(closes)s, and you have "
+                         "not bid yet.", auction=self.name, title=self.request_id.sudo().product_name or '', closes=closes)
+            if note:
+                body += ' ' + (note if auto else _("Note from the buyer: %s", note))
+            participant.write({
+                'reminder_count': participant.reminder_count + 1,
+                'last_reminded_on': now,
+                'last_reminder_note': note or False,
+                'last_reminder_auto': auto,
+            })
+            self.message_post(body=body, partner_ids=self._vendor_mail_partners(participant),
+                              subtype_xmlid='mail.mt_comment')
+        return len(pending)
+
+    def action_send_reminders_button(self):
+        """Odoo's header button: remind every pending vendor, and say how many."""
+        count = self.action_send_reminders()
+        return {
+            'type': 'ir.actions.client', 'tag': 'display_notification',
+            'params': {'type': 'success', 'message': _("Reminder sent to %s vendor(s).", count)},
+        }
+
     def action_cancel(self):
         for auction in self:
             if auction.state in ('awarded', 'cancelled'):
@@ -549,25 +646,112 @@ class SmartspendAuction(models.Model):
                     "be offered within %(minutes)s minutes of closing — launch a new auction instead.",
                     auction=auction.name, minutes=REBID_WINDOW_MINUTES))
             end = now + timedelta(minutes=auction.rebid_minutes or REBID_WINDOW_MINUTES)
-            auction.write({'state': 'live', 'end_date': end, 'closed_on': False})
+            auction.write({
+                'state': 'live', 'end_date': end, 'original_end_date': end, 'closed_on': False,
+                # A new round makes the approved level meaningless.
+                'approved_participant_id': False, 'approved_rank': 0, 'approved_total': 0.0,
+                'approval_note': False, 'approved_by_id': False, 'approved_on': False,
+                'round_no': auction.round_no + 1, 'start_mode': 'buyer',
+            })
+            # A fresh round: everyone bids down from the opening price again.
+            # Only the standing is cleared — every bid of the earlier rounds
+            # stays in the log, and the chart still shows how the price fell.
             auction.participant_ids.filtered(lambda p: p.state == 'closed').write({'state': 'live'})
-            note = _("%(auction)s reopened by %(user)s for another round, closing %(end)s.",
-                     auction=auction.name, user=self.env.user.name, end=auction._when(end))
+            auction.participant_ids.write({'current_total': 0.0, 'rank': 0, 'improved_on': False})
+            note = _("%(auction)s reopened by %(user)s for round %(round)s, closing %(end)s. "
+                     "Vendors start from the opening price of %(ceiling)s again; the bids of the "
+                     "earlier round(s) stay in the log.",
+                     auction=auction.name, user=self.env.user.name, round=auction.round_no,
+                     end=auction._when(end), ceiling=auction._money(auction.ceiling_total))
             auction._post_to_request(_("Reverse Auction Reopened"), note)
             auction.message_post(body=note)
         return True
 
-    def action_award(self):
-        """Give the business to L1 and carry the winning prices onto the request."""
+    def _bidder(self, participant):
+        """The invited vendor ``participant`` (a record or id) — L1 when not given."""
+        self.ensure_one()
+        leader = self.participant_ids.filtered(lambda p: p.rank == 1)[:1]
+        if not leader:
+            raise UserError(_(
+                "Nobody bid in %s, so there is no one to award it to. Run another round "
+                "with Bid Again, or cancel it.", self.name))
+        if not participant:
+            return leader
+        chosen = self.env['smartspend.auction.participant'].browse(
+            participant.id if hasattr(participant, 'id') else int(participant))
+        if chosen not in self.participant_ids:
+            raise UserError(_("That vendor was not invited to %s.", self.name))
+        if not chosen.rank or not chosen.current_total:
+            raise UserError(_("%(vendor)s placed no bid in %(auction)s, so it cannot be awarded.",
+                              vendor=chosen.partner_id.name, auction=self.name))
+        return chosen
+
+    def action_approve_award(self, participant=None, note=None):
+        """The procurement manager chooses the level to award and approves it.
+
+        Any bidder may be approved (L1 by default). The buyer can then award,
+        and only to this vendor. Approving again before the award replaces the
+        earlier choice.
+        """
+        if not (self.env.su or self.env.user.has_group('smartspend.group_smartspend_manager')):
+            raise UserError(_("Only a procurement manager approves which vendor is awarded."))
+        for auction in self:
+            auction._sync_state()
+            if auction.state != 'closed':
+                raise UserError(_("%s has to close before its award can be approved.", auction.name))
+            chosen = auction._bidder(participant)
+            leader = auction._bidder(None)
+            note = (note or '').strip()
+            previous = auction.approved_participant_id
+            auction.write({
+                'approved_participant_id': chosen.id,
+                'approved_rank': chosen.rank,
+                'approved_total': chosen.current_total,
+                'approval_note': note or False,
+                'approved_by_id': self.env.user.id,
+                'approved_on': fields.Datetime.now(),
+            })
+            text = _("%(manager)s approved awarding %(auction)s to %(vendor)s (L%(rank)s) at %(price)s.",
+                     manager=self.env.user.name, auction=auction.name, vendor=chosen.partner_id.name,
+                     rank=chosen.rank, price=auction._money(chosen.current_total))
+            if chosen != leader:
+                text += ' ' + _("%(gap)s more than L1 %(leader)s.",
+                                gap=auction._money(chosen.current_total - leader.current_total),
+                                leader=leader.partner_id.name)
+            if previous and previous != chosen:
+                text += ' ' + _("Replaces the earlier approval of %s.", previous.partner_id.name)
+            if note:
+                text += ' ' + _("Note: %s", note)
+            auction._post_to_request(_("Award Approved"), text)
+            auction.message_post(body=text, partner_ids=auction.buyer_id.partner_id.ids,
+                                 subtype_xmlid='mail.mt_comment')
+        return True
+
+    def action_award(self, participant=None, reason=None):
+        """Give the business to a bidder and carry their prices onto the request.
+
+        L1 unless the buyer picks another level: any vendor with a bid at the
+        close (L2, L3…) may be awarded, at their own final total.
+
+        :param participant: optional ``smartspend.auction.participant`` (or its
+            id) to award; L1 when left out.
+        :param reason: optional note on why — kept with the award.
+        """
         for auction in self:
             auction._sync_state()
             if auction.state != 'closed':
                 raise UserError(_("%s has to close before it can be awarded.", auction.name))
-            winner = auction.participant_ids.filtered(lambda p: p.rank == 1)[:1]
-            if not winner:
+            leader = auction._bidder(None)
+            if not auction.approved_participant_id:
                 raise UserError(_(
-                    "Nobody bid in %s, so there is no one to award it to. Run another round "
-                    "with Bid Again, or cancel it.", auction.name))
+                    "%s is waiting on the procurement manager to approve which vendor is awarded.",
+                    auction.name))
+            winner = auction._bidder(auction.approved_participant_id)
+            if participant and auction._bidder(participant) != winner:
+                raise UserError(_(
+                    "The manager approved %(vendor)s (L%(rank)s) — %(auction)s can only be awarded to them.",
+                    vendor=winner.partner_id.name, rank=auction.approved_rank, auction=auction.name))
+            reason = reason or auction.approval_note
             bid = winner.latest_bid_id
             request = auction.request_id.sudo()
             for bid_line in bid.line_ids:
@@ -593,19 +777,28 @@ class SmartspendAuction(models.Model):
             winner.state = 'won'
             (auction.participant_ids - winner).filtered(
                 lambda p: p.state in ('live', 'closed')).write({'state': 'lost'})
+            reason = (reason or '').strip()
             auction.write({
                 'state': 'awarded',
                 'winner_id': partner.id,
                 'awarded_total': winner.current_total,
                 'awarded_on': fields.Datetime.now(),
                 'awarded_by_id': self.env.user.id,
+                'awarded_rank': winner.rank,
+                'award_reason': reason or False,
             })
-            note = _("%(auction)s awarded to %(vendor)s at %(price)s — %(saved)s (%(pct)s%%) below "
+            note = _("%(auction)s awarded to %(vendor)s (L%(rank)s) at %(price)s — %(saved)s (%(pct)s%%) below "
                      "the opening price of %(ceiling)s. Items repriced at the winning bid.",
-                     auction=auction.name, vendor=partner.name,
+                     auction=auction.name, vendor=partner.name, rank=winner.rank,
                      price=auction._money(winner.current_total), saved=auction._money(saved),
                      pct=round(100.0 * saved / auction.ceiling_total, 1) if auction.ceiling_total else 0,
                      ceiling=auction._money(auction.ceiling_total))
+            if winner != leader:
+                note += ' ' + _("Chosen over L1 %(leader)s at %(best)s (%(gap)s more).",
+                                leader=leader.partner_id.name, best=auction._money(leader.current_total),
+                                gap=auction._money(winner.current_total - leader.current_total))
+            if reason:
+                note += ' ' + _("Reason: %s", reason)
             auction._post_to_request(_("Reverse Auction Awarded"), note)
             request.message_post(body=note)
             auction.message_post(body=note, partner_ids=auction._vendor_mail_partners(winner),
@@ -640,19 +833,53 @@ class SmartspendAuction(models.Model):
     def _cron_tick(self):
         """Open and close auctions on time, and remind vendors before they open."""
         self.search([('state', 'in', ('scheduled', 'live'))])._sync_state()
-        now = fields.Datetime.now()
-        due = self.search([
-            ('state', '=', 'scheduled'),
-            ('reminder_sent', '=', False),
-            ('start_date', '>', now),
-            ('start_date', '<=', now + timedelta(minutes=REMINDER_MINUTES)),
-        ])
-        for auction in due:
-            waiting = auction.participant_ids.filtered(lambda p: p.state in ('invited', 'accepted'))
-            auction.message_post(
-                body=_("%(auction)s opens at %(start)s. Accept the terms before then to take part.",
-                       auction=auction.name, start=auction._when(auction.start_date)),
-                partner_ids=auction._vendor_mail_partners(waiting), subtype_xmlid='mail.mt_comment')
+        self.search([('state', '=', 'scheduled'), ('reminder_sent', '=', False)])._send_auto_reminder()
+
+    def _auto_reminder_due_at(self):
+        """When the automatic reminder goes out, or False when it will not.
+
+        Not at all when it is off, and not when that moment falls before the
+        invitations went out — an auction opening sooner than the reminder
+        window would otherwise remind vendors the instant they were invited.
+        """
+        self.ensure_one()
+        if not self.reminder_minutes or not self.start_date:
+            return False
+        due = self.start_date - timedelta(minutes=self.reminder_minutes)
+        return due if due > (self.create_date or due) else False
+
+    def _send_auto_reminder(self, now=None):
+        """Send each auction's automatic reminder once it is due.
+
+        Vendors who have not answered get a reminder like the buyer's own — on
+        their portal screen, counted on their invitation, posted and emailed.
+        Vendors who accepted are told when bidding opens.
+        """
+        now = now or fields.Datetime.now()
+        for auction in self:
+            if auction.state != 'scheduled' or auction.reminder_sent or auction.start_date <= now:
+                continue
+            due = auction._auto_reminder_due_at()
+            if not due:
+                auction.reminder_sent = True  # nothing to send, ever
+                continue
+            if due > now:
+                continue
+            pending = auction.participant_ids.filtered(lambda p: p._reminder_kind() == 'respond')
+            if pending:
+                left = auction.start_date - now
+                minutes = max(int(left.total_seconds() // 60), 1)
+                when = (_("%s hour(s)", minutes // 60) if minutes >= 60 and not minutes % 60
+                        else _("%s minute(s)", minutes)) if minutes < 1440 else _("%s day(s)", minutes // 1440)
+                auction.action_send_reminders(
+                    participants=pending, auto=True,
+                    note=_("Automatic reminder — bidding opens in %s.", when))
+            accepted = auction.participant_ids.filtered(lambda p: p.state == 'accepted')
+            if accepted:
+                auction.message_post(
+                    body=_("%(auction)s opens at %(start)s. You have accepted — be ready to bid.",
+                           auction=auction.name, start=auction._when(auction.start_date)),
+                    partner_ids=auction._vendor_mail_partners(accepted), subtype_xmlid='mail.mt_comment')
             auction.reminder_sent = True
 
     # ------------------------------------------------------------------
@@ -729,6 +956,7 @@ class SmartspendAuction(models.Model):
             'total': total,
             'placed_on': now,
             'placed_by_id': self.env.user.id,
+            'round_no': auction.round_no,
             'on_behalf': bool(on_behalf),
             'extended_by': extended_by,
             'seconds_left': int(remaining.total_seconds()),
@@ -786,6 +1014,7 @@ class SmartspendAuction(models.Model):
             'extensionWindow': self.extension_window,
             'extensionMinutes': self.extension_minutes,
             'extensionCount': self.extension_count,
+            'round': self.round_no,
             'minDecrement': self.min_decrement,
             'visibility': self.visibility,
             'rebidMinutes': self.rebid_minutes,
@@ -819,6 +1048,20 @@ class SmartspendAuction(models.Model):
             'awardedTotal': self.awarded_total,
             'awardedAt': iso_utc(self.awarded_on),
             'awardedBy': self.awarded_by_id.name or '',
+            'awardedRank': self.awarded_rank,
+            'approval': {
+                'participantId': self.approved_participant_id.id,
+                'vendor': self.approved_participant_id.partner_id.name,
+                'rank': self.approved_rank,
+                'total': self.approved_total,
+                'note': self.approval_note or '',
+                'by': self.approved_by_id.name or '',
+                'at': iso_utc(self.approved_on),
+            } if self.approved_participant_id else None,
+            'reminderMinutes': self.reminder_minutes,
+            'autoReminderAt': iso_utc(self._auto_reminder_due_at()),
+            'autoReminderSent': self.reminder_sent,
+            'awardReason': self.award_reason or '',
             'cancelReason': self.cancel_reason or '',
             'rebidUntil': iso_utc(rebid_until),
             'participants': [{
@@ -835,6 +1078,9 @@ class SmartspendAuction(models.Model):
                 'lastBidAt': iso_utc(participant.improved_on),
                 'respondedAt': iso_utc(participant.responded_on),
                 'note': participant.response_note or '',
+                'reminderKind': participant._reminder_kind(),
+                'reminderCount': participant.reminder_count,
+                'lastRemindedAt': iso_utc(participant.last_reminded_on),
             } for participant in self.participant_ids.sorted(
                 lambda p: (p.rank or 999, p.partner_id.name or ''))],
             'bids': [{
@@ -848,6 +1094,7 @@ class SmartspendAuction(models.Model):
                 'placedBy': bid.placed_by_id.name or '',
                 'extendedBy': bid.extended_by,
                 'secondsLeft': bid.seconds_left,
+                'round': bid.round_no,
             } for bid in self.bid_ids.sorted(lambda b: (b.placed_on, b.id))],
         })
         return data
@@ -880,12 +1127,21 @@ class SmartspendAuction(models.Model):
                 'bidCount': participant.bid_count,
                 'lastBidAt': iso_utc(participant.improved_on),
                 'prices': {str(line.auction_line_id.id): line.unit_price for line in latest.line_ids},
+                # The buyer's latest nudge, while there is still something to do about it.
+                'reminder': {
+                    'at': iso_utc(participant.last_reminded_on),
+                    'count': participant.reminder_count,
+                    'note': participant.last_reminder_note or '',
+                    'kind': participant._reminder_kind(),
+                    'auto': participant.last_reminder_auto,
+                } if participant.last_reminded_on and participant._reminder_kind() else None,
             },
             'myBids': [{
                 'total': bid.total,
                 'at': iso_utc(bid.placed_on),
                 'rankAfter': bid.rank_after,
                 'extendedBy': bid.extended_by,
+                'round': bid.round_no,
             } for bid in participant.bid_ids.sorted(lambda b: (b.placed_on, b.id))],
             'outcome': participant.state if participant.state in ('won', 'lost') else '',
         })
@@ -998,6 +1254,14 @@ class SmartspendAuctionParticipant(models.Model):
         string='Last Bid At', readonly=True,
         help="When the current bid was placed. Settles a tie: whoever got there first ranks higher.")
     first_bid_on = fields.Datetime(readonly=True)
+    reminder_count = fields.Integer(
+        string='Reminders', readonly=True, copy=False,
+        help="How many times the buyer has reminded this vendor.")
+    last_reminded_on = fields.Datetime(string='Last Reminded', readonly=True, copy=False)
+    last_reminder_note = fields.Char(string='Reminder Note', readonly=True, copy=False)
+    last_reminder_auto = fields.Boolean(
+        string='Last Reminder Automatic', readonly=True, copy=False,
+        help="The latest reminder was sent by the scheduler before bidding opened.")
     bid_ids = fields.One2many('smartspend.auction.bid', 'participant_id', string='Bids')
     bid_count = fields.Integer(compute='_compute_bid_stats')
     latest_bid_id = fields.Many2one('smartspend.auction.bid', compute='_compute_bid_stats')
@@ -1053,6 +1317,32 @@ class SmartspendAuctionParticipant(models.Model):
     def action_accept(self):
         return self._respond(True)
 
+    def _reminder_kind(self):
+        """What this vendor still owes: 'respond' to the invitation, 'bid' in an
+        open auction — or '' when there is nothing to remind them of."""
+        self.ensure_one()
+        auction = self.auction_id
+        if auction.state == 'scheduled' and self.state == 'invited':
+            return 'respond'
+        if auction.state == 'live' and self.state in ('accepted', 'live') and not self.bid_count:
+            return 'bid'
+        return ''
+
+    def action_remind(self):
+        """Remind this vendor — from the participant row in Odoo."""
+        self.ensure_one()
+        return self.auction_id.action_send_reminders(participants=self)
+
+    def action_award_this(self):
+        """Award the auction to this bidder — once the manager approved them."""
+        self.ensure_one()
+        return self.auction_id.action_award(participant=self)
+
+    def action_approve_this(self):
+        """The manager approves awarding to this bidder — L1 or any other level."""
+        self.ensure_one()
+        return self.auction_id.action_approve_award(participant=self)
+
     def action_decline(self):
         return self._respond(False)
 
@@ -1085,6 +1375,7 @@ class SmartspendAuctionBid(models.Model):
         string='Time Extension Added (min)', aggregator='sum',
         help="Minutes this bid added to the close under the time-extension rule.")
     seconds_left = fields.Integer(string='Seconds Left', aggregator=None)
+    round_no = fields.Integer(string='Round', default=1, aggregator=None)
     note = fields.Char()
     line_ids = fields.One2many('smartspend.auction.bid.line', 'bid_id', string='Prices')
     currency_id = fields.Many2one(related='auction_id.currency_id')

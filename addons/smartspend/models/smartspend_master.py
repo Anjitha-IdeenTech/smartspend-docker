@@ -106,6 +106,11 @@ class SmartspendExpenseCategory(models.Model):
     product_category_id = fields.Many2one(
         'product.category', string='Product Category',
         help="Odoo product category the items of this spend category belong to.")
+    vendor_ids = fields.Many2many(
+        'res.partner', 'smartspend_expense_category_vendor_rel', 'category_id', 'partner_id',
+        string='Vendors', domain=[('supplier_rank', '>', 0)],
+        help="Suppliers who serve this category. They are suggested, and pre-selected, "
+             "when a buyer invites vendors to bid on a request of this category.")
     company_id = fields.Many2one(
         'res.company', required=True, default=lambda self: self.env.company)
     request_count = fields.Integer(compute='_compute_request_count')

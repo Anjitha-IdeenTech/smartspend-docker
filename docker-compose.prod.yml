@@ -1,0 +1,77 @@
+# SmartSpend, deployed: the same three containers as docker-compose.yml, with
+# Caddy in front owning the hostname and the HTTPS certificate.
+#
+#   Browser ──▶ caddy :443 ──▶ ui :80 ──▶ /        the built demo
+#                          │          └──▶ /api/…  Odoo, on the same hostname
+#                          └────────────▶ web :8069  Odoo's own backend
+#                                                    (odoo.<your hostname>)
+#
+# Only Caddy publishes a port, so Postgres and Odoo are not reachable from the
+# internet at all — everything a browser needs arrives over one hostname, which
+# is why the link to share is plain: no ?api=, no 127.0.0.1.
+#
+#     cp deploy/env.example .env      # then fill in the hostname
+#     bash deploy/bootstrap.sh        # starts it, restores the demo data
+#
+# Unlike the local stack this uses the plain odoo:19 image: this module needs
+# nothing on top of it (the Anthropic SDK in smartspend-backend's Dockerfile is
+# for the older smartspend_core prototype).
+name: smartspend-demo
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: odoo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?put a long random string in .env}
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "odoo"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  web:
+    image: odoo:19
+    depends_on:
+      db: { condition: service_healthy }
+    # How Odoo reaches Postgres is in deploy/odoo.conf, which bootstrap.sh
+    # writes from odoo.conf.dist with the password out of .env.
+    volumes:
+      - filestore:/var/lib/odoo
+      - ./deploy/odoo.conf:/etc/odoo/odoo.conf:ro   # made from odoo.conf.dist by bootstrap.sh
+      - ./addons:/mnt/extra-addons
+    restart: unless-stopped
+
+  # The built demo. nginx also hands /api/ to Odoo, so the portal and its
+  # backend share one origin — the same nginx.conf the local stack runs.
+  ui:
+    image: nginx:alpine
+    depends_on: [web]
+    volumes:
+      - ./site:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: unless-stopped
+
+  # Owns :80 and :443, gets and renews the certificate by itself.
+  caddy:
+    image: caddy:2-alpine
+    depends_on: [ui]
+    ports: ["80:80", "443:443"]
+    environment:
+      SMARTSPEND_DOMAIN: ${SMARTSPEND_DOMAIN:?put the hostname in .env, e.g. smartspend-demo.ideenkreisetech.com}
+      SMARTSPEND_ADMIN_EMAIL: ${SMARTSPEND_ADMIN_EMAIL:-}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+
+volumes:
+  db:
+  filestore:
+  caddy-data:
+  caddy-config:

@@ -19,6 +19,31 @@
             <field name="group_ids" eval="[Command.link(ref('smartspend.group_smartspend_user'))]"/>
         </record>
 
+        <!-- Colleagues an approver can put a question to with "Request Info",
+             when the requester is not the one who knows the answer. Plain
+             requesters: they read only their own requests plus the ones they
+             were asked about. -->
+        <record id="user_demo_itlead" model="res.users">
+            <field name="name">Kiran Das (IT Team Lead)</field>
+            <field name="login">kiran@smartspend.demo</field>
+            <field name="password">kiran</field>
+            <field name="group_ids" eval="[Command.link(ref('smartspend.group_smartspend_user'))]"/>
+        </record>
+
+        <record id="user_demo_stores" model="res.users">
+            <field name="name">Deepa Raj (Stores In-charge)</field>
+            <field name="login">deepa@smartspend.demo</field>
+            <field name="password">deepa</field>
+            <field name="group_ids" eval="[Command.link(ref('smartspend.group_smartspend_user'))]"/>
+        </record>
+
+        <record id="user_demo_accounts" model="res.users">
+            <field name="name">Suresh Pillai (Accounts Executive)</field>
+            <field name="login">suresh@smartspend.demo</field>
+            <field name="password">suresh</field>
+            <field name="group_ids" eval="[Command.link(ref('smartspend.group_smartspend_user'))]"/>
+        </record>
+
         <record id="user_demo_buyer" model="res.users">
             <field name="name">Demo SCM Buyer</field>
             <field name="login">buyer@smartspend.demo</field>

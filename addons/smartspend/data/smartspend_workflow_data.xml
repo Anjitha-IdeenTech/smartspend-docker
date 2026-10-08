@@ -52,7 +52,8 @@
             ]"/>
         </record>
 
-        <!-- OpEx above ₹2,00,000 — finance joins. -->
+        <!-- OpEx above ₹20,00,000 — the same single signature: the client wants
+             one approval (or its delegate) before the buyer, whatever the value. -->
         <record id="workflow_opex_high" model="smartspend.workflow">
             <field name="document_type">purchase_request</field>
             <field name="workflow_type">accounting</field>
@@ -62,7 +63,6 @@
             <field name="sequence">10</field>
             <field name="approver_ids" eval="[
                 Command.create({'sequence': 1, 'designation_id': ref('designation_reporting_manager')}),
-                Command.create({'sequence': 2, 'designation_id': ref('designation_finance_opex_head')}),
             ]"/>
         </record>
 
@@ -79,7 +79,9 @@
             ]"/>
         </record>
 
-        <!-- CapEx above ₹5,00,000 — the CFO signs last. -->
+        <!-- CapEx above ₹20,00,000 — one signature too, as the client asked.
+             Finance and the CFO stay configured; add them back here as levels
+             2 and 3 to bring them into the chain again. -->
         <record id="workflow_capex_high" model="smartspend.workflow">
             <field name="document_type">purchase_request</field>
             <field name="workflow_type">management</field>
@@ -89,8 +91,6 @@
             <field name="sequence">10</field>
             <field name="approver_ids" eval="[
                 Command.create({'sequence': 1, 'designation_id': ref('designation_reporting_manager')}),
-                Command.create({'sequence': 2, 'designation_id': ref('designation_finance_capex_head')}),
-                Command.create({'sequence': 3, 'designation_id': ref('designation_cfo')}),
             ]"/>
         </record>
 

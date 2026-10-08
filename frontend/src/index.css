@@ -582,3 +582,102 @@ tbody tr:hover { background-color: rgb(var(--accent-budget) / 0.07); }
   .auction-shake, .auction-spin-slow, .auction-confetti { animation: none !important; }
   .auction-flash { opacity: 0; }
 }
+
+/* ------------------------------------------------------------------
+   New Request chat (src/requestChat.tsx): messages slide in, and the
+   assistant's typing indicator. Still under prefers-reduced-motion.
+   ------------------------------------------------------------------ */
+.chat-in { animation: chatIn 0.28s cubic-bezier(0.22, 1, 0.36, 1) both; }
+@keyframes chatIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.chat-dot {
+  display: inline-block; width: 6px; height: 6px; margin: 0 2px; border-radius: 9999px;
+  background: rgb(var(--text-faint)); animation: chatDot 1.1s ease-in-out infinite;
+}
+.chat-dot:nth-child(2) { animation-delay: 0.15s; }
+.chat-dot:nth-child(3) { animation-delay: 0.3s; }
+@keyframes chatDot { 0%, 60%, 100% { transform: translateY(0); opacity: 0.45; } 30% { transform: translateY(-4px); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .chat-in, .chat-dot { animation: none !important; }
+}
+
+/* ---------------------------------------------------------------------------
+   Printable documents (documents.tsx)
+
+   The sheet is a real A4 page on screen, so what the client sees in the
+   preview is what comes out of the printer or "Save as PDF". While printing,
+   everything but the sheet is taken off the page — the overlay is portalled to
+   <body>, so hiding body's other children hides the whole app.
+--------------------------------------------------------------------------- */
+.doc-sheet {
+  width: 210mm;
+  min-height: 297mm;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+  /* Browsers drop background colours when printing unless asked not to; the
+     letterhead band and the dark table header are the design. */
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* "PAID" across the face of a settled invoice. */
+.doc-stamp {
+  position: absolute;
+  right: 26mm;
+  top: 96mm;
+  transform: rotate(-14deg);
+  pointer-events: none;
+  opacity: 0.16;
+}
+.doc-stamp span {
+  display: block;
+  padding: 0.35rem 1.6rem;
+  border: 5px solid currentColor;
+  border-radius: 12px;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 46px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+}
+
+@page {
+  size: A4;
+  margin: 0;
+}
+
+@media print {
+  /* Only the document reaches the paper. */
+  body > *:not(#ss-print) { display: none !important; }
+  body { background: #fff !important; }
+  #ss-print {
+    position: static !important;
+    overflow: visible !important;
+    background: none !important;
+    backdrop-filter: none !important;
+  }
+  #ss-print > div { padding: 0 !important; }
+  .doc-toolbar { display: none !important; }
+  .doc-sheet { box-shadow: none !important; border-radius: 0 !important; }
+}
+
+/* The document's own name, laid across the page behind everything. Faint
+   enough to write over, present enough that a photocopy still says what it is. */
+.doc-watermark {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 46%;
+  text-align: center;
+  transform: rotate(-21deg);
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 92px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: rgb(20 20 27 / 0.035);
+  white-space: nowrap;
+  pointer-events: none;
+  line-height: 1;
+  z-index: 0;
+}

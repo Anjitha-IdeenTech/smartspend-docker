@@ -1,0 +1,44 @@
+# One hostname for the client, one for Odoo's own backend.
+#
+# Caddy gets and renews the certificates itself; nothing here needs editing,
+# the hostname comes from SMARTSPEND_DOMAIN in .env.
+{
+	email {$SMARTSPEND_ADMIN_EMAIL}
+}
+
+# What the client opens. nginx behind this serves the portal and passes /api/
+# to Odoo, so this is the whole link: https://<your hostname>/
+{$SMARTSPEND_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy ui:80
+	log {
+		output file /data/access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}
+
+# Odoo's own screens — the buyer's auction form, the requests list, the reports.
+# Needs its own DNS record (odoo.<your hostname>) pointing at this machine.
+# Delete this block if the demo should be the portal only, and Odoo stays
+# unreachable from outside.
+odoo.{$SMARTSPEND_DOMAIN} {
+	encode zstd gzip
+	# Odoo serves its live-update socket from the gevent port.
+	@longpoll path /websocket /longpolling/*
+	reverse_proxy @longpoll web:8072
+	reverse_proxy web:8069
+}
+
+# A shared password in front of everything, if the link should not be open to
+# anyone who finds it. Generate the hash with:
+#
+#     docker run --rm caddy:2-alpine caddy hash-password --plaintext 'your-password'
+#
+# then put this inside the site block above, and give the client the password
+# along with the link:
+#
+#     basic_auth {
+#         client <the-hash>
+#     }

@@ -73,6 +73,8 @@ report "8. Full portal journey"         "$("$PY" "$HERE/test_portal_journey.py" 
 report "9. Hosted demo (no Odoo)"        "$(node "$HERE/test_demo_mode.mjs" 2>&1)"
 report "10. Reverse auctions"           "$(shell "$HERE/test_auction_backend.py")"
 report "11. Each vendor sees own orders" "$(shell "$HERE/test_vendor_scope.py")"
+report "12. Chat reads, saves nothing"    "$("$PY" "$HERE/test_chat_preview.py" 2>&1)"
+report "13. Printable documents"          "$("$PY" "$HERE/test_documents.py" 2>&1)"
 
 echo "-------------------------------------------------------------------"
 shell "$HERE/_teardown.py" | grep -E "requests left|BASELINE"

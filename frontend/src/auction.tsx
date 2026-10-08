@@ -29,16 +29,20 @@ export interface AuctionParticipant {
   id: number; vendorId: number; vendor: string; hasLogin: boolean; login: string;
   state: string; stateLabel: string; total: number; rank: number; bidCount: number;
   lastBidAt: string; respondedAt: string; note: string;
+  /** What the vendor still owes — 'respond' or 'bid' — or '' when nothing. */
+  reminderKind?: '' | 'respond' | 'bid'; reminderCount?: number; lastRemindedAt?: string;
 }
 export interface AuctionBid {
   id: number; vendorId: number; vendor: string; total: number; at: string; rankAfter: number;
-  onBehalf: boolean; placedBy: string; extendedBy: number; secondsLeft: number;
+  onBehalf: boolean; placedBy: string; extendedBy: number; secondsLeft: number; round?: number;
 }
 export interface Auction {
   id: string; requestId?: string; title: string; itemCount: number; location: string; neededBy: string;
   state: 'draft' | 'scheduled' | 'live' | 'closed' | 'awarded' | 'cancelled'; stateLabel: string;
   startAt: string; endAt: string; originalEndAt: string; closedAt: string; serverNow: string;
   durationMinutes: number; extensionWindow: number; extensionMinutes: number; extensionCount: number;
+  /** Bidding rounds held: Bid Again opens another, from the opening price. */
+  round?: number;
   /** How bidding opened: 'ready' (every vendor ready), 'buyer' (opened early) or 'schedule'. */
   openedBy?: string;
   minDecrement: number; visibility: 'rank' | 'leader'; rebidMinutes: number; terms: string;
@@ -46,15 +50,23 @@ export interface Auction {
   // the buyer's view
   bestTotal?: number; leader?: string; savings?: number; savingsPct?: number; bidCount?: number;
   acceptedCount?: number; winner?: string; awardedTotal?: number; awardedAt?: string; awardedBy?: string;
+  /** The winner's level at the close (1 = L1), and why, when the buyer chose past L1. */
+  awardedRank?: number; awardReason?: string;
+  /** The procurement manager's approval of which bidder to award; the buyer awards only this one. */
+  approval?: { participantId: number; vendor: string; rank: number; total: number; note: string; by: string; at: string } | null;
   cancelReason?: string; rebidUntil?: string;
+  /** Automatic reminder: minutes before opening (0 = off), when it goes out, and whether it has. */
+  reminderMinutes?: number; autoReminderAt?: string; autoReminderSent?: boolean;
   participants?: AuctionParticipant[]; bids?: AuctionBid[];
   // a vendor's view
   competitors?: number; leaderTotal?: number | null; nextMaxBid?: number;
   me?: {
     participantId: number; vendor: string; state: string; stateLabel: string; total: number;
     rank: number; bidCount: number; lastBidAt: string; prices: Record<string, number>;
+    /** The buyer's latest reminder, while there is still something to do about it. */
+    reminder?: { at: string; count: number; note: string; kind: 'respond' | 'bid'; auto?: boolean } | null;
   };
-  myBids?: { total: number; at: string; rankAfter: number; extendedBy: number }[];
+  myBids?: { total: number; at: string; rankAfter: number; extendedBy: number; round?: number }[];
   outcome?: string;
 }
 
@@ -467,7 +479,8 @@ function ActivityFeed({ auction, now }: { auction: Auction; now: number }) {
         key: `b${b.id}`, at: ts(b.at), icon: tookLead ? Crown : TrendingDown,
         tone: tookLead ? 'text-amber-300' : 'text-violet-300',
         text: <><b className="text-white">{b.vendor}</b> bid <b className="text-white tabular-nums">{inr(b.total)}</b>{tookLead ? <span className="text-amber-300"> · took L1</span> : <span className="text-white/60"> · L{b.rankAfter}</span>}</>,
-        sub: `${prev ? `▼ ${drop.toFixed(1)}% on their last` : `▼ ${drop.toFixed(1)}% on opening`}${b.onBehalf ? ` · surrogate bid keyed in by ${b.placedBy}` : ''}`,
+        sub: `${prev ? `▼ ${drop.toFixed(1)}% on their last` : `▼ ${drop.toFixed(1)}% on opening`}`
+          + `${(b.round ?? 1) > 1 ? ` · round ${b.round}` : ''}${b.onBehalf ? ` · surrogate bid keyed in by ${b.placedBy}` : ''}`,
       });
       if (b.extendedBy) {
         out.push({
@@ -488,7 +501,7 @@ function ActivityFeed({ auction, now }: { auction: Auction; now: number }) {
       out.push({ key: 'close', at: ts(auction.closedAt), icon: Gavel, tone: 'text-white', text: <><b className="text-white">Bidding closed</b>{auction.leader ? <> · L1 {auction.leader}</> : ''}</> });
     }
     if (auction.awardedAt) {
-      out.push({ key: 'award', at: ts(auction.awardedAt), icon: Trophy, tone: 'text-amber-300', text: <><b className="text-amber-200">Awarded</b> to {auction.winner} at {inr(auction.awardedTotal)}</>, sub: auction.awardedBy ? `by ${auction.awardedBy}` : '' });
+      out.push({ key: 'award', at: ts(auction.awardedAt), icon: Trophy, tone: 'text-amber-300', text: <><b className="text-amber-200">Awarded</b> to {auction.winner}{auction.awardedRank ? ` (L${auction.awardedRank})` : ''} at {inr(auction.awardedTotal)}</>, sub: [auction.awardedBy ? `by ${auction.awardedBy}` : '', auction.awardReason ? `— ${auction.awardReason}` : ''].filter(Boolean).join(' ') });
     }
     return out.sort((a, b) => b.at - a.at).slice(0, 40);
   }, [auction]);
@@ -585,11 +598,13 @@ interface VendorOption {
   id: number; name: string; city: string; onContract: boolean;
   /** The supplier's portal sign-in, when it has one; empty means the buyer bids for it. */
   login?: string; contact?: string;
+  /** Served the request's expense category before — and why, for the badge. */
+  suggested?: boolean; suggestedReason?: string;
 }
 
 const DEFAULT_TERMS =
   'Prices are for the full quantity, delivered to the requesting site, inclusive of freight and exclusive of GST. ' +
-  'The lowest total at the close is L1. The buyer may award to L1 or cancel the event; placing a bid is a binding ' +
+  'The lowest total at the close is L1. The buyer may award to L1 or to another bidder, or cancel the event; placing a bid is a binding ' +
   'offer valid for 30 days.';
 
 function Segmented<T extends number | string>({ value, options, onChange, fmt }: {
@@ -617,33 +632,47 @@ function LaunchPanel({ api, requests, initialRequestId, onClose, onLaunched }: {
   const req = eligible.find(r => r.id === requestId) ?? null;
   const [vendors, setVendors] = useState<VendorOption[]>([]);
   const [picked, setPicked] = useState<number[]>([]);
-  const [startIn, setStartIn] = useState<number>(2);
+  // The next quarter hour, as a value a datetime-local input takes.
+  const localStamp = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  const [opensAt, setOpensAt] = useState<string>(() => {
+    const d = new Date(Date.now() + 15 * 60000);
+    d.setMinutes(Math.ceil(d.getMinutes() / 5) * 5, 0, 0);
+    return localStamp(d);
+  });
   const [duration, setDuration] = useState<number>(5);
   const [windowMin, setWindowMin] = useState<number>(1);
   const [extendBy, setExtendBy] = useState<number>(2);
   const [decrement, setDecrement] = useState<number>(0);
   const [visibility, setVisibility] = useState<'rank' | 'leader'>('rank');
   const [rebid, setRebid] = useState<number>(15);
+  // Remind vendors who have not answered this long before bidding opens; 0 is off.
+  const [reminderMinutes, setReminderMinutes] = useState<number>(30);
   const [terms, setTerms] = useState<string>(DEFAULT_TERMS);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
+    let stale = false;
     void (async () => {
-      // Which suppliers can sign in to bid; an older backend only has the plain list.
-      let res = await call<VendorOption[]>(api, '/api/smartspend/auction-vendors', { method: 'GET' });
+      // Which suppliers can sign in to bid, and which have served this
+      // request's category before; an older backend only has the plain list.
+      const query = requestId ? `?requestId=${encodeURIComponent(requestId)}` : '';
+      let res = await call<VendorOption[]>(api, `/api/smartspend/auction-vendors${query}`, { method: 'GET' });
       if (!res.ok) res = await call<VendorOption[]>(api, '/api/smartspend/vendors', { method: 'GET' });
+      if (stale) return;
       if (res.ok) setVendors(res.data);
       else setError(res.error);
     })();
-  }, []);
+    return () => { stale = true; };
+  }, [requestId]);
 
-  // A fresh pick of request resets what depends on it: the vendors already
-  // quoting on it, and a decrement of half a percent of its value.
+  // A fresh pick of request resets what depends on it: the vendors suggested
+  // for its category and those already quoting on it, and a decrement of half
+  // a percent of its value.
   useEffect(() => {
     if (!req) return;
     const quoting = new Set([...req.vendorBids.map(b => b.vendorName), req.vendor].map(n => (n || '').toLowerCase()));
-    const suggested = vendors.filter(v => quoting.has(v.name.toLowerCase())).map(v => v.id);
+    const suggested = vendors.filter(v => v.suggested || quoting.has(v.name.toLowerCase())).map(v => v.id);
     // Too few already quoting to make an auction: bring in the suppliers who
     // can sign in and bid for themselves.
     for (const v of vendors) {
@@ -653,10 +682,11 @@ function LaunchPanel({ api, requests, initialRequestId, onClose, onLaunched }: {
     setPicked(suggested);
     const step = req.totalCost * 0.005;
     setDecrement(step >= 100 ? Math.round(step / 100) * 100 : Math.round(step));
-  }, [requestId, vendors.length]);
+  }, [requestId, vendors]);
 
-  const opensAt = new Date(Date.now() + startIn * 60000);
-  const closesAt = new Date(opensAt.getTime() + duration * 60000);
+  const opensDate = new Date(opensAt);
+  const opensValid = !Number.isNaN(opensDate.getTime()) && opensDate.getTime() > Date.now() + 45000;
+  const closesAtDate = new Date(opensDate.getTime() + duration * 60000);
   const lines = req?.lineItems?.length ? req.lineItems
     : req ? [{ productName: req.productName, productQty: req.productQty, targetPrice: req.productQty ? req.totalCost / req.productQty : req.totalCost }] : [];
 
@@ -666,9 +696,9 @@ function LaunchPanel({ api, requests, initialRequestId, onClose, onLaunched }: {
     const res = await call<{ auction: Auction; request: AuctionableRequest }>(api, '/api/smartspend/auctions/launch', {
       method: 'POST',
       body: JSON.stringify({
-        requestId: req.id, vendorIds: picked, startInMinutes: startIn, durationMinutes: duration,
+        requestId: req.id, vendorIds: picked, startAt: opensDate.toISOString(), durationMinutes: duration,
         extensionWindow: windowMin, extensionMinutes: extendBy, minDecrement: decrement,
-        visibility, rebidMinutes: rebid, terms,
+        visibility, rebidMinutes: rebid, terms, reminderMinutes,
       }),
     });
     setBusy(false);
@@ -699,7 +729,7 @@ function LaunchPanel({ api, requests, initialRequestId, onClose, onLaunched }: {
             {[
               { icon: Send, t: 'Invite', d: 'Vendors get the terms and accept' },
               { icon: Swords, t: 'Compete', d: 'Each bid re-ranks everyone live' },
-              { icon: Trophy, t: 'Award', d: 'L1 lands on the request, PO follows' },
+              { icon: Trophy, t: 'Award', d: 'L1 or any bidder you pick lands on the request' },
             ].map(s => (
               <div key={s.t} className="flex items-center gap-2 rounded-xl bg-white/[0.06] border border-white/10 px-3 py-2">
                 <s.icon className="h-4 w-4 text-violet-200 shrink-0" />
@@ -757,6 +787,16 @@ function LaunchPanel({ api, requests, initialRequestId, onClose, onLaunched }: {
                   <label className="text-[10px] font-bold uppercase tracking-wider text-textFaint">Invite vendors · at least two</label>
                   <span className="text-[11px] text-textSecondary">{picked.length} selected</span>
                 </div>
+                {vendors.some(v => v.suggested) && (
+                  <div className="rounded-xl border border-brand/25 bg-brand/5 px-3 py-2 space-y-1">
+                    <p className="flex items-center gap-1.5 text-[11px] font-bold text-textPrimary">
+                      <Sparkles className="h-3.5 w-3.5 text-brand" />Suggested for this category — pre-selected
+                    </p>
+                    {vendors.filter(v => v.suggested).map(v => (
+                      <p key={v.id} className="text-[11px] text-textSecondary"><b className="text-textPrimary">{v.name}</b> — {v.suggestedReason}</p>
+                    ))}
+                  </div>
+                )}
                 {([
                   { key: 'login', title: 'Can sign in and bid themselves', note: 'Each accepts the terms and bids from their own supplier portal.', list: vendors.filter(v => v.login) },
                   { key: 'none', title: 'No portal login', note: 'You accept and key in their bids for them (phoned-in bids).', list: vendors.filter(v => !v.login) },
@@ -769,7 +809,8 @@ function LaunchPanel({ api, requests, initialRequestId, onClose, onLaunched }: {
                       {group.list.map(v => {
                         const on = picked.includes(v.id);
                         return (
-                          <button key={v.id} type="button" title={v.login ? `Signs in as ${v.login}` : 'No portal login'}
+                          <button key={v.id} type="button"
+                                  title={[v.suggestedReason && `Suggested — ${v.suggestedReason}`, v.login ? `Signs in as ${v.login}` : 'No portal login'].filter(Boolean).join('\n')}
                                   onClick={() => setPicked(prev => on ? prev.filter(id => id !== v.id) : [...prev, v.id])}
                                   className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-all ${on
                                     ? 'border-brand bg-brand text-onbrand shadow-sm' : 'border-borderTheme bg-surface text-textSecondary hover:border-line2 hover:text-textPrimary'}`}>
@@ -777,6 +818,11 @@ function LaunchPanel({ api, requests, initialRequestId, onClose, onLaunched }: {
                             {v.name}
                             {v.contact && <span className={`text-[10px] font-medium ${on ? 'text-onbrand/75' : 'text-textFaint'}`}>· {v.contact}</span>}
                             {v.onContract && <span className={`text-[9px] font-bold uppercase ${on ? 'text-onbrand/70' : 'text-pos'}`}>contract</span>}
+                            {v.suggested && (
+                              <span className={`inline-flex items-center gap-0.5 text-[9px] font-bold uppercase ${on ? 'text-onbrand/80' : 'text-brand'}`}>
+                                <Sparkles className="h-3 w-3" />suggested
+                              </span>
+                            )}
                           </button>
                         );
                       })}
@@ -788,9 +834,17 @@ function LaunchPanel({ api, requests, initialRequestId, onClose, onLaunched }: {
 
               <section className="grid sm:grid-cols-2 gap-5">
                 <div className="space-y-2">
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-textFaint">Bidding opens in</label>
-                  <Segmented value={startIn} options={[1, 2, 5, 10, 30]} onChange={setStartIn} fmt={v => `${v} min`} />
-                  <p className="text-[11px] text-textFaint">Opens by itself the moment every vendor has answered and two have accepted — at the latest after this.</p>
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-textFaint">Bidding opens on</label>
+                  <input type="datetime-local" value={opensAt} min={localStamp(new Date(Date.now() + 60000))}
+                         onChange={e => setOpensAt(e.target.value)}
+                         aria-label="Date and time bidding opens"
+                         className={`w-full rounded-xl border bg-secondary px-3 py-2.5 text-sm font-semibold text-textPrimary focus:outline-none focus:ring-2 focus:ring-brand/25 ${
+                           opensValid ? 'border-borderTheme' : 'border-neg/50'}`} />
+                  <p className={`text-[11px] ${opensValid ? 'text-textFaint' : 'text-neg font-semibold'}`}>
+                    {opensValid
+                      ? 'Bidding opens at this date and time — or earlier, the moment every invited vendor has answered and two have accepted.'
+                      : 'Pick a date and time at least a minute from now.'}
+                  </p>
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold uppercase tracking-wider text-textFaint">Runs for</label>
@@ -832,6 +886,18 @@ function LaunchPanel({ api, requests, initialRequestId, onClose, onLaunched }: {
                            className="mx-1 w-12 rounded-md border border-borderTheme bg-secondary px-1.5 py-0.5 text-xs font-bold text-textPrimary" />
                     min.</p>
                 </div>
+                <div className="rounded-2xl border border-borderTheme p-4 space-y-2 sm:col-span-3">
+                  <div className="flex items-center gap-2 text-xs font-bold text-textPrimary"><BellRing className="h-4 w-4 text-gold" /> Automatic reminder</div>
+                  <p className="text-[11px] text-textSecondary leading-snug">Vendors who have not accepted or declined are reminded before bidding opens — on their portal screen and by email.</p>
+                  <Segmented value={reminderMinutes} options={[0, 15, 30, 60, 1440]} onChange={setReminderMinutes}
+                             fmt={m => (m === 0 ? 'Off' : m === 1440 ? '1 day before' : m === 60 ? '1 hour before' : `${m} min before`)} />
+                  {reminderMinutes > 0 && (() => {
+                    const lead = (Date.parse(opensAt) - Date.now()) / 60000;
+                    return lead <= reminderMinutes
+                      ? <p className="text-[11px] font-semibold text-gold">Bidding opens in about {Math.max(Math.round(lead), 0)} min — sooner than that, so no automatic reminder will go out. Use Remind in the auction room instead.</p>
+                      : <p className="text-[11px] text-textFaint">Goes out at {new Date(Date.parse(opensAt) - reminderMinutes * 60000).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}.</p>;
+                  })()}
+                </div>
               </section>
 
               <section className="space-y-2">
@@ -862,13 +928,13 @@ function LaunchPanel({ api, requests, initialRequestId, onClose, onLaunched }: {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-borderTheme">
                 <p className="text-[11px] text-textSecondary">
                   Invitations go to <b>{picked.length}</b> vendor{picked.length === 1 ? '' : 's'} now. Bidding opens as soon as
-                  every vendor is ready — at the latest <b>{opensAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</b>{' '}
-                  (then closing <b>{closesAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</b>) — and runs {duration} min
+                  every vendor is ready — at the latest <b>{opensValid ? opensDate.toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}</b>{' '}
+                  (then closing <b>{opensValid ? closesAtDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '—'}</b>) — and runs {duration} min
                   {windowMin > 0 ? ', plus any time extensions' : ''}.
                 </p>
                 <div className="flex gap-2">
                   <button onClick={onClose} className="px-4 py-2.5 rounded-xl border border-borderTheme text-xs font-bold text-textSecondary hover:bg-secondary">Cancel</button>
-                  <button onClick={launch} disabled={busy || picked.length < 2 || !req}
+                  <button onClick={launch} disabled={busy || picked.length < 2 || !req || !opensValid}
                           className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-brand text-onbrand text-xs font-bold shadow-lg disabled:opacity-50 disabled:cursor-not-allowed hover:brightness-110">
                     <Send className="h-4 w-4" /> {busy ? 'Sending…' : 'Send invitations'}
                   </button>
@@ -936,16 +1002,25 @@ function SurrogateBid({ api, auction, onDone }: { api: ApiFn; auction: Auction; 
   );
 }
 
-function AuctionRoom({ api, reference, onBack, onRequestUpdated, onRaisePurchaseOrder }: {
+function AuctionRoom({ api, reference, onBack, onRequestUpdated, onRaisePurchaseOrder, approver = false }: {
   api: ApiFn; reference: string; onBack: () => void; onRequestUpdated: (r: AuctionableRequest) => void;
   /** Raise (or open) the purchase order for the awarded request; false when refused. */
   onRaisePurchaseOrder?: (requestId: string) => Promise<boolean>;
+  /** The procurement manager: approves which level is awarded, instead of awarding. */
+  approver?: boolean;
 }) {
   const [auction, setAuction] = useState<Auction | null>(null);
   const [offset, setOffset] = useState(0);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const [celebrate, setCelebrate] = useState(false);
+  // The award dialog: which bidder (participant id) and the reason, if any.
+  const [awardPick, setAwardPick] = useState<number | null>(null);
+  // The reminder dialog: everyone pending ('all') or one vendor, and a note.
+  const [remindFor, setRemindFor] = useState<'all' | number | null>(null);
+  const [remindNote, setRemindNote] = useState('');
+  const [remindSent, setRemindSent] = useState('');
+  const [awardReason, setAwardReason] = useState('');
   const [poBusy, setPoBusy] = useState(false);
   const [burst, setBurst] = useState<string | null>(null);
   const prevExt = useRef<number | null>(null);
@@ -972,17 +1047,26 @@ function AuctionRoom({ api, reference, onBack, onRequestUpdated, onRaisePurchase
   const state = auction?.state;
   useInterval(load, state === 'live' ? 1500 : state === 'scheduled' || !state ? 3000 : state === 'closed' ? 5000 : null);
 
-  const act = async (action: 'start' | 'award' | 'bid_again' | 'cancel', confirmText?: string) => {
+  const act = async (action: 'start' | 'award' | 'bid_again' | 'cancel' | 'remind' | 'approve', confirmText?: string, extra: Record<string, unknown> = {}) => {
     if (confirmText && !window.confirm(confirmText)) return;
     setBusy(action); setError('');
     const res = await call<{ auction: Auction; request: AuctionableRequest }>(api, `/api/smartspend/auctions/${reference}/action`, {
-      method: 'POST', body: JSON.stringify({ action }),
+      method: 'POST', body: JSON.stringify({ action, ...extra }),
     });
     setBusy('');
     if (!res.ok) { setError(res.error); return; }
     absorb(res.data.auction);
     if (res.data.request) onRequestUpdated(res.data.request);
-    if (action === 'award') setCelebrate(true);
+    if (action === 'award') { setAwardPick(null); setAwardReason(''); setCelebrate(true); }
+    if (action === 'approve') { setAwardPick(null); setAwardReason(''); }
+    if (action === 'remind') {
+      const names = remindFor === 'all'
+        ? (auction?.participants ?? []).filter(p => p.reminderKind).map(p => p.vendor)
+        : (auction?.participants ?? []).filter(p => p.id === remindFor).map(p => p.vendor);
+      setRemindFor(null); setRemindNote('');
+      setRemindSent(`Reminder sent to ${names.join(', ')}.`);
+      window.setTimeout(() => setRemindSent(''), 5000);
+    }
   };
   // The award has already written the winner and the winning prices onto the
   // request; the purchase order is raised from exactly that, then the buyer is
@@ -1029,35 +1113,58 @@ function AuctionRoom({ api, reference, onBack, onRequestUpdated, onRaisePurchase
         <span className="font-mono text-xs font-bold text-textPrimary">{auction.id}</span>
         <span className="text-[11px] text-textFaint">for {auction.requestId}</span>
         <StatePill state={auction.state} big />
+        {(auction.round ?? 1) > 1 && (
+          <span className="rounded-full border border-brand/30 bg-brand/10 px-2.5 py-0.5 text-[11px] font-bold text-brand">Round {auction.round}</span>
+        )}
         <div className="ml-auto flex flex-wrap gap-2">
-          {auction.state === 'scheduled' && (
+          {!approver && auction.state === 'scheduled' && (
             <button onClick={() => act('start', 'Open bidding now? Vendors who have not accepted are dropped.')} disabled={!!busy || accepted < 2}
                     title={accepted < 2 ? 'Needs two accepted vendors' : undefined}
                     className="inline-flex items-center gap-1.5 rounded-xl bg-brand px-4 py-2 text-xs font-bold text-onbrand shadow disabled:opacity-40 disabled:cursor-not-allowed">
               <Play className="h-4 w-4" /> {busy === 'start' ? 'Opening…' : 'Open bidding now'}
             </button>
           )}
+          {!approver && ['scheduled', 'live'].includes(auction.state) && (auction.participants ?? []).some(p => p.reminderKind) && (
+            <button onClick={() => { setRemindNote(''); setRemindFor('all'); }} disabled={!!busy}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-gold/40 bg-gold/10 px-3 py-2 text-xs font-bold text-gold hover:bg-gold/20">
+              <BellRing className="h-4 w-4" /> Remind pending ({(auction.participants ?? []).filter(p => p.reminderKind).length})
+            </button>
+          )}
           {auction.state === 'closed' && (
             <>
-              <button onClick={() => act('award', `Award ${auction.id} to ${auction.leader} at ${inr(best)}? The request is repriced at their bid.`)} disabled={!!busy || !auction.leader}
-                      className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold text-[#2a1a00] shadow-lg disabled:opacity-40 auction-gold-btn">
-                <Trophy className="h-4 w-4" /> {busy === 'award' ? 'Awarding…' : 'Award to L1'}
-              </button>
-              {rebidLeft > 0 && (
-                <button onClick={() => act('bid_again', `Reopen bidding for another ${auction.rebidMinutes}-minute round?`)} disabled={!!busy}
+              {approver ? (
+                <button onClick={() => { setAwardReason(auction.approval?.note ?? ''); setAwardPick(auction.approval?.participantId ?? (auction.participants ?? []).find(p => p.rank === 1)?.id ?? null); }}
+                        disabled={!!busy || !auction.leader}
+                        className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold text-[#2a1a00] shadow-lg disabled:opacity-40 auction-gold-btn">
+                  <CheckCircle2 className="h-4 w-4" /> {busy === 'approve' ? 'Approving…' : auction.approval ? 'Change approval' : 'Choose & approve'}
+                </button>
+              ) : auction.approval ? (
+                <button onClick={() => act('award', `Award ${auction.id} to ${auction.approval!.vendor} (L${auction.approval!.rank}) at ${inr(auction.approval!.total)}, as approved by ${auction.approval!.by}? The request is repriced at their bid.`, { participantId: auction.approval!.participantId })}
+                        disabled={!!busy}
+                        className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold text-[#2a1a00] shadow-lg disabled:opacity-40 auction-gold-btn">
+                  <Trophy className="h-4 w-4" /> {busy === 'award' ? 'Awarding…' : `Award to ${auction.approval.vendor} (L${auction.approval.rank})`}
+                </button>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 rounded-xl border border-gold/40 bg-gold/10 px-4 py-2 text-xs font-bold text-gold"
+                      title="The procurement manager chooses the level to award; you award it once approved.">
+                  <Hourglass className="h-4 w-4" /> Waiting for manager approval
+                </span>
+              )}
+              {!approver && rebidLeft > 0 && (
+                <button onClick={() => act('bid_again', `Reopen bidding for another ${auction.rebidMinutes}-minute round? Vendors start from the opening price of ${inr(auction.ceiling)} again — every bid so far stays in the log.`)} disabled={!!busy}
                         className="inline-flex items-center gap-1.5 rounded-xl border border-borderTheme bg-surface px-3 py-2 text-xs font-bold text-textPrimary hover:bg-secondary">
                   <RotateCcw className="h-4 w-4" /> Bid again <span className="text-textFaint font-semibold">({clock(rebidLeft)} left)</span>
                 </button>
               )}
             </>
           )}
-          {auction.state === 'awarded' && onRaisePurchaseOrder && (
+          {!approver && auction.state === 'awarded' && onRaisePurchaseOrder && (
             <button onClick={raisePurchaseOrder} disabled={poBusy}
                     className="inline-flex items-center gap-1.5 rounded-xl bg-brand px-4 py-2 text-xs font-bold text-onbrand shadow disabled:opacity-50">
               <Send className="h-4 w-4" /> {poBusy ? 'Raising…' : 'Generate Purchase Order'}
             </button>
           )}
-          {!['awarded', 'cancelled'].includes(auction.state) && (
+          {!approver && !['awarded', 'cancelled'].includes(auction.state) && (
             <button onClick={() => act('cancel', `Cancel ${auction.id}? Every vendor's invitation is withdrawn.`)} disabled={!!busy}
                     className="inline-flex items-center gap-1.5 rounded-xl border border-borderTheme bg-surface px-3 py-2 text-xs font-bold text-textSecondary hover:text-neg hover:border-neg/40">
               <Ban className="h-4 w-4" /> Cancel
@@ -1065,6 +1172,20 @@ function AuctionRoom({ api, reference, onBack, onRequestUpdated, onRaisePurchase
           )}
         </div>
       </div>
+      {auction.state === 'closed' && (
+        <div className={`flex items-start gap-3 rounded-2xl border px-4 py-3 ${auction.approval ? 'border-pos/30 bg-pos/10' : 'border-gold/30 bg-gold/10'}`}>
+          {auction.approval ? <CheckCircle2 className="h-5 w-5 shrink-0 text-pos mt-0.5" /> : <Hourglass className="h-5 w-5 shrink-0 text-gold mt-0.5" />}
+          <div className="text-xs">
+            {auction.approval ? (<>
+              <p className="font-bold text-textPrimary">Approved by {auction.approval.by}: {auction.approval.vendor} (L{auction.approval.rank}) at {inr(auction.approval.total)}</p>
+              <p className="text-textSecondary mt-0.5">{auction.approval.note ? <>“{auction.approval.note}” · </> : null}{approver ? 'The buyer now awards it to this vendor.' : 'Award it to this vendor to reprice the request.'}</p>
+            </>) : (<>
+              <p className="font-bold text-textPrimary">{approver ? 'Bidding has closed — choose the level to award and approve it.' : 'Bidding has closed — waiting for the procurement manager to approve the level to award.'}</p>
+              <p className="text-textSecondary mt-0.5">{approver ? 'L1 is the lowest total; you may approve any bidder. The buyer then awards to the vendor you approve.' : 'Once approved, the award goes to the vendor the manager chose — L1 or another level.'}</p>
+            </>)}
+          </div>
+        </div>
+      )}
       <ErrorNote text={error} onClose={() => setError('')} />
 
       {/* ---- The stage ---- */}
@@ -1082,7 +1203,7 @@ function AuctionRoom({ api, reference, onBack, onRequestUpdated, onRaisePurchase
               <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-white/50">{auction.title}{auction.itemCount > 1 ? ` + ${auction.itemCount - 1} more` : ''}</p>
               {auction.state === 'awarded' ? (
                 <h2 className="font-outfit text-3xl md:text-4xl font-black leading-tight">
-                  <span className="text-amber-300">{auction.winner}</span> wins at <Glide value={auction.awardedTotal || 0} />
+                  <span className="text-amber-300">{auction.winner}</span>{auction.awardedRank && auction.awardedRank > 1 ? ` (L${auction.awardedRank})` : ''} wins at <Glide value={auction.awardedTotal || 0} />
                 </h2>
               ) : auction.state === 'scheduled' ? (
                 <h2 className="font-outfit text-3xl md:text-4xl font-black leading-tight">Invitations out · opening {inr(auction.ceiling)}</h2>
@@ -1165,16 +1286,40 @@ function AuctionRoom({ api, reference, onBack, onRequestUpdated, onRaisePurchase
                 <div key={p.id} className="flex items-center gap-2 text-xs">
                   <Hourglass className="h-3.5 w-3.5 text-white/50" />
                   <span className="flex-1 truncate">{p.vendor}{p.hasLogin ? <span className="text-white/40"> · {p.login}</span> : <span className="text-white/40"> · no portal login</span>}</span>
+                  {!!p.reminderCount && p.lastRemindedAt && (
+                    <span className="text-[10px] text-amber-200/80 whitespace-nowrap" title={`Reminded ${p.reminderCount}×`}>reminded {p.reminderCount}× · {ago(ts(p.lastRemindedAt), now)}</span>
+                  )}
+                  {!approver && <>
+                  <button onClick={() => { setRemindNote(''); setRemindFor(p.id); }} disabled={!!busy}
+                          title="Send this vendor a reminder"
+                          className="inline-flex items-center gap-1 rounded-md bg-amber-300/90 px-2 py-0.5 text-[10px] font-bold text-[#2a1a00]"><BellRing className="h-3 w-3" />Remind</button>
                   <button onClick={() => respondFor(p.id, true)} disabled={!!busy}
                           title="The vendor accepted by phone or email"
                           className="rounded-md bg-emerald-400/90 px-2 py-0.5 text-[10px] font-bold text-[#062a1f]">Accept for them</button>
                   <button onClick={() => respondFor(p.id, false)} disabled={!!busy}
                           className="rounded-md bg-white/10 px-2 py-0.5 text-[10px] font-bold text-white/70">Decline</button>
+                  </>}
                 </div>
               ))}
             </div>
           )}
-          {live && <SurrogateBid api={api} auction={auction} onDone={absorb} />}
+          {!approver && live && (auction.participants ?? []).some(p => p.reminderKind === 'bid') && (
+            <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-3 space-y-2">
+              <p className="text-[11px] font-bold text-white/70">Accepted, but no bid yet</p>
+              {(auction.participants ?? []).filter(p => p.reminderKind === 'bid').map(p => (
+                <div key={p.id} className="flex items-center gap-2 text-xs">
+                  <Hourglass className="h-3.5 w-3.5 text-white/50" />
+                  <span className="flex-1 truncate">{p.vendor}</span>
+                  {!!p.reminderCount && p.lastRemindedAt && (
+                    <span className="text-[10px] text-amber-200/80 whitespace-nowrap">reminded {p.reminderCount}× · {ago(ts(p.lastRemindedAt), now)}</span>
+                  )}
+                  <button onClick={() => { setRemindNote(''); setRemindFor(p.id); }} disabled={!!busy}
+                          className="inline-flex items-center gap-1 rounded-md bg-amber-300/90 px-2 py-0.5 text-[10px] font-bold text-[#2a1a00]"><BellRing className="h-3 w-3" />Remind</button>
+                </div>
+              ))}
+            </div>
+          )}
+          {!approver && live && <SurrogateBid api={api} auction={auction} onDone={absorb} />}
         </div>
       </div>
 
@@ -1194,7 +1339,12 @@ function AuctionRoom({ api, reference, onBack, onRequestUpdated, onRaisePurchase
             <li className="flex gap-2"><Timer className="h-4 w-4 text-textFaint shrink-0" />{auction.extensionWindow ? <>Extension Applied in last {auction.extensionWindow} min · Extension Duration +{auction.extensionMinutes} min — again for every bid in that window</> : 'No time extension'}</li>
             <li className="flex gap-2"><TrendingDown className="h-4 w-4 text-textFaint shrink-0" />{auction.minDecrement ? <>Each rebid ≥ {inr(auction.minDecrement)} below the vendor's last</> : 'Each rebid must simply be lower'}</li>
             <li className="flex gap-2">{auction.visibility === 'rank' ? <EyeOff className="h-4 w-4 text-textFaint shrink-0" /> : <Eye className="h-4 w-4 text-textFaint shrink-0" />}{auction.visibility === 'rank' ? 'Sealed: vendors see their rank only' : 'Vendors see the leading price, never the name'}</li>
+            {(auction.state === 'scheduled' || auction.autoReminderSent) && <li className="flex gap-2"><BellRing className="h-4 w-4 text-textFaint shrink-0" />{!auction.reminderMinutes ? 'No automatic reminder'
+              : auction.autoReminderSent ? `Automatic reminder ${auction.autoReminderAt ? 'sent' : 'skipped — bidding opened too soon after the invitations'}`
+              : auction.autoReminderAt ? <>Automatic reminder to vendors who have not answered at {hhmm(auction.autoReminderAt)} ({auction.reminderMinutes >= 60 ? `${auction.reminderMinutes / 60 >= 24 ? '1 day' : `${auction.reminderMinutes / 60} h`}` : `${auction.reminderMinutes} min`} before opening)</>
+              : 'No automatic reminder — bidding opens too soon after the invitations'}</li>}
             <li className="flex gap-2"><Lock className="h-4 w-4 text-textFaint shrink-0" />Every bid is logged and cannot be edited</li>
+            <li className="flex gap-2"><RotateCcw className="h-4 w-4 text-textFaint shrink-0" />Bid Again opens a fresh round from the opening price; earlier rounds stay in the log</li>
           </ul>
           <div className="rounded-xl border border-borderTheme overflow-hidden">
             <table className="w-full text-[11px]">
@@ -1214,6 +1364,130 @@ function AuctionRoom({ api, reference, onBack, onRequestUpdated, onRaisePurchase
           </div>
         </div>
       </div>
+
+      {remindSent && (
+        <div className="flex items-center gap-2 rounded-xl border border-pos/30 bg-pos/10 px-4 py-2.5 text-xs font-bold text-pos">
+          <CheckCircle2 className="h-4 w-4" />{remindSent}
+        </div>
+      )}
+      {remindFor !== null && ['scheduled', 'live'].includes(auction.state) && (() => {
+        const targets = (auction.participants ?? []).filter(p => p.reminderKind && (remindFor === 'all' || p.id === remindFor));
+        return createPortal(
+          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => !busy && setRemindFor(null)}>
+            <div onClick={e => e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-surface border border-borderTheme shadow-2xl">
+              <div className="flex items-start gap-3 px-6 py-4 border-b border-borderTheme">
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gold/15 text-gold"><BellRing className="h-5 w-5" /></span>
+                <div className="min-w-0 flex-1">
+                  <h3 className="font-outfit font-extrabold text-lg text-textPrimary leading-tight">Send a reminder</h3>
+                  <p className="text-[11px] text-textSecondary mt-0.5">{auction.id} · it shows on the vendor's Live Auctions screen and in the auction log.</p>
+                </div>
+                <button onClick={() => setRemindFor(null)} disabled={!!busy} className="p-1.5 rounded-lg text-textFaint hover:text-textPrimary hover:bg-secondary"><X className="h-4 w-4" /></button>
+              </div>
+              <div className="px-6 py-5 space-y-3">
+                <div className="rounded-xl border border-borderTheme divide-y divide-borderTheme">
+                  {targets.map(p => (
+                    <div key={p.id} className="flex items-center gap-2 px-3 py-2 text-xs">
+                      <span className="flex-1 font-bold text-textPrimary truncate">{p.vendor}</span>
+                      <span className="text-[10px] font-bold text-gold">{p.reminderKind === 'respond' ? 'has not answered' : 'has not bid'}</span>
+                      {!!p.reminderCount && <span className="text-[10px] text-textFaint">· reminded {p.reminderCount}×</span>}
+                    </div>
+                  ))}
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-textFaint block mb-1">Add a note (optional)</label>
+                  <textarea rows={2} value={remindNote} onChange={e => setRemindNote(e.target.value)}
+                            placeholder={auction.state === 'live' ? 'e.g. Bidding closes soon — please place your best price.' : 'e.g. Please confirm your participation by 5 pm today.'}
+                            className="w-full rounded-xl border border-borderTheme bg-secondary p-2.5 text-xs text-textPrimary focus:outline-none focus:border-brand" />
+                </div>
+                <ErrorNote text={error} />
+              </div>
+              <div className="flex justify-end gap-2 px-6 py-4 border-t border-borderTheme">
+                <button onClick={() => setRemindFor(null)} disabled={!!busy}
+                        className="rounded-lg border border-borderTheme bg-secondary px-4 py-2 text-xs font-bold text-textSecondary hover:text-textPrimary">Cancel</button>
+                <button onClick={() => act('remind', undefined, { ...(remindFor === 'all' ? {} : { participantId: remindFor }), note: remindNote.trim() })}
+                        disabled={!!busy || !targets.length}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-4 py-2 text-xs font-bold text-onbrand shadow disabled:opacity-40">
+                  <BellRing className="h-4 w-4" />{busy === 'remind' ? 'Sending…' : `Send reminder${targets.length > 1 ? ` to ${targets.length} vendors` : ''}`}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        );
+      })()}
+      {awardPick !== null && auction.state === 'closed' && (() => {
+        const ranked = (auction.participants ?? []).filter(p => p.rank > 0 && p.total > 0).sort((a, b) => a.rank - b.rank);
+        const l1 = ranked[0];
+        const chosen = ranked.find(p => p.id === awardPick) ?? l1;
+        const gap = chosen && l1 ? chosen.total - l1.total : 0;
+        return createPortal(
+          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+               onClick={() => !busy && setAwardPick(null)}>
+            <div onClick={e => e.stopPropagation()} className="w-full max-w-lg rounded-2xl bg-surface border border-borderTheme shadow-2xl">
+              <div className="flex items-start gap-3 px-6 py-4 border-b border-borderTheme">
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gold/15 text-gold"><Trophy className="h-5 w-5" /></span>
+                <div className="min-w-0 flex-1">
+                  <h3 className="font-outfit font-extrabold text-lg text-textPrimary leading-tight">{approver ? 'Approve the award' : 'Award'} · {auction.id}</h3>
+                  <p className="text-[11px] text-textSecondary mt-0.5">{approver ? 'Choose the level to award and approve it. The buyer then awards to this vendor.' : 'Pick the bidder to award. L1 is the lowest total; you may choose any level.'}</p>
+                </div>
+                <button onClick={() => setAwardPick(null)} disabled={!!busy} className="p-1.5 rounded-lg text-textFaint hover:text-textPrimary hover:bg-secondary"><X className="h-4 w-4" /></button>
+              </div>
+              <div className="px-6 py-5 space-y-3">
+                <div className="space-y-2" role="radiogroup" aria-label="Bidder to award">
+                  {ranked.map(p => {
+                    const on = p.id === chosen?.id;
+                    const over = p.total - (l1?.total ?? p.total);
+                    const below = auction.ceiling ? Math.round(((auction.ceiling - p.total) / auction.ceiling) * 1000) / 10 : 0;
+                    return (
+                      <button key={p.id} type="button" role="radio" aria-checked={on} onClick={() => setAwardPick(p.id)}
+                              className={`w-full flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-all ${
+                                on ? 'border-gold bg-gold/10 ring-1 ring-gold/40' : 'border-borderTheme hover:bg-secondary/60'}`}>
+                        <span className={`h-4 w-4 shrink-0 rounded-full border-2 grid place-items-center ${on ? 'border-gold' : 'border-borderTheme'}`}>
+                          {on && <span className="h-2 w-2 rounded-full bg-gold" />}
+                        </span>
+                        <span className={`shrink-0 rounded-md px-2 py-0.5 text-[11px] font-black ${p.rank === 1 ? 'bg-gold text-[#2a1a00]' : 'bg-secondary text-textSecondary border border-borderTheme'}`}>L{p.rank}</span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm font-bold text-textPrimary truncate">{p.vendor}</span>
+                          <span className="text-[10px] text-textFaint">{p.bidCount} bid{p.bidCount === 1 ? '' : 's'} · {below}% below opening</span>
+                        </span>
+                        <span className="text-right shrink-0">
+                          <span className="block text-sm font-extrabold text-textPrimary tabular-nums">{inr(p.total)}</span>
+                          <span className={`text-[10px] font-bold ${over > 0 ? 'text-neg' : 'text-pos'}`}>{over > 0 ? `+${inr(over)} vs L1` : 'Lowest'}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {chosen && chosen.rank > 1 && (
+                  <p className="flex items-start gap-2 rounded-xl border border-gold/30 bg-gold/10 px-3 py-2 text-[11px] text-textSecondary">
+                    <AlertTriangle className="h-4 w-4 shrink-0 text-gold" />
+                    <span>{approver ? 'Approving' : 'Awarding'} L{chosen.rank} costs <b className="text-textPrimary">{inr(gap)}</b> more than L1 ({l1?.vendor}). Note the reason below — it is kept with the award.</span>
+                  </p>
+                )}
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-textFaint block mb-1">Reason for this choice {chosen && chosen.rank > 1 ? '' : '(optional)'}</label>
+                  <textarea rows={2} value={awardReason} onChange={e => setAwardReason(e.target.value)}
+                            placeholder={chosen && chosen.rank > 1 ? 'e.g. Faster delivery, better warranty, past performance…' : 'Optional note for the record'}
+                            className="w-full rounded-xl border border-borderTheme bg-secondary p-2.5 text-xs text-textPrimary focus:outline-none focus:border-brand" />
+                </div>
+                <ErrorNote text={error} />
+              </div>
+              <div className="flex justify-end gap-2 px-6 py-4 border-t border-borderTheme">
+                <button onClick={() => setAwardPick(null)} disabled={!!busy}
+                        className="rounded-lg border border-borderTheme bg-secondary px-4 py-2 text-xs font-bold text-textSecondary hover:text-textPrimary">Cancel</button>
+                <button onClick={() => chosen && act(approver ? 'approve' : 'award', undefined, { participantId: chosen.id, reason: awardReason.trim() })}
+                        disabled={!!busy || !chosen}
+                        className="inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-bold text-[#2a1a00] shadow disabled:opacity-40 auction-gold-btn">
+                  <Trophy className="h-4 w-4" />
+                  {busy === 'award' || busy === 'approve' ? (approver ? 'Approving…' : 'Awarding…')
+                    : chosen ? `${approver ? 'Approve' : 'Award to'} ${chosen.vendor} (L${chosen.rank}) at ${inr(chosen.total)}` : 'Award'}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        );
+      })()}
 
       {celebrate && auction.state === 'awarded' && createPortal(
         <div className="fixed inset-0 z-50 grid place-items-center bg-[#140F2A]/55 backdrop-blur-sm p-4 animate-fadeIn" onClick={() => setCelebrate(false)}>
@@ -1249,22 +1523,24 @@ function AuctionRoom({ api, reference, onBack, onRequestUpdated, onRaisePurchase
 // ===========================================================================
 // Buyer: the desk
 // ===========================================================================
-export function AuctionDesk({ api, offline, requests, launchFor, onLaunchHandled, openAuction, onOpenHandled, onRequestUpdated, onRaisePurchaseOrder }: {
+export function AuctionDesk({ api, offline, requests, launchFor, onLaunchHandled, openAuction, onOpenHandled, onRequestUpdated, onRaisePurchaseOrder, approver = false }: {
   api: ApiFn; offline: boolean; requests: AuctionableRequest[];
   launchFor: string | null; onLaunchHandled: () => void;
   openAuction: string | null; onOpenHandled: () => void;
   onRequestUpdated: (r: AuctionableRequest) => void;
   onRaisePurchaseOrder?: (requestId: string) => Promise<boolean>;
+  /** The procurement manager's view: approves the level to award. */
+  approver?: boolean;
 }) {
   const [auctions, setAuctions] = useState<Auction[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<string | null>(openAuction);
-  const [launching, setLaunching] = useState<boolean>(!!launchFor);
+  const [launching, setLaunching] = useState<boolean>(!!launchFor && !approver);
   const [offset, setOffset] = useState(0);
   const now = useServerNow(offset, 1000);
 
-  useEffect(() => { if (launchFor) setLaunching(true); }, [launchFor]);
+  useEffect(() => { if (launchFor && !approver) setLaunching(true); }, [launchFor]);
   // Taken once: coming back to the desk later lands on the list, not on
   // whichever auction the sourcing queue opened last time.
   useEffect(() => { if (openAuction) { setSelected(openAuction); onOpenHandled(); } }, [openAuction]);
@@ -1283,12 +1559,14 @@ export function AuctionDesk({ api, offline, requests, launchFor, onLaunchHandled
   if (offline) return <OfflineNote />;
   if (selected) {
     return <AuctionRoom api={api} reference={selected} onBack={() => { setSelected(null); void load(); }}
-                        onRequestUpdated={onRequestUpdated} onRaisePurchaseOrder={onRaisePurchaseOrder} />;
+                        onRequestUpdated={onRequestUpdated} onRaisePurchaseOrder={onRaisePurchaseOrder} approver={approver} />;
   }
 
   const live = auctions.filter(a => a.state === 'live');
   const upcoming = auctions.filter(a => a.state === 'scheduled');
   const toAward = auctions.filter(a => a.state === 'closed');
+  const toApprove = toAward.filter(a => !a.approval);
+  const approved = toAward.filter(a => a.approval);
   const done = auctions.filter(a => ['awarded', 'cancelled'].includes(a.state));
   const saved = auctions.filter(a => a.state === 'awarded').reduce((s, a) => s + (a.savings || 0), 0);
   const eligible = requests.filter(r => ['Approved', 'Sourcing'].includes(r.status) && r.totalCost > 0);
@@ -1333,7 +1611,9 @@ export function AuctionDesk({ api, offline, requests, launchFor, onLaunchHandled
           </div>
         </div>
         <div className={`mt-3 flex items-center gap-1 text-[11px] font-bold ${a.state === 'live' ? 'text-pink-200' : 'text-brand'}`}>
-          {a.state === 'live' ? 'Enter the auction room' : a.state === 'closed' ? 'Review and award' : 'Open'} <ChevronRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+          {a.state === 'live' ? 'Enter the auction room' : a.state === 'closed'
+            ? (a.approval ? (approver ? `Approved L${a.approval.rank} · view` : `Award to ${a.approval.vendor} (L${a.approval.rank})`) : (approver ? 'Review and approve' : 'Awaiting manager approval'))
+            : 'Open'} <ChevronRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
         </div>
       </button>
     );
@@ -1363,7 +1643,7 @@ export function AuctionDesk({ api, offline, requests, launchFor, onLaunchHandled
           <div className="grid grid-cols-3 gap-2 md:w-[360px]">
             {[
               { label: 'Live now', value: String(live.length), icon: Radio },
-              { label: 'To award', value: String(toAward.length), icon: Gavel },
+              { label: approver ? 'To approve' : 'To award', value: String(approver ? toApprove.length : approved.length), icon: Gavel },
               { label: 'Saved', value: inrShort(saved), icon: Sparkles },
             ].map(s => (
               <div key={s.label} className="rounded-2xl bg-white/[0.07] border border-white/10 p-3">
@@ -1374,13 +1654,13 @@ export function AuctionDesk({ api, offline, requests, launchFor, onLaunchHandled
             ))}
           </div>
         </div>
-        <div className="relative mt-6 flex flex-wrap items-center gap-3">
+        {!approver && <div className="relative mt-6 flex flex-wrap items-center gap-3">
           <button onClick={() => setLaunching(true)} disabled={!eligible.length}
                   className="inline-flex items-center gap-2 rounded-xl bg-white px-5 py-2.5 text-xs font-black text-[#1b1537] shadow-lg hover:scale-[1.02] transition-transform disabled:opacity-50">
             <Rocket className="h-4 w-4" /> Launch an auction
           </button>
           <span className="text-[11px] text-white/55">{eligible.length} approved request{eligible.length === 1 ? '' : 's'} ready to take to market</span>
-        </div>
+        </div>}
       </div>
 
       <ErrorNote text={error} onClose={() => setError('')} />
@@ -1393,7 +1673,8 @@ export function AuctionDesk({ api, offline, requests, launchFor, onLaunchHandled
         </div>
       )}
       {renderSection('Live now', Radio, live, 'text-neg')}
-      {renderSection('Closed — waiting for your award', Gavel, toAward, 'text-gold')}
+      {renderSection(approver ? 'Closed — waiting for your approval' : 'Closed — waiting for manager approval', Gavel, toApprove, 'text-gold')}
+      {renderSection(approver ? 'Approved — the buyer awards next' : 'Approved — ready for you to award', Trophy, approved, 'text-pos')}
       {renderSection('Scheduled', Hourglass, upcoming, 'text-info')}
       {renderSection('Finished', Trophy, done, 'text-pos')}
 
@@ -1450,6 +1731,9 @@ function VendorConsole({ api, reference, onBack }: { api: ApiFn; reference: stri
       setBurst(`TIME EXTENDED · +${a.extensionMinutes}:00`); setTimeout(() => setBurst(null), 2800);
     }
     prevExt.current = a.extensionCount;
+    if (prevState.current === 'closed' && a.state === 'live') {
+      say(`Round ${a.round ?? 2} is open — bidding starts from the opening price of ${inr(a.ceiling)} again.`, 'info');
+    }
     if (prevState.current === 'scheduled' && a.state === 'live' && a.me?.state === 'live') {
       say(a.openedBy === 'ready' ? 'Every vendor is ready — bidding is open. Place your bid!' : 'Bidding is open — place your bid!', 'good');
     }
@@ -1550,9 +1834,29 @@ function VendorConsole({ api, reference, onBack }: { api: ApiFn; reference: stri
         <span className="text-textFaint">/</span>
         <span className="font-mono text-xs font-bold text-textPrimary">{auction.id}</span>
         <StatePill state={auction.state} big />
+        {(auction.round ?? 1) > 1 && (
+          <span className="rounded-full border border-brand/30 bg-brand/10 px-2.5 py-0.5 text-[11px] font-bold text-brand">Round {auction.round}</span>
+        )}
         <span className="ml-auto text-[11px] text-textSecondary">Buyer: {auction.buyer} · deliver to {auction.location}{auction.neededBy ? ` by ${auction.neededBy}` : ''}</span>
       </div>
       <ErrorNote text={error} onClose={() => setError('')} />
+      {auction.me?.reminder && (
+        <div className="flex items-start gap-3 rounded-2xl border border-gold/40 bg-gold/10 px-4 py-3 auction-slide-in">
+          <BellRing className="h-5 w-5 shrink-0 text-gold mt-0.5" />
+          <div className="min-w-0 flex-1 text-xs">
+            <p className="font-bold text-textPrimary">
+              {auction.me.reminder.auto ? 'Automatic reminder' : `Reminder from ${auction.buyer}`} · {ago(ts(auction.me.reminder.at), now)}
+              {auction.me.reminder.count > 1 && <span className="text-textFaint font-semibold"> · {auction.me.reminder.count} reminders</span>}
+            </p>
+            <p className="text-textSecondary mt-0.5">
+              {auction.me.reminder.kind === 'respond'
+                ? 'Please accept or decline this invitation before bidding opens.'
+                : 'Bidding is open and you have not placed a bid yet.'}
+              {auction.me.reminder.note && <> <b className="text-textPrimary">“{auction.me.reminder.note}”</b></>}
+            </p>
+          </div>
+        </div>
+      )}
 
       {toast && createPortal(
         <div className={`fixed right-6 top-6 z-50 auction-slide-in flex items-center gap-2 rounded-2xl px-4 py-3 text-sm font-bold shadow-2xl ${toast.tone === 'good'
@@ -1727,7 +2031,7 @@ function VendorConsole({ api, reference, onBack }: { api: ApiFn; reference: stri
                     <RankBadge rank={b.rankAfter} size="sm" />
                     <div className="flex-1">
                       <div className="font-bold tabular-nums">{inr(b.total)}</div>
-                      <div className="text-[10px] text-white/45">{ago(ts(b.at), now)}{b.extendedBy ? ` · extended the close +${b.extendedBy}m` : ''}</div>
+                      <div className="text-[10px] text-white/45">{ago(ts(b.at), now)}{(b.round ?? 1) > 1 ? ` · round ${b.round}` : ''}{b.extendedBy ? ` · extended the close +${b.extendedBy}m` : ''}</div>
                     </div>
                   </li>
                 ))}
@@ -1817,6 +2121,11 @@ export function VendorAuctions({ api, offline }: { api: ApiFn; offline: boolean 
                 {!Number.isNaN(target) && <span className={`ml-auto font-outfit text-lg font-black tabular-nums ${hot ? 'text-white' : 'text-textPrimary'}`}>{clock(target - now)}</span>}
               </div>
               <h4 className={`mt-2 font-outfit text-lg font-extrabold truncate ${hot ? 'text-white' : 'text-textPrimary'}`}>{a.title}</h4>
+              {me.reminder && (
+                <p className={`mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${hot ? 'bg-amber-300/20 text-amber-200' : 'bg-gold/15 text-gold'}`}>
+                  <BellRing className="h-3 w-3" />{me.reminder.auto ? 'Reminder' : 'Reminder from the buyer'} · {ago(ts(me.reminder.at), now)}
+                </p>
+              )}
               <p className={`text-[11px] ${hot ? 'text-white/55' : 'text-textFaint'}`}>{a.itemCount} item{a.itemCount > 1 ? 's' : ''} · opening {inr(a.ceiling)}</p>
               <div className="mt-3 flex items-center gap-3">
                 {(hot || ['closed', 'won', 'lost'].includes(me.state)) && <RankBadge rank={me.rank} size="md" />}

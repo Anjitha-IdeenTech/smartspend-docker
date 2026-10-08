@@ -280,6 +280,25 @@ class SmartspendRequestApproval(models.Model):
     state = fields.Selection(
         [('pending', 'Waiting'), ('approved', 'Approved'), ('rejected', 'Rejected')],
         default='pending', required=True, index=True)
+    # -- Delegation. An approver who cannot sign - on leave, or simply not the
+    # -- right person for this one - hands their own step to somebody else. The
+    # -- step keeps its designation and its place in the chain: what changes is
+    # -- who may sign it, which is why this is a field on the step rather than a
+    # -- swap of the designation's holders.
+    delegate_user_id = fields.Many2one(
+        'res.users', string='Delegated To', readonly=True,
+        help="Who this step has been handed to. Until it is signed, only they may sign it.")
+    delegated_by_id = fields.Many2one(
+        'res.users', string='Delegated By', readonly=True)
+    delegated_on = fields.Datetime(readonly=True)
+    delegation_note = fields.Text(string='Delegation Note', readonly=True)
+    # -- An approver added into a chain already running, rather than copied from
+    # -- the workflow. Worth marking: the chain no longer matches its master, and
+    # -- a reviewer should be able to see why there is a step the rule never had.
+    added_by_id = fields.Many2one(
+        'res.users', string='Added By', readonly=True,
+        help="Set when this step was inserted into a live chain instead of coming from the workflow.")
+    added_on = fields.Datetime(readonly=True)
     user_id = fields.Many2one('res.users', string='Decided by', readonly=True)
     decided_on = fields.Datetime(readonly=True)
     note = fields.Text(string='Note')
@@ -297,7 +316,20 @@ class SmartspendRequestApproval(models.Model):
         earth able to clear it.
         """
         self.ensure_one()
+        # A delegated step belongs to the delegate alone. Leaving the original
+        # holders able to sign would make the hand-off advisory: the portal
+        # would say the step had moved while either of them could still clear
+        # it, and the record would not say who was really asked.
+        if self.delegate_user_id:
+            return user == self.delegate_user_id
         holders = self.designation_id.sudo().user_ids
         if holders:
             return user in holders
         return user.has_group('smartspend.group_smartspend_manager')
+
+    def _signatories(self):
+        """Who may sign this step, as the portal should name them."""
+        self.ensure_one()
+        if self.delegate_user_id:
+            return self.delegate_user_id
+        return self.designation_id.sudo().user_ids

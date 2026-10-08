@@ -1,0 +1,38 @@
+[options]
+; Odoo as deployed. bootstrap.sh copies this to deploy/odoo.conf on the machine
+; it deploys to, filling in the two passwords; that copy is the one Odoo reads
+; and it is never committed.
+addons_path = /mnt/extra-addons
+data_dir = /var/lib/odoo
+
+; Named here rather than left to the image's entrypoint, because a command run
+; inside the container — the module upgrade below, a shell — does not go through
+; the entrypoint and would otherwise look for a local socket.
+db_host = db
+db_port = 5432
+db_user = odoo
+db_password = POSTGRES_PASSWORD_GOES_HERE
+
+; One database, pinned, so the REST API resolves it without a selector and the
+; database manager is gone: no creating, dropping or duplicating from outside.
+db_name = odoo_19
+dbfilter = ^odoo_19$
+list_db = False
+
+; The master password. bootstrap.sh replaces this with a random one on the
+; machine it deploys to; the demo value is never what a deployment runs.
+admin_passwd = change-me-before-deploying
+
+; Caddy terminates HTTPS and both it and nginx pass X-Forwarded-Proto through.
+; Without this Odoo would write http:// links into mails and read every visitor
+; as coming from the proxy.
+proxy_mode = True
+
+; Two workers is comfortable on a 2 GB machine, and the cron thread is what
+; opens a scheduled auction and closes it on time — the auction engine ticks
+; once a minute, so it must never be 0.
+workers = 2
+max_cron_threads = 1
+limit_time_cpu = 120
+limit_time_real = 240
+log_level = info

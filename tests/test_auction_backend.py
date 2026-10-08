@@ -246,6 +246,16 @@ raises('no bids after the close', UserError, lambda: bid(p_primus, v_primus, 600
 check('the request timeline records the close',
       r.history_ids[-1].title == 'Reverse Auction Closed', r.history_ids[-1].title)
 
+raises('awarding before the manager approves is refused', UserError, a.action_award)
+raises('a buyer cannot approve the award', UserError, a.action_approve_award)
+a.with_user(admin).action_approve_award(participant=a.participant_ids.filtered(lambda p: p.rank == 2), note='second look')
+check('the manager can approve another level', a.approved_rank == 2 and a.approval_note == 'second look',
+      (a.approved_rank, a.approval_note))
+a.with_user(admin).action_approve_award()
+check('and change it to L1 before the award', a.approved_rank == 1 and a.approved_participant_id.rank == 1,
+      a.approved_rank)
+raises('the buyer cannot award a level the manager did not approve', UserError,
+       lambda: a.action_award(participant=a.participant_ids.filtered(lambda p: p.rank == 2)))
 a.action_award()
 check('award goes to L1', a.state == 'awarded' and a.winner_id == apex and a.awarded_total == 144000,
       (a.state, a.winner_id.name, a.awarded_total))
@@ -284,6 +294,7 @@ m1, m2 = a5.line_ids.sorted('sequence')
 a5.with_user(v_primus)._place_bid(pa, {m1.id: 60000, m2.id: 7000})
 a5.sudo().write({'start_date': now() - timedelta(minutes=30), 'end_date': now() - timedelta(seconds=1)})
 a5._sync_state()
+a5.with_user(admin).action_approve_award()
 a5.action_award()
 r5.invalidate_recordset()
 check('award still reprices the items, matched by name',
@@ -312,6 +323,40 @@ a3.action_bid_again()
 check('Bid Again reopens it for another round', a3.state == 'live'
       and abs((a3.end_date - now()).total_seconds() - 15 * 60) < 5, (a3.state, a3.end_date))
 check('its bidders are back in', set(a3.participant_ids.mapped('state')) == {'live'})
+
+# A second round starts from the opening price: nobody carries their bid over,
+# but every bid of the first round stays in the log.
+r9 = approved_request(LINES)
+a9 = Auction._launch_for_request(r9, primus | apex, soon(2), 5, min_decrement=1000)
+for p in a9.participant_ids:
+    p.sudo()._respond(True)
+w_primus = a9.participant_ids.filtered(lambda p: p.partner_id == primus)
+w_apex = a9.participant_ids.filtered(lambda p: p.partner_id == apex)
+k1, k2 = a9.line_ids.sorted('sequence')
+bid9 = lambda who, user, laptop, dock: a9.with_user(user)._place_bid(who, {k1.id: laptop, k2.id: dock})
+bid9(w_primus, v_primus, 66000, 8000)     # 148000
+bid9(w_apex, v_apex, 65000, 8000)         # 146000
+check('round one stands at the lower bid', (a9.round_no, a9.best_total, a9.leader_id) == (1, 146000, apex),
+      (a9.round_no, a9.best_total, a9.leader_id.name))
+a9.sudo().write({'start_date': now() - timedelta(minutes=30), 'end_date': now() - timedelta(seconds=1)})
+a9._sync_state()
+bids_before = len(a9.bid_ids)
+a9.action_bid_again()
+check('the new round is numbered', a9.round_no == 2 and a9.state == 'live', (a9.round_no, a9.state))
+check('everyone starts from the opening price again',
+      set(a9.participant_ids.mapped('current_total')) == {0.0} and set(a9.participant_ids.mapped('rank')) == {0}
+      and not a9.leader_id and a9.best_total == 0,
+      (a9.participant_ids.mapped('current_total'), a9.best_total))
+check('and the earlier round is still in the log', len(a9.bid_ids) == bids_before == 2)
+# 151000: above both round-one bids, which round one would have refused.
+bid9(w_apex, v_apex, 67000, 8500)
+check('a bid the first round would have refused is fine in the second',
+      a9.best_total == 151000 and a9.leader_id == apex, (a9.best_total, a9.leader_id.name))
+check('the new bid is stamped with its round', a9.bid_ids.sorted('id')[-1].round_no == 2)
+check('the log now holds both rounds', sorted(a9.bid_ids.mapped('round_no')) == [1, 1, 2])
+view = a9.sudo()._to_vendor_dict(w_primus)
+check('a vendor may bid up to the opening price again', view['nextMaxBid'] == a9.ceiling_total and view['me']['total'] == 0,
+      (view['nextMaxBid'], view['me']['total']))
 a3.sudo().write({'start_date': now() - timedelta(minutes=30), 'end_date': now() - timedelta(seconds=1)})
 a3._sync_state()
 a3.sudo().closed_on = now() - timedelta(minutes=16)

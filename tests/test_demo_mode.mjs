@@ -25,7 +25,7 @@ const out = mkdtempSync(join(tmpdir(), 'smartspend-demo-'));
 execFileSync(join(APP, 'node_modules/.bin/tsc'), [join(APP, 'src/demoMode.ts'),
   '--outDir', out, '--target', 'es2022', '--module', 'es2022'],
   { cwd: out, stdio: 'pipe' });
-const { resolveDemoUser, resolveApiUrl, DEFAULT_API_URL, OFFLINE_TOKEN, DEMO_ACCOUNTS } =
+const { resolveDemoUser, resolveApiUrl, deploymentApiUrl, DEFAULT_API_URL, OFFLINE_TOKEN, DEMO_ACCOUNTS } =
   await import(pathToFileURL(join(out, 'demoMode.js')).href);
 
 console.log('--- signing in with no Odoo ---');
@@ -71,6 +71,24 @@ ok('with neither, the default stands',
    resolveApiUrl('', null) === DEFAULT_API_URL);
 ok('other query parameters are ignored',
    resolveApiUrl('?utm=x&api=https://a.example.com&z=1', null) === 'https://a.example.com');
+
+console.log('\n--- a deployment that names its own backend (config.js) ---');
+const DEPLOYED = 'https://smartspend-demo.example.com';
+ok('what the deployment named is used, so the plain URL is the whole link',
+   resolveApiUrl('', null, DEFAULT_API_URL, DEPLOYED) === DEPLOYED);
+ok('and it beats a stored value left over from an earlier ?api= visit',
+   resolveApiUrl('', 'http://127.0.0.1:8019', DEFAULT_API_URL, DEPLOYED) === DEPLOYED);
+ok('but ?api= still wins, so a live demo can be pointed elsewhere',
+   resolveApiUrl('?api=https://tunnel.example.com', null, DEFAULT_API_URL, DEPLOYED)
+   === 'https://tunnel.example.com');
+ok('a trailing slash is trimmed here too',
+   resolveApiUrl('', null, DEFAULT_API_URL, DEPLOYED + '/') === DEPLOYED);
+ok('the placeholder config.js names nothing, so a static host falls back',
+   resolveApiUrl('', null, DEFAULT_API_URL, null) === DEFAULT_API_URL);
+ok('a mistyped deployment value falls back instead of breaking every call',
+   resolveApiUrl('', null, DEFAULT_API_URL, 'smartspend-demo.example.com') === DEFAULT_API_URL);
+ok('with no window at all, reading the deployment value is not an error',
+   deploymentApiUrl() === null);
 
 console.log('\n' + '='.repeat(60));
 console.log(`${pass + fail} checks, ${fail} failed`);

@@ -6,3 +6,7 @@ __pycache__/
 .env
 *.log
 .DS_Store
+
+# Filled in per machine, never the shipped defaults (see deploy/bootstrap.sh).
+deploy/odoo.conf
+deploy/data/

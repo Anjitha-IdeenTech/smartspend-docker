@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="smartspend_request_delegate_view_form" model="ir.ui.view">
+        <field name="name">smartspend.request.delegate.form</field>
+        <field name="model">smartspend.request.delegate</field>
+        <field name="arch" type="xml">
+            <form string="Delegate Approval">
+                <p class="text-muted">
+                    The step keeps its designation and its place in the chain. Only the
+                    user named below may sign it once it is delegated.
+                </p>
+                <group>
+                    <field name="request_ids" widget="many2many_tags" readonly="1"/>
+                    <field name="waiting_on" readonly="1"/>
+                    <field name="user_id" options="{'no_create': True}"/>
+                    <field name="note" placeholder="e.g. On leave until the 24th — please sign in my place."/>
+                </group>
+                <footer>
+                    <button name="action_confirm" type="object" string="Delegate"
+                            class="btn-primary" data-hotkey="q"/>
+                    <button string="Discard" class="btn-secondary" special="cancel" data-hotkey="x"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+</odoo>

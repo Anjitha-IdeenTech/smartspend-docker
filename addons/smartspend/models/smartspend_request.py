@@ -25,6 +25,27 @@ URGENCY_SELECTION = [('high', 'High'), ('medium', 'Medium'), ('low', 'Low')]
 # How an uncontracted request is taken to market. The keys predate the wording
 # and are left alone — a stored 'rfq' means the same thing it always did.
 SOURCING_SELECTION = [('direct', 'Negotiation'), ('rfq', 'Multi RFQ'), ('auction', 'Bidding')]
+# How the goods came in — recorded on the goods receipt (GRN).
+SHIPPING_METHOD_SELECTION = [
+    ('road', 'Road Transport'),
+    ('courier', 'Courier'),
+    ('air', 'Air Freight'),
+    ('rail', 'Rail Freight'),
+    ('sea', 'Sea Freight'),
+    ('vendor', 'Vendor Delivery'),
+    ('pickup', 'Self Pickup'),
+]
+# How the vendor is paid — chosen on the vendor invoice, used by the payment.
+PAYMENT_METHOD_SELECTION = [
+    ('neft', 'Bank Transfer (NEFT)'),
+    ('rtgs', 'Bank Transfer (RTGS)'),
+    ('imps', 'IMPS'),
+    ('upi', 'UPI Corporate Pay'),
+    ('cheque', 'Cheque'),
+    ('dd', 'Demand Draft'),
+    ('card', 'Corporate Card'),
+    ('lc', 'Letter of Credit'),
+]
 
 # States at or beyond the point where an order exists. Confirming an order
 # must never pull a request back to "PO Confirmed" from one of these: a paid
@@ -187,6 +208,11 @@ class SmartspendRequest(models.Model):
         'res.users', string='Cancelled by', readonly=True, copy=False)
     cancelled_on = fields.Datetime(string='Cancelled On', readonly=True, copy=False)
     cancel_reason = fields.Text(string='Cancellation Reason', readonly=True, copy=False, tracking=True)
+    # Who the approver's question went to. The requester by default, but an
+    # approver can ask whoever actually knows the answer — the record rules let
+    # that person read the request so they can reply.
+    clarification_user_id = fields.Many2one(
+        'res.users', string='Info Requested From', readonly=True, copy=False, tracking=True)
     delegated = fields.Boolean(
         string='Raised on Behalf', compute='_compute_delegated', store=True,
         help="The account that created this record is not the one the request is for.")
@@ -196,6 +222,16 @@ class SmartspendRequest(models.Model):
     history_ids = fields.One2many('smartspend.request.history', 'request_id', string='Timeline', copy=False)
     comment_ids = fields.One2many('smartspend.request.comment', 'request_id', string='Clarifications', copy=False)
     document_ids = fields.One2many('smartspend.request.document', 'request_id', string='Documents', copy=False)
+
+    # -- Receipt and payment --------------------------------------------------
+    # Set on the portal's goods receipt and vendor invoice, where each is a
+    # required choice; printed on the GRN and invoice documents.
+    shipping_method = fields.Selection(
+        SHIPPING_METHOD_SELECTION, string='Shipping Method', tracking=True, copy=False,
+        help="How the goods were delivered. Recorded when the goods receipt (GRN) is generated.")
+    payment_method = fields.Selection(
+        PAYMENT_METHOD_SELECTION, string='Payment Method', tracking=True, copy=False,
+        help="How the vendor is paid. Chosen when the vendor invoice is posted.")
 
     # -- Rate contract ------------------------------------------------------
     contract_id = fields.Many2one(
@@ -300,6 +336,10 @@ class SmartspendRequest(models.Model):
         string='PO Acknowledged', copy=False, readonly=True,
         help="The vendor has confirmed receipt of the order, the delivery commit "
              "date and the pricing.")
+    vendor_delivery_date = fields.Date(
+        string='Vendor Committed Delivery', copy=False, readonly=True, tracking=True,
+        help="The delivery date the vendor committed to when acknowledging the order. "
+             "Also set as the expected arrival on its purchase orders.")
 
     settlement_pending = fields.Boolean(
         string='Bill Outstanding', compute='_compute_settlement_pending',
@@ -820,15 +860,51 @@ class SmartspendRequest(models.Model):
             'context': {'default_request_ids': self.ids},
         }
 
-    def action_request_clarification(self):
+    def action_request_clarification(self, ask_user=None):
+        """Put the request on hold for more information.
+
+        :param ask_user: who should answer. Defaults to the requester.
+        """
         for request in self:
             previous = request.state
-            request.state = 'clarification'
-            request._log_history(
-                _("Info Requested"), _("Approver asked for clarification"),
-                state_from=previous, state_to='clarification')
-            request.message_post(body=_(
-                "%s asked the requester for more information.", self.env.user.name))
+            asked = ask_user or request.user_id
+            request.write({
+                'state': 'clarification',
+                'clarification_user_id': asked.id,
+            })
+            if ask_user and ask_user != request.user_id:
+                request._log_history(
+                    _("Info Requested"), _("Approver asked %s for clarification", ask_user.name),
+                    state_from=previous, state_to='clarification')
+                request.message_post(body=_(
+                    "%(approver)s asked %(user)s for more information.",
+                    approver=self.env.user.name, user=ask_user.name))
+            else:
+                request._log_history(
+                    _("Info Requested"), _("Approver asked for clarification"),
+                    state_from=previous, state_to='clarification')
+                request.message_post(body=_(
+                    "%s asked the requester for more information.", self.env.user.name))
+        return True
+
+    def _apply_clarification_reply(self, text):
+        """Record the answer to an approver's question and send it back for approval.
+
+        Runs as superuser: the person asked may not be the requester, and their
+        read access does not extend to rewriting the request. The caller checks
+        they are allowed to answer.
+        """
+        self.ensure_one()
+        answered_by = self.env.user
+        request = self.sudo()
+        if request.state != 'clarification':
+            raise UserError(_("%s is not waiting on a clarification.", request.name))
+        request.comment_ids = [fields.Command.create({'role': 'employee', 'text': text})]
+        request.state = 'to_approve'
+        request._log_history(
+            _("Clarified by Employee"), _('%(user)s: "%(text)s"', user=answered_by.name, text=text),
+            state_from='clarification', state_to='to_approve')
+        request.message_post(body=_("%(user)s answered: %(text)s", user=answered_by.name, text=text))
         return True
 
     def action_approve(self):
@@ -862,6 +938,13 @@ class SmartspendRequest(models.Model):
             step = request.approval_next_id
             if step:
                 if not step._may_be_signed_by(self.env.user):
+                    # A delegated step is nobody's but the delegate's, and saying
+                    # "you do not hold that designation" to the person who holds
+                    # it — and gave it away an hour ago — explains nothing.
+                    if step.delegate_user_id:
+                        raise UserError(_(
+                            "%(request)s was delegated to %(user)s, who signs it now.",
+                            request=request.name, user=step.delegate_user_id.name))
                     raise UserError(_(
                         "%(request)s is waiting on the %(designation)s. Your account "
                         "does not hold that designation.",
@@ -1014,6 +1097,134 @@ class SmartspendRequest(models.Model):
                 count=repriced, contract=request.contract_id.name, user=self.env.user.name))
         return True
 
+    def _step_for_action(self, order=None):
+        """The step an approver is acting on: the one named, else the pending one."""
+        self.ensure_one()
+        if order:
+            step = self.approval_ids.filtered(lambda s: s.sequence == int(order))[:1]
+            if not step:
+                raise UserError(_("%(request)s has no approval step %(order)s.",
+                                  request=self.name, order=order))
+            if step.state != 'pending':
+                raise UserError(_(
+                    "Step %(order)s has already been %(state)s.",
+                    order=order, state=dict(step._fields['state'].selection)[step.state].lower()))
+            return step
+        step = self.approval_next_id
+        if not step:
+            raise UserError(_(
+                "%s is not waiting on an approval, so there is no step to act on.", self.name))
+        return step
+
+    def _apply_delegate(self, user, note=None, order=None):
+        """Hand one approval step to another user.
+
+        The step keeps its designation and its place in the chain — what moves
+        is who may sign it. Only whoever may sign the step today can give it
+        away, so a delegation is itself an act of the approver rather than
+        something done to them.
+        """
+        note = (note or '').strip()
+        for request in self:
+            step = request._step_for_action(order)
+            if not step._may_be_signed_by(self.env.user):
+                raise UserError(_(
+                    "%(request)s is waiting on the %(designation)s, so only they can "
+                    "delegate it.", request=request.name, designation=step.designation_id.name))
+            if not user:
+                raise UserError(_("Say who the step is being delegated to."))
+            if user == self.env.user:
+                raise UserError(_("%s is already yours to sign.", request.name))
+            if not user.active:
+                raise UserError(_("%s's account is archived.", user.name))
+            step.sudo().write({
+                'delegate_user_id': user.id,
+                'delegated_by_id': self.env.user.id,
+                'delegated_on': fields.Datetime.now(),
+                'delegation_note': note or False,
+            })
+            request.invalidate_recordset(['approval_next_id'])
+            body = _(
+                "Level %(order)s (%(designation)s) delegated by %(from_user)s to "
+                "%(to_user)s%(note)s",
+                order=step.sequence, designation=step.designation_id.name,
+                from_user=self.env.user.name, to_user=user.name,
+                note=_(" — %s", note) if note else '')
+            request._log_history(_("Approval Delegated"), body)
+            request.message_post(body=body)
+        return True
+
+    def action_delegate(self):
+        """Ask who the step goes to, then delegate it."""
+        return {
+            'type': 'ir.actions.act_window',
+            'name': _('Delegate Approval'),
+            'res_model': 'smartspend.request.delegate',
+            'view_mode': 'form',
+            'target': 'new',
+            'context': {'default_request_ids': self.ids},
+        }
+
+    def _apply_add_approver(self, designation, position='next', note=None):
+        """Insert an extra approver into a chain that is already running.
+
+        ``position`` is ``next`` — signs immediately after the step now waiting
+        — or ``last``, after everyone else. Steps already signed are never
+        renumbered past: what was signed stays where it was signed.
+        """
+        note = (note or '').strip()
+        for request in self:
+            if not designation:
+                raise UserError(_("Say which designation is being added."))
+            if request.state not in ('to_approve', 'clarification'):
+                raise UserError(_(
+                    "%(request)s is %(state)s, so there is no running chain to add to.",
+                    request=request.name,
+                    state=dict(STATE_SELECTION).get(request.state, request.state)))
+            steps = request.approval_ids.sorted('sequence')
+            waiting = request.approval_next_id
+            if position == 'last':
+                at = (steps[-1:].sequence or 0) + 1
+            else:
+                # Straight after the step being waited on, so the person adding
+                # it signs first and the new approver sees a request their own
+                # level has already passed.
+                at = (waiting.sequence if waiting else steps[-1:].sequence or 0) + 1
+            # Make room: everything from that position down moves one place.
+            for step in steps.sorted('sequence', reverse=True):
+                if step.sequence >= at:
+                    step.sudo().sequence = step.sequence + 1
+            request.sudo().approval_ids = [fields.Command.create({
+                'sequence': at,
+                'designation_id': designation.id,
+                'branch_id': request.branch_id.id or False,
+                'department_id': request.department_id.id or False,
+                'added_by_id': self.env.user.id,
+                'added_on': fields.Datetime.now(),
+            })]
+            request.invalidate_recordset(
+                ['approval_next_id', 'approval_level', 'approval_done', 'approval_total'])
+            holders = designation.sudo().user_ids
+            body = _(
+                "%(designation)s added as level %(order)s by %(user)s%(holders)s%(note)s",
+                designation=designation.name, order=at, user=self.env.user.name,
+                holders=_(" (%s)", ", ".join(holders.mapped('login'))) if holders else '',
+                note=_(" — %s", note) if note else '')
+            request._log_history(_("Approver Added"), body)
+            request.message_post(body=body)
+        return True
+
+    def action_add_approver(self):
+        """Ask which designation is being added, then add it."""
+        return {
+            'type': 'ir.actions.act_window',
+            'name': _('Add Approver'),
+            'res_model': 'smartspend.request.add.approver',
+            'view_mode': 'form',
+            'target': 'new',
+            'context': {'default_request_ids': self.ids},
+        }
+
     # ------------------------------------------------------------------
     # Purchase order
     # ------------------------------------------------------------------
@@ -1127,6 +1338,7 @@ class SmartspendRequest(models.Model):
         # that sent the cancelled one to the vendor does not carry over.
         self.po_released = False
         self.po_acknowledged = False
+        self.vendor_delivery_date = False
         # A draft order reads "RFQ" in Odoo. Leaving it draft means a request
         # the portal has taken all the way to paid still points at an order
         # that says nobody has committed to it. The flag suppresses the
@@ -1174,11 +1386,15 @@ class SmartspendRequest(models.Model):
         supplier = user.sudo().partner_id.commercial_partner_id
         return bool(self.partner_id) and self.sudo().partner_id.commercial_partner_id == supplier
 
-    def action_acknowledge_purchase_order(self):
+    def action_acknowledge_purchase_order(self, delivery_date=None):
         """Record the vendor's acknowledgment of the released order.
 
         The steps run in order: there is nothing for a vendor to confirm until
-        the purchase head has actually released the document to them.
+        the purchase head has actually released the document to them. The
+        vendor confirms with the date it commits to deliver by — required, and
+        not in the past — which becomes the expected arrival on the order.
+
+        :param delivery_date: the committed delivery date (date or ISO string).
         """
         self.ensure_one()
         if not self.po_released:
@@ -1186,12 +1402,26 @@ class SmartspendRequest(models.Model):
                 "%s has not been released by the purchase head yet.", self.name))
         if self.po_acknowledged:
             return True
-        self.po_acknowledged = True
+        commit = fields.Date.to_date(delivery_date) if delivery_date else False
+        if not commit:
+            raise UserError(_(
+                "Confirm the expected delivery date to acknowledge %s.", self.name))
+        if commit < fields.Date.context_today(self):
+            raise UserError(_("The expected delivery date cannot be in the past."))
+        self.write({'po_acknowledged': True, 'vendor_delivery_date': commit})
+        arrival = datetime.combine(commit, datetime.min.time()).replace(hour=12)
+        orders = self.purchase_order_ids.filtered(lambda o: o.state not in ('done', 'cancel'))
+        orders.order_line.filtered(lambda l: not l.display_type).write({'date_planned': arrival})
+        when = commit.strftime('%b %d, %Y')
+        late = self.delivery_date and commit > self.delivery_date
         self._log_history(
             _("Vendor Acknowledged PO"),
-            _("Vendor confirmed delivery commit date & pricing."))
+            _("Vendor confirmed pricing and committed to deliver by %(date)s%(late)s.",
+              date=when,
+              late=_(" — %s day(s) after the date needed", (commit - self.delivery_date).days) if late else ''))
         self.message_post(body=_(
-            "Vendor acknowledgment recorded by %s.", self.env.user.name))
+            "Vendor acknowledgment recorded by %(user)s: delivery committed for %(date)s.",
+            user=self.env.user.name, date=when))
         return True
 
     # ------------------------------------------------------------------
@@ -1325,10 +1555,17 @@ class SmartspendRequest(models.Model):
                 # name the role that has to sign but not the account to sign in
                 # as, which leaves the chain unanswerable: "Finance CapEx Head"
                 # is not something anyone can log in as.
+                # A delegated step is signed by the delegate, so they are the
+                # account the portal should name — the designation's holders
+                # would send the reader to somebody who can no longer sign it.
                 'holders': [{
                     'name': holder.name,
                     'login': holder.login,
-                } for holder in step.designation_id.sudo().user_ids],
+                } for holder in step._signatories()],
+                'delegatedTo': step.delegate_user_id.name or '',
+                'delegatedBy': step.delegated_by_id.name or '',
+                'delegationNote': step.delegation_note or '',
+                'addedIn': bool(step.added_by_id),
             } for step in self.approval_ids.sorted('sequence')],
             'deliveryDate': self.delivery_date.strftime(DISPLAY_DATE_FORMAT) if self.delivery_date else '',
             'buyer': self.buyer_ref or '',
@@ -1351,6 +1588,10 @@ class SmartspendRequest(models.Model):
                 'text': comment.text,
                 'date': comment.comment_date.strftime(DISPLAY_DATETIME_FORMAT) if comment.comment_date else '',
             } for comment in self.comment_ids],
+            # Who the approver's question went to, so the portal can route it to
+            # that person's Questions tab. Empty on older clarifications.
+            'clarificationFrom': self.sudo().clarification_user_id.name or '',
+            'clarificationFromLogin': self.sudo().clarification_user_id.login or '',
             'vendorBids': [{
                 'vendorName': bid.vendor_name,
                 'price': bid.price,
@@ -1801,6 +2042,17 @@ class SmartspendRequestLine(models.Model):
                 or order.date_order or fields.Datetime.now()
             ),
         }
+
+
+    def action_product_history(self):
+        """What this product has cost us before — contracts, orders, requests.
+
+        The buyer pricing this line would otherwise leave the request to go and
+        look; this is that search, from the line.
+        """
+        self.ensure_one()
+        return self.env['smartspend.product.history']._open_for(
+            self.product_name, self.product_id, self.request_id.location)
 
 
 class SmartspendRequestBid(models.Model):

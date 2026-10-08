@@ -17,6 +17,15 @@ class PurchaseOrder(models.Model):
     smartspend_contract_ref = fields.Char(
         related='smartspend_contract_id.name', string='Contract Reference')
     smartspend_request_count = fields.Integer(compute='_compute_smartspend_request_count')
+    smartspend_subscription_id = fields.Many2one(
+        'smartspend.subscription', string='Subscription', copy=False, index='btree_not_null',
+        help="Recurring subscription this order was raised for.")
+    smartspend_receipt_ids = fields.One2many(
+        'smartspend.receipt', 'purchase_order_id', string='Goods Receipts',
+        help="Deliveries recorded against this order, backorders included.")
+    smartspend_cycle_date = fields.Date(
+        string='Subscription Cycle', copy=False,
+        help="The order date of the subscription cycle this order covers.")
 
     @api.depends('smartspend_request_id')
     def _compute_smartspend_request_count(self):
@@ -61,9 +70,12 @@ class PurchaseOrder(models.Model):
         # uninstalled nothing ever marks itself received. The portal timeline
         # already tells the employee the goods landed, so record that here
         # rather than leave the order permanently unbillable.
-        for line in self.order_line:
-            if line.qty_received < line.product_qty:
-                line.qty_received = line.product_qty
+        # Unless the deliveries were recorded as goods receipts: then the
+        # order is billed for what they say arrived, backorders and all.
+        if not self.smartspend_receipt_ids:
+            for line in self.order_line:
+                if line.qty_received < line.product_qty:
+                    line.qty_received = line.product_qty
         self.invalidate_recordset(['invoice_status'])
         if self.invoice_status == 'to invoice':
             self.action_create_invoice()
@@ -125,3 +137,18 @@ class PurchaseOrder(models.Model):
             if order.smartspend_request_id.state not in SETTLED_STATES:
                 order.smartspend_request_id.state = 'po_confirmed'
         return res
+
+
+class PurchaseOrderLine(models.Model):
+    _inherit = 'purchase.order.line'
+
+    def action_product_history(self):
+        """What this product has cost us before, from the order line.
+
+        The same window the request line opens, so a buyer checking a price
+        against history does not have to remember which screen offers it.
+        """
+        self.ensure_one()
+        return self.env['smartspend.product.history']._open_for(
+            self.product_id.display_name or self.name, self.product_id,
+            self.order_id.smartspend_request_id.location)

@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="smartspend_product_request_view_list" model="ir.ui.view">
+        <field name="name">smartspend.product.request.list</field>
+        <field name="model">smartspend.product.request</field>
+        <field name="arch" type="xml">
+            <list string="Product Creation Requests" decoration-warning="state == 'pending'"
+                  decoration-success="state in ('approved', 'mapped')" decoration-muted="state == 'rejected'">
+                <field name="name"/>
+                <field name="product_name"/>
+                <field name="requested_by_id"/>
+                <field name="category_id" optional="show"/>
+                <field name="estimated_price" optional="show"/>
+                <field name="request_ids" widget="many2many_tags" optional="show"/>
+                <field name="product_id" optional="show"/>
+                <field name="create_date" string="Asked On" optional="show"/>
+                <field name="state" widget="badge" decoration-warning="state == 'pending'"
+                       decoration-success="state in ('approved', 'mapped')" decoration-danger="state == 'rejected'"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="smartspend_product_request_view_form" model="ir.ui.view">
+        <field name="name">smartspend.product.request.form</field>
+        <field name="model">smartspend.product.request</field>
+        <field name="arch" type="xml">
+            <form string="Product Creation Request">
+                <header>
+                    <button name="action_approve_button" type="object" string="Approve &amp; Add to Catalogue"
+                            class="btn-primary" invisible="state != 'pending'"
+                            groups="smartspend.group_smartspend_manager"/>
+                    <button name="action_reject_button" type="object" string="Reject"
+                            invisible="state != 'pending'" groups="smartspend.group_smartspend_manager"
+                            confirm="Reject this product? Put the reason in Manager Note first."/>
+                    <field name="state" widget="statusbar" statusbar_visible="pending,approved"/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <span class="text-muted"><field name="name" readonly="1"/></span>
+                        <h1><field name="product_name"/></h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="requested_by_id" readonly="1"/>
+                            <field name="category_id"/>
+                            <field name="product_category_id"/>
+                            <field name="estimated_price"/>
+                        </group>
+                        <group>
+                            <field name="product_id" invisible="not product_id"/>
+                            <field name="decision_note"/>
+                            <field name="decided_by_id" invisible="not decided_by_id"/>
+                            <field name="decided_on" invisible="not decided_on"/>
+                        </group>
+                    </group>
+                    <group>
+                        <field name="reason"/>
+                        <field name="description"/>
+                        <field name="request_ids" widget="many2many_tags" readonly="1"/>
+                    </group>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="smartspend_product_request_action" model="ir.actions.act_window">
+        <field name="name">Product Creation Requests</field>
+        <field name="res_model">smartspend.product.request</field>
+        <field name="view_mode">list,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">No product creation requests</p>
+            <p>When someone asks for a product the catalogue does not have, a request lands here for approval.</p>
+        </field>
+    </record>
+
+</odoo>
