@@ -91,6 +91,13 @@ function pick(text: string, options: string[]): string[] {
   });
 }
 
+/** What the assistant says when the item is not in the catalogue. */
+const newProductNote = (name?: string) => (
+  <><b>“{name || 'That item'}” isn't in our catalogue yet</b>, so I've added it as a new product. When you submit,
+    a request to add it goes to the procurement manager — your request still goes for approval meanwhile.
+    Tap its name to rename it, or pick a catalogue item instead.</>
+);
+
 export function RequestChat({
   userName, branches, departments, preview, onSubmit, busy, offline,
   attachments, onAttach, onRemoveAttachment, onVoice, suggestFor,
@@ -339,7 +346,7 @@ export function RequestChat({
     const asksForSomething = /\b(need|needs|want|require|requesting|request|order|buy|get|procure)\b|\d/i.test(text);
     if (!parsed?.found.products && !s.lines.length && parsed && asksForSomething && understood) {
       unsized = mergeLines(parsed.lineItems, parsed.found.quantity);
-      say('bot', <>I couldn't match that item to our catalogue, so I've added it as written — tap its name to rename it.</>);
+      say('bot', newProductNote(parsed.lineItems[0]?.productName));
     }
 
     if (!understood) {
@@ -347,7 +354,7 @@ export function RequestChat({
         // Nothing in the catalogue matched: keep their words as the item, the
         // way the old flow did, and let them correct it.
         unsized = mergeLines(parsed.lineItems, parsed.found.quantity);
-        say('bot', <>I couldn't match that item to our catalogue, so I've added it as written — tap its name to rename it.</>);
+        say('bot', newProductNote(parsed.lineItems[0]?.productName));
       } else if (ask === 'branch' || ask === 'department') {
         say('bot', <>I don't have a {ask === 'branch' ? 'branch' : 'department'} called “{text}”. Pick one below.</>);
         think(() => nextStep());

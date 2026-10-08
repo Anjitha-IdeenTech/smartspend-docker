@@ -109,6 +109,28 @@ def _staged_quantity(value):
     return quantity if quantity > 0 else 1
 
 
+# Words around the item in "I need 5 bicycles for the Kochi office by Friday".
+_LEAD = re.compile(
+    r"^(?:(?:hi|hello|hey|please|pls|kindly|can|could|would|you|we|i|i'd|i'm|im|our|team|"
+    r"would like|like|to|need|needs|want|wants|require|requires|requesting|request|order|"
+    r"buy|purchase|procure|get|me|us|some|a|an|the|of|about|around|approx(?:imately)?|"
+    r"[0-9]+(?:\.[0-9]+)?|nos?|units?|pcs|pieces|qty|x)\b[\s,.:;-]*)+",
+    re.IGNORECASE)
+_TAIL = re.compile(
+    r"\s+(?:for|at|in|to|by|before|within|on|from|delivered|deliver|urgently|urgent|asap|"
+    r"immediately|next|this|please|thanks|thank)\b.*$",
+    re.IGNORECASE)
+
+
+def _item_phrase(text):
+    """The item a sentence asks for: requests, quantities and politeness off the
+    front, "for the Kochi office by Friday" off the end."""
+    phrase = _LEAD.sub('', (text or '').strip())
+    phrase = _TAIL.sub('', phrase)
+    phrase = re.sub(r'[\s,.;:!?]+$', '', phrase).strip()
+    return phrase[:1].upper() + phrase[1:] if phrase else ''
+
+
 def parse_requisition(text, items=None):
     """Parse ``text`` (and anything staged alongside it) into a requisition.
 
@@ -153,11 +175,17 @@ def parse_requisition(text, items=None):
         })
 
     if not lines:
-        # Nothing in the catalogue matched: keep the sentence itself as the item
-        # so the employee can correct it on the extraction form.
+        # Nothing in the catalogue matched: keep what was asked for — the item,
+        # not the whole sentence — so it reads as a product the employee can
+        # correct, and as a new product for the catalogue.
+        item = _item_phrase(text)
+        at = text.lower().find(item.lower()) if item else -1
         lines.append({
-            'productName': text[:80] or 'New requested item',
-            'productQty': _quantity_before(text, len(text)) if text else 1,
+            'productName': item[:80] or text[:80] or 'New requested item',
+            # The number just before the item ("2 3D printers"), not the last
+            # one in the sentence.
+            'productQty': (_quantity_before(text, at) if at > 0 else
+                           _quantity_before(text, len(text)) if text else 1),
             'targetPrice': 0.0,
             '_category': DEFAULT_CATEGORY,
             '_position': 0,
