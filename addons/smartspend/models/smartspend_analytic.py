@@ -9,7 +9,6 @@ analytic report Odoo has see the same split.
 from odoo import api, fields, models, _
 from odoo.exceptions import ValidationError
 
-from .smartspend_product_request import same_product
 
 
 class SmartspendRequestLine(models.Model):
@@ -54,17 +53,22 @@ class SmartspendRequest(models.Model):
 
     def _upsert_from_portal(self, payload):
         """The portal re-sends every item on each save, which replaces the line
-        records. Keep each item's analytic split across that, matched by name."""
+        records. Keep what only Odoo holds — each item's analytic split and its
+        details (brand, model…) — across that, matched by name."""
         reference = (payload.get('id') or '').strip()
         before = self.sudo().search([('name', '=', reference)], limit=1) if reference else self.browse()
-        kept = [(line.product_name, line.analytic_distribution) for line in before.line_ids
-                if line.analytic_distribution]
+        from .smartspend_product_request import same_product  # loaded after this module
+        kept = [(line.product_name, line.analytic_distribution, line.description) for line in before.line_ids
+                if line.analytic_distribution or line.description]
         request = super()._upsert_from_portal(payload)
-        if kept:
-            for line in request.line_ids:
-                match = next((dist for name, dist in kept if same_product(name, line.product_name)), None)
-                if match and match != line.analytic_distribution:
-                    line.analytic_distribution = match
+        for line in request.line_ids if kept else []:
+            old = next((k for k in kept if same_product(k[0], line.product_name)), None)
+            if not old:
+                continue
+            if old[1] and old[1] != line.analytic_distribution:
+                line.analytic_distribution = old[1]
+            if old[2] and not line.description:
+                line.description = old[2]
         return request
 
     @api.model

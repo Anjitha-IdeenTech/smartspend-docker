@@ -165,14 +165,18 @@ def parse_requisition(text, items=None):
             continue
         seen.add(product_name.casefold())
         category, price = catalog_entry(product_name)
-        lines.append({
+        line = {
             'productName': product_name,
             'productQty': _staged_quantity(item.get('productQty')),
             # A staged chip carries no price; fall back to the catalogue rate.
             'targetPrice': float(item.get('targetPrice') or 0.0) or price,
             '_category': category,
             '_position': STAGED_POSITION + index,
-        })
+        }
+        # Brand, model and the like, as the assistant asked them for a new product.
+        if (item.get('description') or '').strip():
+            line['description'] = item['description'].strip()[:500]
+        lines.append(line)
 
     if not lines:
         # Nothing in the catalogue matched: keep what was asked for — the item,

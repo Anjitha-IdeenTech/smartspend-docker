@@ -238,6 +238,12 @@ class SmartspendRequest(models.Model):
                 if existing:
                     if request not in existing.request_ids:
                         existing.request_ids = [fields.Command.link(request.id)]
+                    # Details the requester gave since (brand, model, a price).
+                    if existing.state == 'pending':
+                        if line.description and not existing.description:
+                            existing.description = line.description
+                        if line.price_unit and not existing.estimated_price:
+                            existing.estimated_price = line.price_unit
                     continue
                 pr = ProductRequest.create({
                     'product_name': line.product_name.strip(),

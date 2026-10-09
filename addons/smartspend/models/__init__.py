@@ -9,5 +9,5 @@ from . import product_category
 from . import smartspend_favorite
 from . import smartspend_subscription
 from . import smartspend_receipt
-from . import smartspend_product_request
 from . import smartspend_analytic
+from . import smartspend_product_request

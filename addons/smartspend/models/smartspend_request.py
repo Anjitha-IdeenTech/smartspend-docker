@@ -1669,12 +1669,13 @@ class SmartspendRequest(models.Model):
             }]
         if lines is not None:
             vals['line_ids'] = [fields.Command.clear()] + [
-                fields.Command.create({
+                fields.Command.create(dict({
                     'sequence': index * 10,
                     'product_name': line.get('productName') or _('Unnamed item'),
                     'product_qty': portal_quantity(line.get('productQty')),
                     'price_unit': portal_price(line.get('targetPrice')),
-                })
+                }, **({'description': line['description'].strip()[:500]}
+                      if (line.get('description') or '').strip() else {})))
                 for index, line in enumerate(lines)
             ]
 

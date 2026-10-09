@@ -19,6 +19,10 @@ import {
 export interface ChatModel { name: string; purpose: string; price: number }
 export interface ChatLine {
   productName: string; productQty: number; targetPrice: number;
+  /** Not in the catalogue: the assistant asks for brand, model and a rough price. */
+  isNew?: boolean; brand?: string; spec?: string; detailsDone?: boolean;
+  /** Brand and model as one line — goes onto the request and the product creation request. */
+  description?: string;
   /** Set when the message named a family ("laptops"): the models to choose from. */
   options?: ChatModel[]; family?: string;
 }
@@ -38,7 +42,7 @@ export interface ChatDraft {
   transcript: string;
 }
 
-type Ask = 'branch' | 'department' | 'neededBy' | 'qty' | 'model' | null;
+type Ask = 'branch' | 'department' | 'neededBy' | 'qty' | 'model' | 'brand' | 'spec' | 'price' | null;
 
 interface Chip { label: string; onPick: () => void; tone?: 'primary' | 'plain'; hint?: string; note?: string }
 interface Msg { id: number; role: 'bot' | 'me'; text: React.ReactNode; chips?: Chip[]; draft?: boolean }
@@ -91,11 +95,67 @@ function pick(text: string, options: string[]): string[] {
   });
 }
 
+/**
+ * For the kinds of thing people most often ask for: well-known brands to offer
+ * as one-tap choices, what a specification usually covers, and common picks.
+ * Suggestions only — any brand or spec can be typed instead.
+ */
+const ITEM_HINTS: { re: RegExp; brands: string[]; spec: string; specs: string[] }[] = [
+  { re: /bicycle|cycle|\bbike/i, brands: ['Hero', 'Hercules', 'Firefox', 'BSA', 'Btwin'],
+    spec: 'frame size, gears or single-speed, adult or kids', specs: ['26-inch, geared', '26-inch, single-speed', '24-inch, geared', 'Kids, 20-inch'] },
+  { re: /chair|sofa|seat/i, brands: ['Featherlite', 'Godrej Interio', 'Green Soul', 'Herman Miller'],
+    spec: 'material, with or without arms, colour', specs: ['Mesh back, with arms', 'Leatherette, high back', 'Visitor chair, no arms'] },
+  { re: /table|desk|cabinet|shelf|rack|wardrobe/i, brands: ['Godrej Interio', 'Featherlite', 'Nilkamal', 'Wipro Furniture'],
+    spec: 'size, material, colour', specs: ['Engineered wood, 4 ft', 'Steel, lockable', 'Height-adjustable'] },
+  { re: /printer|scanner|copier|photocopier/i, brands: ['HP', 'Canon', 'Epson', 'Brother'],
+    spec: 'colour or black & white, A4/A3, network or USB', specs: ['Mono laser, A4, network', 'Colour ink tank, A4, Wi-Fi', 'Multifunction, A3'] },
+  { re: /phone|mobile|smartphone/i, brands: ['Samsung', 'Apple', 'OnePlus', 'Xiaomi', 'Motorola'],
+    spec: 'model, storage, colour', specs: ['128 GB', '256 GB', 'Dual SIM, 5G'] },
+  { re: /tablet|ipad/i, brands: ['Apple', 'Samsung', 'Lenovo'],
+    spec: 'screen size, storage, Wi-Fi or cellular', specs: ['10-inch, 64 GB, Wi-Fi', '11-inch, 128 GB, cellular'] },
+  { re: /camera|cctv|surveillance/i, brands: ['Hikvision', 'CP Plus', 'Dahua', 'Godrej Security'],
+    spec: 'resolution, indoor or outdoor, wired or wireless', specs: ['2 MP dome, indoor', '4 MP bullet, outdoor', 'Wi-Fi, 1080p'] },
+  { re: /\bac\b|air ?condition/i, brands: ['Daikin', 'Voltas', 'LG', 'Blue Star', 'Carrier'],
+    spec: 'capacity (tons), star rating, split or window', specs: ['1.5 ton, 3-star, split', '1 ton, 5-star, split', '2 ton, inverter, split'] },
+  { re: /\bfan\b|fans\b|cooler|heater/i, brands: ['Havells', 'Crompton', 'Usha', 'Bajaj', 'Orient'],
+    spec: 'type, size, wattage', specs: ['Ceiling, 1200 mm', 'Pedestal', 'Wall-mounted'] },
+  { re: /dispenser|purifier|\bro\b/i, brands: ['Kent', 'Aquaguard', 'Blue Star', 'Voltas'],
+    spec: 'capacity, hot/cold/normal, floor or table-top', specs: ['Hot & cold, floor-standing', 'RO + UV, 8 litres', 'Table-top, normal & cold'] },
+  { re: /fridge|refrigerator|microwave|oven/i, brands: ['LG', 'Samsung', 'Whirlpool', 'Godrej', 'IFB'],
+    spec: 'capacity, star rating, model', specs: ['190 L single door', '260 L double door', '25 L convection'] },
+  { re: /coffee|espresso|kettle/i, brands: ['Philips', 'Morphy Richards', 'Nespresso', 'Prestige'],
+    spec: 'type, capacity', specs: ['Drip, 10 cups', 'Espresso machine', 'Electric kettle, 1.5 L'] },
+  { re: /projector/i, brands: ['Epson', 'BenQ', 'ViewSonic', 'Sony'],
+    spec: 'brightness (lumens), resolution, throw', specs: ['3,500 lumens, Full HD', '4,000 lumens, WXGA', 'Short-throw'] },
+  { re: /\btv\b|television|smart ?display/i, brands: ['Samsung', 'LG', 'Sony', 'TCL'],
+    spec: 'size, resolution', specs: ['43-inch, 4K', '55-inch, 4K', '65-inch, 4K'] },
+  { re: /helmet|glove|safety shoe|boots|vest|goggle|harness/i, brands: ['Karam', '3M', 'Udyogi', 'Allen Cooper'],
+    spec: 'size, safety standard, colour', specs: ['IS-certified, free size', 'Size L, high-visibility', 'Steel toe, size 9'] },
+  { re: /uniform|t-?shirt|jacket|shirt/i, brands: ['Raymond', 'Peter England', 'Van Heusen'],
+    spec: 'sizes, fabric, colour, logo', specs: ['Cotton, with company logo', 'Mixed sizes S–XL'] },
+  { re: /tyre|tire|battery|inverter/i, brands: ['Exide', 'Amaron', 'Luminous', 'MRF'],
+    spec: 'capacity or size, model', specs: ['150 Ah tubular', '1 kVA inverter'] },
+  { re: /mouse|keyboard|headset|webcam|speaker/i, brands: ['Logitech', 'HP', 'Dell', 'boAt'],
+    spec: 'wired or wireless, model', specs: ['Wireless', 'Wired USB', 'Bluetooth'] },
+  { re: /hard ?disk|ssd|pen ?drive|usb drive|storage/i, brands: ['Seagate', 'WD', 'SanDisk', 'Samsung'],
+    spec: 'capacity, interface', specs: ['1 TB external HDD', '512 GB SSD', '64 GB USB 3.0'] },
+];
+const hintFor = (name: string) => ITEM_HINTS.find(h => h.re.test(name));
+const specHint = (name: string) => hintFor(name)?.spec ?? 'model, size, type, colour';
+const describe = (l: ChatLine) => [l.brand && `Brand: ${l.brand}`, l.spec && `Spec: ${l.spec}`].filter(Boolean).join(' · ');
+/** "₹8,000", "8k", "around 8000" → 8000. */
+const readPrice = (text: string) => {
+  const m = text.replace(/,/g, '').match(/(\d+(?:\.\d+)?)\s*(k|thousand|l|lakh|lac)?/i);
+  if (!m) return null;
+  const unit = (m[2] || '').toLowerCase();
+  return Number(m[1]) * (unit.startsWith('k') || unit === 'thousand' ? 1000 : unit.startsWith('l') ? 100000 : 1);
+};
+
 /** What the assistant says when the item is not in the catalogue. */
 const newProductNote = (name?: string) => (
-  <><b>“{name || 'That item'}” isn't in our catalogue yet</b>, so I've added it as a new product. When you submit,
-    a request to add it goes to the procurement manager — your request still goes for approval meanwhile.
-    Tap its name to rename it, or pick a catalogue item instead.</>
+  <><b>“{name || 'That item'}” isn't in our catalogue yet</b>, so I'll add it as a new product — a request to add
+    it goes to the procurement manager when you submit, and your request still goes for approval meanwhile.
+    A few quick details will help the buyer get exactly what you need.</>
 );
 
 export function RequestChat({
@@ -121,6 +181,8 @@ export function RequestChat({
   const [ask, setAsk] = useState<Ask>(null);
   const [qtyFor, setQtyFor] = useState('');
   const [modelFor, setModelFor] = useState('');
+  // The new product the brand / spec / price questions are about.
+  const [detailFor, setDetailFor] = useState('');
   const [editing, setEditing] = useState<number | null>(null);
   const transcript = useRef<string[]>([]);
   const seq = useRef(0);
@@ -140,7 +202,7 @@ export function RequestChat({
   const greet = () => {
     seq.current = 0;
     transcript.current = [];
-    setLines([]); setBranch(''); setDepartment(''); setNeededBy(null); setCategory(''); setAsk(null); setQtyFor('');
+    setLines([]); setBranch(''); setDepartment(''); setNeededBy(null); setCategory(''); setAsk(null); setQtyFor(''); setDetailFor('');
     setMsgs([{
       id: ++seq.current, role: 'bot',
       text: <>{hello} 👋 I'm your procurement assistant. Tell me what you need — the item and how many, which branch it's for, and by when. I'll draft the request and ask for anything that's missing.</>,
@@ -201,6 +263,37 @@ export function RequestChat({
         ...summary,
         chips: [1, 5, 10, 20, 50].map(n => ({ label: String(n), onPick: () => answerQty(unsized, n) })),
       });
+      return;
+    }
+    const fresh = s.lines.find(l => l.isNew && !l.detailsDone);
+    if (fresh) {
+      setDetailFor(fresh.productName);
+      if (fresh.brand === undefined) {
+        setAsk('brand');
+        const brands = hintFor(fresh.productName)?.brands ?? [];
+        say('bot', brands.length
+          ? <>Which <b>brand</b> would you like for the {fresh.productName.toLowerCase()}? Popular choices are below — or type any other.</>
+          : <>Which <b>brand</b> would you like for the {fresh.productName.toLowerCase()}? Type the brand, or tap No preference.</>, {
+          ...summary, chips: [
+            ...brands.map(b => ({ label: b, onPick: () => answerDetail(fresh.productName, 'brand', b) })),
+            { label: 'No preference', onPick: () => answerDetail(fresh.productName, 'brand', '') },
+          ],
+        });
+      } else if (fresh.spec === undefined) {
+        setAsk('spec');
+        const specs = hintFor(fresh.productName)?.specs ?? [];
+        say('bot', <>Any <b>model or specification</b>{fresh.brand ? <> for the {fresh.brand}</> : null}? Usually {specHint(fresh.productName)}{specs.length ? ' — common picks below' : ''}.</>, {
+          ...summary, chips: [
+            ...specs.map(sp => ({ label: sp, onPick: () => answerDetail(fresh.productName, 'spec', sp) })),
+            { label: 'No specifics', onPick: () => answerDetail(fresh.productName, 'spec', '') },
+          ],
+        });
+      } else {
+        setAsk('price');
+        say('bot', <>Roughly <b>how much does one cost</b>? A rough figure is fine — the buyer will get quotes anyway.</>, {
+          ...summary, chips: [{ label: 'Not sure', onPick: () => answerDetail(fresh.productName, 'price', '') }],
+        });
+      }
       return;
     }
     if (!s.branch) {
@@ -275,6 +368,32 @@ export function RequestChat({
     think(() => nextStep());
   };
 
+  /** Brand, specification or price for a new product; an empty answer skips it. */
+  const answerDetail = (product: string, field: 'brand' | 'spec' | 'price', value: string) => {
+    const shown = value.trim();
+    say('me', shown || (field === 'brand' ? 'No preference' : field === 'spec' ? 'No specifics' : 'Not sure'));
+    const next = live.current.lines.map(l => {
+      if (l.productName !== product) return l;
+      const updated: ChatLine = { ...l };
+      if (field === 'brand') updated.brand = shown;
+      if (field === 'spec') updated.spec = shown;
+      if (field === 'price') {
+        const price = shown ? readPrice(shown) : null;
+        if (price) updated.targetPrice = price;
+        updated.detailsDone = true;
+      }
+      updated.description = describe(updated) || undefined;
+      return updated;
+    });
+    setLines(next); live.current.lines = next;
+    if (shown) transcript.current.push(`${field}: ${shown}`);
+    if (field === 'price' && shown && !readPrice(shown)) {
+      say('bot', <>I couldn't read a price in that — I've left it for the buyer to quote.</>);
+    }
+    if (field === 'price') setDetailFor('');
+    think(() => nextStep());
+  };
+
   /** A short pause before the assistant answers, so the exchange reads as one. */
   const think = (then: () => void) => {
     setTyping(true);
@@ -298,6 +417,13 @@ export function RequestChat({
     // Plain answers to the question on the table.
     const s = live.current;
     if (ask === 'qty' && /^\s*\d{1,5}\s*$/.test(text)) { answerQty(qtyFor, Number(text)); return; }
+    if ((ask === 'brand' || ask === 'spec' || ask === 'price') && detailFor) {
+      // say() for the answer happens inside answerDetail; undo the echo above.
+      setMsgs(prev => prev.slice(0, -1));
+      transcript.current.pop();
+      answerDetail(detailFor, ask, /^(no|none|any|skip|no preference|not sure|n\/a|-)$/i.test(text) ? '' : text);
+      return;
+    }
     if (ask === 'model' && modelFor) {
       const line = s.lines.find(l => l.productName === modelFor);
       const wanted = (line?.options || []).find(o => o.name.toLowerCase().includes(text.toLowerCase())
@@ -345,7 +471,7 @@ export function RequestChat({
     // does not.
     const asksForSomething = /\b(need|needs|want|require|requesting|request|order|buy|get|procure)\b|\d/i.test(text);
     if (!parsed?.found.products && !s.lines.length && parsed && asksForSomething && understood) {
-      unsized = mergeLines(parsed.lineItems, parsed.found.quantity);
+      unsized = mergeLines(parsed.lineItems.map(l => ({ ...l, isNew: true })), parsed.found.quantity);
       say('bot', newProductNote(parsed.lineItems[0]?.productName));
     }
 
@@ -353,7 +479,7 @@ export function RequestChat({
       if (!s.lines.length && parsed && asksForSomething) {
         // Nothing in the catalogue matched: keep their words as the item, the
         // way the old flow did, and let them correct it.
-        unsized = mergeLines(parsed.lineItems, parsed.found.quantity);
+        unsized = mergeLines(parsed.lineItems.map(l => ({ ...l, isNew: true })), parsed.found.quantity);
         say('bot', newProductNote(parsed.lineItems[0]?.productName));
       } else if (ask === 'branch' || ask === 'department') {
         say('bot', <>I don't have a {ask === 'branch' ? 'branch' : 'department'} called “{text}”. Pick one below.</>);
@@ -432,7 +558,9 @@ export function RequestChat({
                 </button>
               )}
               <span className="text-[10px] text-textFaint">
-                {l.options?.length ? 'model not chosen yet' : l.targetPrice ? `${inr(l.targetPrice)} each · catalogue estimate` : 'price to be quoted'}
+                {l.isNew && <span className="mr-1 rounded bg-gold/15 px-1 py-px font-bold text-gold">new product</span>}
+                {l.description && <span className="mr-1 text-textSecondary">{l.description} ·</span>}
+                {l.options?.length ? 'model not chosen yet' : l.targetPrice ? `${inr(l.targetPrice)} each · ${l.isNew ? 'your estimate' : 'catalogue estimate'}` : 'price to be quoted'}
               </span>
             </div>
             <div className="flex items-center rounded-lg border border-borderTheme">
@@ -583,6 +711,9 @@ export function RequestChat({
                  : ask === 'department' ? 'Type a department, or pick one above…'
                    : ask === 'neededBy' ? 'e.g. in 2 weeks, 15 Oct, next month…'
                      : ask === 'qty' ? 'Type a number…'
+                       : ask === 'brand' ? 'Type a brand, or pick “No preference”…'
+                         : ask === 'spec' ? 'Type the model or specification…'
+                           : ask === 'price' ? 'e.g. 8000, 8k, around 12,000…'
                        : 'Message the assistant — item, quantity, branch, date…'}
                className="flex-1 bg-transparent text-sm text-textPrimary placeholder:text-textFaint focus:outline-none" />
         <input ref={dateRef} type="date" className="sr-only" tabIndex={-1} aria-hidden="true"

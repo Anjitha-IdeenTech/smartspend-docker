@@ -3497,6 +3497,8 @@ export default function App() {
         productName: it.productName.trim(),
         productQty: it.productQty || 1,
         targetPrice: it.targetPrice || 0,
+        // Brand / model the assistant asked for a new product.
+        ...((it as { description?: string }).description ? { description: (it as { description?: string }).description } : {}),
       }));
 
     if (chatInputText.trim() || stagedItems.length) {
