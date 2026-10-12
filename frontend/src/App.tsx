@@ -1008,7 +1008,11 @@ function ApprovalChain({ request, compact = false }: { request: RequestItem; com
   );
 }
 
-function LineItemsTable({ lines, title = 'Line Items', totalLabel = 'Total' }: { lines: LineItem[]; title?: string; totalLabel?: string }) {
+function LineItemsTable({ lines, title = 'Line Items', totalLabel = 'Total', analytics }: {
+  lines: LineItem[]; title?: string; totalLabel?: string;
+  /** Show each line's analytic split (read-only) under it — buying side only. */
+  analytics?: { requestId: string; fetcher: (path: string, init?: RequestInit) => Promise<Response>; offline: boolean };
+}) {
   return (
     <div className="rounded-xl border border-borderTheme overflow-hidden">
       <div className="flex items-center justify-between px-3 py-2 bg-secondary/60 border-b border-borderTheme">
@@ -1027,12 +1031,21 @@ function LineItemsTable({ lines, title = 'Line Items', totalLabel = 'Total' }: {
           </thead>
           <tbody>
             {lines.map((l, i) => (
-              <tr key={i} className="border-t border-borderTheme/60">
+              <React.Fragment key={i}>
+              <tr className="border-t border-borderTheme/60">
                 <td className="px-3 py-2 text-textPrimary font-semibold">{l.productName}</td>
                 <td className="px-3 py-2 text-right text-textSecondary tabular-nums">{l.productQty}</td>
                 <td className="px-3 py-2 text-right text-textSecondary tabular-nums">{l.targetPrice ? `₹${l.targetPrice.toLocaleString()}` : 'TBD'}</td>
                 <td className="px-3 py-2 text-right text-textPrimary font-bold tabular-nums">{l.targetPrice ? `₹${(l.productQty * l.targetPrice).toLocaleString()}` : '—'}</td>
               </tr>
+              {analytics && !analytics.offline && (
+                <tr>
+                  <td colSpan={4} className="px-3 pb-2 pt-0">
+                    <LineAnalytics requestId={analytics.requestId} productName={l.productName} fetcher={analytics.fetcher} offline={analytics.offline} readOnly />
+                  </td>
+                </tr>
+              )}
+              </React.Fragment>
             ))}
           </tbody>
           <tfoot>
@@ -5123,7 +5136,8 @@ export default function App() {
 
                       {/* Requested products */}
                       <div className="border-t border-borderTheme/80 pt-6">
-                        <LineItemsTable lines={reqLines(currentRequest)} title="Requested products" totalLabel="Request Value" />
+                        <LineItemsTable lines={reqLines(currentRequest)} title="Requested products" totalLabel="Request Value"
+                          analytics={{ requestId: currentRequest.id, fetcher: apiFetch, offline: offlineDemo }} />
                       </div>
 
                       {/* Audit Log / History */}
@@ -5902,7 +5916,8 @@ export default function App() {
                         </div>
 
                         {/* Full RFQ scope so vendors bid on every requested line */}
-                        <LineItemsTable lines={currentLines} title="RFQ scope" totalLabel="Estimated Value" />
+                        <LineItemsTable lines={currentLines} title="RFQ scope" totalLabel="Estimated Value"
+                          analytics={{ requestId: currentRequest.id, fetcher: apiFetch, offline: offlineDemo }} />
 
                         {/* Bid submissions table */}
                         <div className="space-y-3">
@@ -6445,7 +6460,8 @@ export default function App() {
                           <div className="space-y-4">
                             <h3 className="font-outfit font-extrabold text-textPrimary text-lg">{req.productQty}x {reqSummary(req)}</h3>
 
-                            <LineItemsTable lines={reqLines(req)} title="Products requested" totalLabel="Total cost" />
+                            <LineItemsTable lines={reqLines(req)} title="Products requested" totalLabel="Total cost"
+                              analytics={{ requestId: req.id, fetcher: apiFetch, offline: offlineDemo }} />
 
                             {/* Who else has to sign, and who it is waiting on.
                                 Without this an approver cannot tell whether

@@ -29,8 +29,10 @@ const loadRequest = (fetcher: Fetcher, id: string) => {
 };
 const fold = (s: string) => s.trim().toLowerCase();
 
-export function LineAnalytics({ requestId, productName, fetcher, offline }: {
+export function LineAnalytics({ requestId, productName, fetcher, offline, readOnly = false }: {
   requestId: string; productName: string; fetcher: Fetcher; offline: boolean;
+  /** Approvers, buyers and trackers see the split but leave editing to the request form. */
+  readOnly?: boolean;
 }) {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [dist, setDist] = useState<Distribution>({});
@@ -137,7 +139,7 @@ export function LineAnalytics({ requestId, productName, fetcher, offline }: {
           {account(id)?.name ?? `#${id}`} <b className="text-textPrimary">{Math.round(Number(pct) * 100) / 100}%</b>
         </span>
       )) : <span className="text-textFaint">not set</span>}
-      <button type="button" onClick={startEdit} className="font-bold text-brand hover:underline">{entries.length ? 'Edit split' : 'Set'}</button>
+      {!readOnly && <button type="button" onClick={startEdit} className="font-bold text-brand hover:underline">{entries.length ? 'Edit split' : 'Set'}</button>}
     </div>
   );
 }
