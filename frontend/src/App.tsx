@@ -3093,7 +3093,36 @@ export default function App() {
   // Two-step guard on the destructive reset, so it can never be a stray click.
   const [resetArmed, setResetArmed] = useState<boolean>(false);
   const vendorRows: MasterVendor[] = [...addedMasters.vendors, ...promotedVendors, ...MASTER_VENDORS];
-  const productRows: MasterProduct[] = [...addedMasters.products, ...MASTER_PRODUCTS];
+  // Products Odoo holds that the built-in catalogue does not — e.g. one a
+  // manager approved from a product creation request. Re-read whenever the
+  // Master Data console opens so a fresh approval shows up straight away.
+  const [odooProducts, setOdooProducts] = useState<MasterProduct[]>([]);
+  useEffect(() => {
+    if (activeScene !== 16 || offlineDemo || !authToken) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await apiFetch(`/api/smartspend/products?limit=500`, { method: 'GET' });
+        if (!res.ok) return;
+        const rows: { id: number; name: string; category: string; uom: string; listPrice: number; contractPrice: number }[] = await res.json();
+        if (cancelled || !Array.isArray(rows)) return;
+        setOdooProducts(rows.map(r => ({
+          code: `PRD-O${String(r.id).padStart(4, '0')}`, name: r.name,
+          category: r.category || '—', uom: r.uom || 'Units',
+          contract: r.contractPrice || r.listPrice || 0, vendor: '—',
+          onContract: r.contractPrice > 0,
+        })));
+      } catch (e) {
+        console.warn("Could not load Odoo products for the master:", e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeScene, authToken, odooApiUrl]);
+  const productRows: MasterProduct[] = (() => {
+    const base = [...addedMasters.products, ...MASTER_PRODUCTS];
+    const known = new Set(base.map(p => p.name.trim().toLowerCase()));
+    return [...odooProducts.filter(p => !known.has(p.name.trim().toLowerCase())), ...base];
+  })();
   const companyRows: Company[] = [...addedMasters.companies, ...COMPANIES];
   const allCategoryRows: MasterCategory[] = [...addedMasters.categories, ...categoryRows];
 
