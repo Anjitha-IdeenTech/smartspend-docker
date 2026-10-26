@@ -91,6 +91,11 @@ def match_products(text, limit=5):
                 score += 2
             elif _hit(keyword, description_words):
                 score += 1
+        # A service ("Water Tanker Supply") is offered only when everything
+        # asked for fits it: "water bottles" is not a call for a tanker.
+        if score and product.type == 'service' and not all(
+                _hit(k, name_words) or _hit(k, description_words) for k in keywords):
+            score = 0
         if score:
             scored.append((score, product))
     if not scored:

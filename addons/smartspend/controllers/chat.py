@@ -17,6 +17,7 @@ from odoo.http import request
 from .main import _authenticate, _error
 from .parser import CATALOG, DEPARTMENTS, LOCATIONS, NUMBER_WORDS, parse_requisition
 from .product_master import match_products
+from .problems import offer_problem_services
 
 
 # What a family of goods actually comes in, and what each one is for. The
@@ -172,11 +173,13 @@ class SmartSpendChatApi(http.Controller):
         if not text and not items:
             return _error(_("Nothing to parse."), 400)
         parsed = parse_requisition(text, items)
-        size_as_quantity = _offer_models(parsed, text)
-        suggested = _offer_master_products(parsed, text, items)
+        # A problem ("water supply is not proper") is answered with services.
+        problem = not items and offer_problem_services(parsed, text)
+        size_as_quantity = False if problem else _offer_models(parsed, text)
+        suggested = problem or _offer_master_products(parsed, text, items)
         parsed['found'] = {
             'products': bool(items) or _mentions(text, CATALOG) or suggested,
-            'quantity': _states_quantity(text) and not size_as_quantity,
+            'quantity': bool(problem) or (_states_quantity(text) and not size_as_quantity),
             'location': _mentions(text, LOCATIONS),
             'department': _mentions(text, DEPARTMENTS),
         }

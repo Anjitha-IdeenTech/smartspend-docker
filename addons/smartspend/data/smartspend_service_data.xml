@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Services the requester's chat offers when someone brings a problem rather
+     than a product ("electricity is not coming"). Names and prices mirror
+     PROBLEMS in controllers/problems.py. noupdate: buyers may reprice them. -->
+<odoo noupdate="1">
+    <record id="product_service_power_1" model="product.product">
+        <field name="name">Electrician Visit — Diagnosis &amp; Repair</field>
+        <field name="type">service</field>
+        <field name="purchase_ok" eval="True"/>
+        <field name="sale_ok" eval="False"/>
+        <field name="categ_id" ref="product.product_category_services"/>
+        <field name="list_price">1500.0</field>
+        <field name="standard_price">1500.0</field>
+        <field name="description_purchase">An electrician finds and fixes the fault — for a power problem.</field>
+    </record>
+
+    <record id="product_service_power_2" model="product.product">
+        <field name="name">Diesel Generator on Hire (per day)</field>
+        <field name="type">service</field>
+        <field name="purchase_ok" eval="True"/>
+        <field name="sale_ok" eval="False"/>
+        <field name="categ_id" ref="product.product_category_services"/>
+        <field name="list_price">8000.0</field>
+        <field name="standard_price">8000.0</field>
+        <field name="description_purchase">Keeps the site running through a long outage — for a power problem.</field>
+    </record>
+
+    <record id="product_service_power_3" model="product.product">
+        <field name="name">UPS / Inverter Repair Service</field>
+        <field name="type">service</field>
+        <field name="purchase_ok" eval="True"/>
+        <field name="sale_ok" eval="False"/>
+        <field name="categ_id" ref="product.product_category_services"/>
+        <field name="list_price">2500.0</field>
+        <field name="standard_price">2500.0</field>
+        <field name="description_purchase">When the backup itself is not holding — for a power problem.</field>
+    </record>
+
+    <record id="product_service_water_1" model="product.product">
+        <field name="name">Plumber Visit — Diagnosis &amp; Repair</field>
+        <field name="type">service</field>
+        <field name="purchase_ok" eval="True"/>
+        <field name="sale_ok" eval="False"/>
+        <field name="categ_id" ref="product.product_category_services"/>
+        <field name="list_price">1200.0</field>
+        <field name="standard_price">1200.0</field>
+        <field name="description_purchase">A plumber fixes leaks, blockages and low pressure — for a water supply problem.</field>
+    </record>
+
+    <record id="product_service_water_2" model="product.product">
+        <field name="name">Water Tanker Supply (per load)</field>
+        <field name="type">service</field>
+        <field name="purchase_ok" eval="True"/>
+        <field name="sale_ok" eval="False"/>
+        <field name="categ_id" ref="product.product_category_services"/>
+        <field name="list_price">2500.0</field>
+        <field name="standard_price">2500.0</field>
+        <field name="description_purchase">Water now, while the supply is restored — for a water supply problem.</field>
+    </record>
+
+    <record id="product_service_water_3" model="product.product">
+        <field name="name">Water Pump / Motor Repair Service</field>
+        <field name="type">service</field>
+        <field name="purchase_ok" eval="True"/>
+        <field name="sale_ok" eval="False"/>
+        <field name="categ_id" ref="product.product_category_services"/>
+        <field name="list_price">3000.0</field>
+        <field name="standard_price">3000.0</field>
+        <field name="description_purchase">When the pump or motor is not lifting water — for a water supply problem.</field>
+    </record>
+
+    <record id="product_service_cooling_1" model="product.product">
+        <field name="name">AC Service &amp; Gas Top-up</field>
+        <field name="type">service</field>
+        <field name="purchase_ok" eval="True"/>
+        <field name="sale_ok" eval="False"/>
+        <field name="categ_id" ref="product.product_category_services"/>
+        <field name="list_price">3500.0</field>
+        <field name="standard_price">3500.0</field>
+        <field name="description_purchase">Cleans filters and coils and tops up the gas — for a cooling problem.</field>
+    </record>
+
+    <record id="product_service_cooling_2" model="product.product">
+        <field name="name">AC Repair Technician Visit</field>
+        <field name="type">service</field>
+        <field name="purchase_ok" eval="True"/>
+        <field name="sale_ok" eval="False"/>
+        <field name="categ_id" ref="product.product_category_services"/>
+        <field name="list_price">1500.0</field>
+        <field name="standard_price">1500.0</field>
+        <field name="description_purchase">Finds and fixes a unit that will not cool or start — for a cooling problem.</field>
+    </record>
+
+    <record id="product_service_internet_1" model="product.product">
+        <field name="name">Network Technician Visit</field>
+        <field name="type">service</field>
+        <field name="purchase_ok" eval="True"/>
+        <field name="sale_ok" eval="False"/>
+        <field name="categ_id" ref="product.product_category_services"/>
+        <field name="list_price">2000.0</field>
+        <field name="standard_price">2000.0</field>
+        <field name="description_purchase">Fixes cabling, switch and Wi-Fi faults on site — for an internet / network problem.</field>
+    </record>
+
+    <record id="product_service_internet_2" model="product.product">
+        <field name="name">Backup 4G Internet Connection (monthly)</field>
+        <field name="type">service</field>
+        <field name="purchase_ok" eval="True"/>
+        <field name="sale_ok" eval="False"/>
+        <field name="categ_id" ref="product.product_category_services"/>
+        <field name="list_price">1500.0</field>
+        <field name="standard_price">1500.0</field>
+        <field name="description_purchase">Keeps people working while the main line is down — for an internet / network problem.</field>
+    </record>
+
+    <record id="product_service_lift_1" model="product.product">
+        <field name="name">Lift / Elevator Breakdown Service</field>
+        <field name="type">service</field>
+        <field name="purchase_ok" eval="True"/>
+        <field name="sale_ok" eval="False"/>
+        <field name="categ_id" ref="product.product_category_services"/>
+        <field name="list_price">5000.0</field>
+        <field name="standard_price">5000.0</field>
+        <field name="description_purchase">The lift maintenance company's breakdown call-out — for a lift problem.</field>
+    </record>
+
+    <record id="product_service_pest_1" model="product.product">
+        <field name="name">Pest Control Treatment</field>
+        <field name="type">service</field>
+        <field name="purchase_ok" eval="True"/>
+        <field name="sale_ok" eval="False"/>
+        <field name="categ_id" ref="product.product_category_services"/>
+        <field name="list_price">4000.0</field>
+        <field name="standard_price">4000.0</field>
+        <field name="description_purchase">General, rodent or termite treatment of the premises — for a pest problem.</field>
+    </record>
+
+    <record id="product_service_cleaning_1" model="product.product">
+        <field name="name">Deep Cleaning Service (per visit)</field>
+        <field name="type">service</field>
+        <field name="purchase_ok" eval="True"/>
+        <field name="sale_ok" eval="False"/>
+        <field name="categ_id" ref="product.product_category_services"/>
+        <field name="list_price">6000.0</field>
+        <field name="standard_price">6000.0</field>
+        <field name="description_purchase">A full clean of the affected area — for a cleaning problem.</field>
+    </record>
+
+    <record id="product_service_it_1" model="product.product">
+        <field name="name">IT Hardware Repair — Technician Visit</field>
+        <field name="type">service</field>
+        <field name="purchase_ok" eval="True"/>
+        <field name="sale_ok" eval="False"/>
+        <field name="categ_id" ref="product.product_category_services"/>
+        <field name="list_price">1500.0</field>
+        <field name="standard_price">1500.0</field>
+        <field name="description_purchase">A technician diagnoses and repairs it on site — for an IT equipment problem.</field>
+    </record>
+
+    <record id="product_service_it_2" model="product.product">
+        <field name="name">Standby Laptop on Rent (per month)</field>
+        <field name="type">service</field>
+        <field name="purchase_ok" eval="True"/>
+        <field name="sale_ok" eval="False"/>
+        <field name="categ_id" ref="product.product_category_services"/>
+        <field name="list_price">3000.0</field>
+        <field name="standard_price">3000.0</field>
+        <field name="description_purchase">Keeps you working while yours is repaired — for an IT equipment problem.</field>
+    </record>
+</odoo>

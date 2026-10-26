@@ -27,6 +27,8 @@ export interface ChatLine {
   options?: ChatModel[]; family?: string;
   /** The options are master products whose name or description match the request. */
   suggested?: boolean;
+  /** The requester described a problem: quick checks to try, and the options are services. */
+  problem?: { title: string; checks: string[]; asked: string };
 }
 
 /** What /parse-preview answers for one message. */
@@ -254,6 +256,18 @@ export function RequestChat({
         label: o.name, hint: o.purpose, note: o.price ? `${inr(o.price)} each · estimate` : 'price to be quoted',
         onPick: () => chooseModel(undecided.productName, o),
       }));
+      if (undecided.problem) {
+        const pb = undecided.problem;
+        say('bot', <>
+          That sounds like a <b>{pb.title}</b>. While help is arranged, a few quick checks:
+          <ul className="mt-1.5 mb-1.5 list-disc pl-5 space-y-0.5">{pb.checks.map(c => <li key={c}>{c}</li>)}</ul>
+          Which service should I raise to fix it?
+        </>, {
+          ...summary,
+          chips: [...chips, { label: 'Something else', tone: 'plain', onPick: () => otherService(undecided.productName) }],
+        });
+        return;
+      }
       if (undecided.suggested) {
         say('bot', <>The product master already has {chips.length === 1 ? 'a product' : 'products'} matching what you asked for. Is it one of these?</>, {
           ...summary,
@@ -360,10 +374,24 @@ export function RequestChat({
   const chooseModel = (familyLine: string, model: ChatModel) => {
     say('me', model.name);
     const next = live.current.lines.map(l => l.productName === familyLine
-      ? { ...l, productName: model.name, targetPrice: model.price, options: undefined, family: undefined, suggested: undefined } : l);
+      ? { ...l, productName: model.name, targetPrice: model.price, options: undefined, family: undefined, suggested: undefined, problem: undefined } : l);
     setLines(next); live.current.lines = next;
     transcript.current.push(model.name);
     setModelFor('');
+    think(() => nextStep());
+  };
+
+  /** None of the offered services: raise it as the problem, in their words. */
+  const otherService = (line: string) => {
+    say('me', 'Something else');
+    const current = live.current.lines.find(l => l.productName === line);
+    const name = current?.problem?.asked || line;
+    const next = live.current.lines.map(l => l.productName === line
+      ? { ...l, productName: name, options: undefined, family: undefined, problem: undefined, isNew: true, detailsDone: true } : l);
+    setLines(next); live.current.lines = next;
+    transcript.current.push(`${line}: something else`);
+    setModelFor('');
+    say('bot', <>I'll raise “{name}” as a service request — the buyer will find the right people to fix it.</>);
     think(() => nextStep());
   };
 
@@ -448,6 +476,10 @@ export function RequestChat({
       const wanted = (line?.options || []).find(o => o.name.toLowerCase().includes(text.toLowerCase())
         || text.toLowerCase().includes(o.name.split(/[\s(]/)[0].toLowerCase()));
       if (wanted) { chooseModel(modelFor, wanted); return; }
+      if (line?.problem && /^(something else|other|none|no|neither|none of (these|them))\b/i.test(text)) {
+        setMsgs(prev => prev.slice(0, -1)); transcript.current.pop();
+        otherService(modelFor); return;
+      }
       if (line?.suggested && /^(none|no|nope|neither|new|something new|none of (these|them)|not (listed|these))\b/i.test(text)) {
         setMsgs(prev => prev.slice(0, -1)); transcript.current.pop();
         notListed(modelFor); return;
@@ -583,7 +615,7 @@ export function RequestChat({
               <span className="text-[10px] text-textFaint">
                 {l.isNew && <span className="mr-1 rounded bg-gold/15 px-1 py-px font-bold text-gold">new product</span>}
                 {l.description && <span className="mr-1 text-textSecondary">{l.description} ·</span>}
-                {l.options?.length ? 'model not chosen yet' : l.targetPrice ? `${inr(l.targetPrice)} each · ${l.isNew ? 'your estimate' : 'catalogue estimate'}` : 'price to be quoted'}
+                {l.options?.length ? (l.problem ? 'service not chosen yet' : 'model not chosen yet') : l.targetPrice ? `${inr(l.targetPrice)} each · ${l.isNew ? 'your estimate' : 'catalogue estimate'}` : 'price to be quoted'}
               </span>
             </div>
             <div className="flex items-center rounded-lg border border-borderTheme">

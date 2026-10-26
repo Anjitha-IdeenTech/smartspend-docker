@@ -41,6 +41,7 @@ belong to.
         'data/smartspend_demo_users_data.xml',
         'data/smartspend_auction_data.xml',
         'data/smartspend_subscription_data.xml',
+        'data/smartspend_service_data.xml',
         'views/smartspend_master_views.xml',
         'views/smartspend_budget_views.xml',
         'views/smartspend_request_views.xml',
