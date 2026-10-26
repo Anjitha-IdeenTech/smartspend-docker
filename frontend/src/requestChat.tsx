@@ -25,6 +25,8 @@ export interface ChatLine {
   description?: string;
   /** Set when the message named a family ("laptops"): the models to choose from. */
   options?: ChatModel[]; family?: string;
+  /** The options are master products whose name or description match the request. */
+  suggested?: boolean;
 }
 
 /** What /parse-preview answers for one message. */
@@ -248,13 +250,18 @@ export function RequestChat({
     const undecided = s.lines.find(l => l.options && l.options.length);
     if (undecided) {
       setAsk('model'); setModelFor(undecided.productName);
-      say('bot', <>Which {undecided.family || 'model'} do you need? Here's what we buy, and what each is for.</>, {
-        ...summary,
-        chips: (undecided.options || []).map(o => ({
-          label: o.name, hint: o.purpose, note: `${inr(o.price)} each · estimate`,
-          onPick: () => chooseModel(undecided.productName, o),
-        })),
-      });
+      const chips: Chip[] = (undecided.options || []).map(o => ({
+        label: o.name, hint: o.purpose, note: o.price ? `${inr(o.price)} each · estimate` : 'price to be quoted',
+        onPick: () => chooseModel(undecided.productName, o),
+      }));
+      if (undecided.suggested) {
+        say('bot', <>The product master already has {chips.length === 1 ? 'a product' : 'products'} matching what you asked for. Is it one of these?</>, {
+          ...summary,
+          chips: [...chips, { label: 'None of these — something new', tone: 'plain', onPick: () => notListed(undecided.productName) }],
+        });
+        return;
+      }
+      say('bot', <>Which {undecided.family || 'model'} do you need? Here's what we buy, and what each is for.</>, { ...summary, chips });
       return;
     }
     if (unsized) {
@@ -353,10 +360,22 @@ export function RequestChat({
   const chooseModel = (familyLine: string, model: ChatModel) => {
     say('me', model.name);
     const next = live.current.lines.map(l => l.productName === familyLine
-      ? { ...l, productName: model.name, targetPrice: model.price, options: undefined, family: undefined } : l);
+      ? { ...l, productName: model.name, targetPrice: model.price, options: undefined, family: undefined, suggested: undefined } : l);
     setLines(next); live.current.lines = next;
     transcript.current.push(model.name);
     setModelFor('');
+    think(() => nextStep());
+  };
+
+  /** None of the suggested master products: it is a new product after all. */
+  const notListed = (line: string) => {
+    say('me', 'None of these — something new');
+    const next = live.current.lines.map(l => l.productName === line
+      ? { ...l, options: undefined, family: undefined, suggested: undefined, isNew: true } : l);
+    setLines(next); live.current.lines = next;
+    transcript.current.push(`${line}: not in the master`);
+    setModelFor('');
+    say('bot', newProductNote(line));
     think(() => nextStep());
   };
 
@@ -429,6 +448,10 @@ export function RequestChat({
       const wanted = (line?.options || []).find(o => o.name.toLowerCase().includes(text.toLowerCase())
         || text.toLowerCase().includes(o.name.split(/[\s(]/)[0].toLowerCase()));
       if (wanted) { chooseModel(modelFor, wanted); return; }
+      if (line?.suggested && /^(none|no|nope|neither|new|something new|none of (these|them)|not (listed|these))\b/i.test(text)) {
+        setMsgs(prev => prev.slice(0, -1)); transcript.current.pop();
+        notListed(modelFor); return;
+      }
     }
     const branchHits = pick(text, branches);
     const deptHits = pick(text, departments);

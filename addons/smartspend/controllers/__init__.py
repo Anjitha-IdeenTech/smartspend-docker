@@ -10,3 +10,4 @@ from . import analytic
 from . import chat
 from . import report
 from . import price_history
+from . import product_master

@@ -18,6 +18,7 @@ import {
 } from './demoMode';
 import { AuctionDesk, VendorAuctions } from './auction';
 import { PrintButton, PrintRow } from './documents';
+import { ProductDescription } from './productDescription';
 import { PriceHistoryStrip } from './priceHistory';
 import { ProductCategoriesMaster } from './productCategories';
 import { MasterDetailPanel, DetailChips, DetailRequests } from './masterDetail';
@@ -1292,6 +1293,8 @@ const CAT_YOY: Record<string, number> = { 'IT Hardware': 0.30, 'Datacenter Equip
 interface MasterProduct {
   code: string; name: string; category: string; uom: string;
   contract: number; vendor: string; onContract: boolean;
+  /** The Odoo product, when Odoo has it; its description is what the chat matches on. */
+  odooId?: number; description?: string;
 }
 
 /** Catalogue products, priced from the same book the requisition form quotes. */
@@ -3104,13 +3107,14 @@ export default function App() {
       try {
         const res = await apiFetch(`/api/smartspend/products?limit=500`, { method: 'GET' });
         if (!res.ok) return;
-        const rows: { id: number; name: string; category: string; uom: string; listPrice: number; contractPrice: number }[] = await res.json();
+        const rows: { id: number; name: string; category: string; uom: string; listPrice: number; contractPrice: number; description?: string }[] = await res.json();
         if (cancelled || !Array.isArray(rows)) return;
         setOdooProducts(rows.map(r => ({
           code: `PRD-O${String(r.id).padStart(4, '0')}`, name: r.name,
           category: r.category || '—', uom: r.uom || 'Units',
           contract: r.contractPrice || r.listPrice || 0, vendor: '—',
           onContract: r.contractPrice > 0,
+          odooId: r.id, description: r.description || '',
         })));
       } catch (e) {
         console.warn("Could not load Odoo products for the master:", e);
@@ -3119,7 +3123,12 @@ export default function App() {
     return () => { cancelled = true; };
   }, [activeScene, authToken, odooApiUrl]);
   const productRows: MasterProduct[] = (() => {
-    const base = [...addedMasters.products, ...MASTER_PRODUCTS];
+    // A catalogue row Odoo also has takes its Odoo id and description.
+    const inOdoo = new Map(odooProducts.map(p => [p.name.trim().toLowerCase(), p]));
+    const base = [...addedMasters.products, ...MASTER_PRODUCTS].map(p => {
+      const o = inOdoo.get(p.name.trim().toLowerCase());
+      return o ? { ...p, odooId: o.odooId, description: o.description } : p;
+    });
     const known = new Set(base.map(p => p.name.trim().toLowerCase()));
     return [...odooProducts.filter(p => !known.has(p.name.trim().toLowerCase())), ...base];
   })();
@@ -8895,18 +8904,21 @@ export default function App() {
                         <table className="w-full text-left border-collapse min-w-[720px]">
                           <thead>
                             <tr className="bg-secondary">
-                              {['Code', 'Product', 'Category', 'UoM', 'Contract rate', 'Default vendor', 'Status'].map(h => (
+                              {['Code', 'Product', 'Description', 'Category', 'UoM', 'Contract rate', 'Default vendor', 'Status'].map(h => (
                                 <th key={h} className="px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-textFaint">{h}</th>
                               ))}
                             </tr>
                           </thead>
                           <tbody>
                             {productRows
-                              .filter(p => `${p.code} ${p.name} ${p.category} ${p.vendor}`.toLowerCase().includes(masterSearch.toLowerCase()))
+                              .filter(p => `${p.code} ${p.name} ${p.description || ''} ${p.category} ${p.vendor}`.toLowerCase().includes(masterSearch.toLowerCase()))
                               .map(p => (
                                 <tr key={p.code} onClick={() => setMasterDetail({ kind: 'products', key: p.code })} className="border-t border-borderTheme hover:bg-secondary/60 transition-colors cursor-pointer" title="Open details">
                                   <td className="px-4 py-3 text-[11px] font-mono text-textFaint">{p.code}</td>
                                   <td className="px-4 py-3 text-xs font-bold text-textPrimary">{p.name}</td>
+                                  <td className="px-4 py-3 text-xs text-textSecondary max-w-[260px]">
+                                    {p.description ? <span className="line-clamp-2" title={p.description}>{p.description}</span> : <span className="text-textFaint">—</span>}
+                                  </td>
                                   <td className="px-4 py-3 text-xs text-textSecondary">{p.category}</td>
                                   <td className="px-4 py-3 text-xs text-textSecondary">{p.uom}</td>
                                   <td className="px-4 py-3 text-xs font-bold text-textPrimary tabular-nums">₹{p.contract.toLocaleString('en-IN')}</td>
@@ -9259,6 +9271,10 @@ export default function App() {
                             { label: 'Status', value: p.onContract ? 'On a running rate contract' : 'Sourced per request' },
                           ]}
                           sections={[
+                            { title: 'Description', hint: 'Requesters who describe what they need in their own words are offered this product in the chat when the words match.',
+                              content: <ProductDescription productId={p.odooId} description={p.description || ''}
+                                canEdit={!!currentUser?.is_buyer && !offlineDemo} fetcher={apiFetch}
+                                onSaved={d => setOdooProducts(prev => prev.map(x => x.odooId === p.odooId ? { ...x, description: d } : x))} /> },
                             { title: 'Price history', hint: 'What was actually paid on confirmed purchase orders in Odoo.',
                               content: <><PriceHistoryStrip product={p.name} unitPrice={p.contract} fetcher={apiFetch} /></> },
                             { title: 'Vendors for this category', content: <DetailChips items={sellers} empty="No vendors listed for this category." onPick={n => vendorKnown(n) && go('vendors', n)} /> },

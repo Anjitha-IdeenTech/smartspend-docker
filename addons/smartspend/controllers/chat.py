@@ -16,6 +16,7 @@ from odoo.http import request
 
 from .main import _authenticate, _error
 from .parser import CATALOG, DEPARTMENTS, LOCATIONS, NUMBER_WORDS, parse_requisition
+from .product_master import match_products
 
 
 # What a family of goods actually comes in, and what each one is for. The
@@ -110,6 +111,32 @@ def _offer_models(parsed, text):
     return size_taken_as_quantity
 
 
+def _offer_master_products(parsed, text, items):
+    """Offer the products whose name or description match what was asked.
+
+    Only for a message the catalogue knows nothing of: its one line — the
+    item in the requester's words — carries the matching products as
+    ``options`` (marked ``suggested``), and the chat asks which one is meant,
+    or whether it is something new after all.
+
+    :return: True when products were offered.
+    """
+    if items or not text or _mentions(text, CATALOG) or len(parsed['lineItems']) != 1:
+        return False
+    matches = match_products(text)
+    if not matches:
+        return False
+    line = parsed['lineItems'][0]
+    line['family'] = line['productName']
+    line['suggested'] = True
+    line['options'] = [{
+        'name': match['name'],
+        'purpose': match['description'] or match['category'] or '',
+        'price': match['price'],
+    } for match in matches]
+    return True
+
+
 def _mentions(text, table):
     return any(re.search(pattern, text, re.IGNORECASE) for pattern, *_rest in table)
 
@@ -146,8 +173,9 @@ class SmartSpendChatApi(http.Controller):
             return _error(_("Nothing to parse."), 400)
         parsed = parse_requisition(text, items)
         size_as_quantity = _offer_models(parsed, text)
+        suggested = _offer_master_products(parsed, text, items)
         parsed['found'] = {
-            'products': bool(items) or _mentions(text, CATALOG),
+            'products': bool(items) or _mentions(text, CATALOG) or suggested,
             'quantity': _states_quantity(text) and not size_as_quantity,
             'location': _mentions(text, LOCATIONS),
             'department': _mentions(text, DEPARTMENTS),

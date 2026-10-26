@@ -763,6 +763,7 @@ class SmartSpendApi(http.Controller):
                 'listPrice': product.list_price,
                 'contractPrice': line.price_unit if line else 0.0,
                 'contract': line.contract_id.name if line else '',
+                'description': (product.description_purchase or '').strip(),
             })
         return results
 
