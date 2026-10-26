@@ -247,11 +247,12 @@ check('the request timeline records the close',
       r.history_ids[-1].title == 'Reverse Auction Closed', r.history_ids[-1].title)
 
 raises('awarding before the manager approves is refused', UserError, a.action_award)
-raises('a buyer cannot approve the award', UserError, a.action_approve_award)
+raises('a buyer cannot approve the award', UserError, lambda: a.action_approve_award(note='x'))
+raises('approving without a reason is refused', UserError, lambda: a.with_user(admin).action_approve_award())
 a.with_user(admin).action_approve_award(participant=a.participant_ids.filtered(lambda p: p.rank == 2), note='second look')
 check('the manager can approve another level', a.approved_rank == 2 and a.approval_note == 'second look',
       (a.approved_rank, a.approval_note))
-a.with_user(admin).action_approve_award()
+a.with_user(admin).action_approve_award(note='lowest price')
 check('and change it to L1 before the award', a.approved_rank == 1 and a.approved_participant_id.rank == 1,
       a.approved_rank)
 raises('the buyer cannot award a level the manager did not approve', UserError,
@@ -294,7 +295,7 @@ m1, m2 = a5.line_ids.sorted('sequence')
 a5.with_user(v_primus)._place_bid(pa, {m1.id: 60000, m2.id: 7000})
 a5.sudo().write({'start_date': now() - timedelta(minutes=30), 'end_date': now() - timedelta(seconds=1)})
 a5._sync_state()
-a5.with_user(admin).action_approve_award()
+a5.with_user(admin).action_approve_award(note='lowest price')
 a5.action_award()
 r5.invalidate_recordset()
 check('award still reprices the items, matched by name',
@@ -406,6 +407,66 @@ try:
     check('the request form still compiles for a requester', True)
 except Exception as e:
     check('the request form still compiles for a requester', False, repr(e)[:120])
+
+print('\n--- an award split between levels ---')
+LINES10 = [{'product_name': 'Dell Latitude 5440 Laptop', 'product_qty': 10, 'price_unit': 70000},
+           {'product_name': 'USB-C Docking Station', 'product_qty': 5, 'price_unit': 8500}]
+r6 = approved_request(LINES10)
+a6 = Auction._launch_for_request(r6, primus | apex, soon(2), 5)
+for p in a6.participant_ids:
+    p.sudo()._respond(True)
+q1, q2 = a6.line_ids.sorted('sequence')
+s_primus = a6.participant_ids.filtered(lambda p: p.partner_id == primus)
+s_apex = a6.participant_ids.filtered(lambda p: p.partner_id == apex)
+a6.with_user(v_primus)._place_bid(s_primus, {q1.id: 50000, q2.id: 8000})
+a6.with_user(v_apex)._place_bid(s_apex, {q1.id: 55000, q2.id: 7000})
+a6.sudo().write({'start_date': now() - timedelta(minutes=30), 'end_date': now() - timedelta(seconds=1)})
+a6._sync_state()
+split = [{'participantId': s_primus.id, 'percent': 60}, {'participantId': s_apex.id, 'percent': 40}]
+raises('a split still needs a reason', UserError, lambda: a6.with_user(admin).action_approve_award(shares=split))
+raises('shares that do not make 100% are refused', UserError, lambda: a6.with_user(admin).action_approve_award(
+    note='x', shares=[{'participantId': s_primus.id, 'percent': 60}, {'participantId': s_apex.id, 'percent': 30}]))
+raises('a split too small to give everyone something is refused', UserError,
+       lambda: a6.with_user(admin).action_approve_award(note='x', shares=[
+           {'participantId': s_primus.id, 'percent': 99.5}, {'participantId': s_apex.id, 'percent': 0.5}]))
+raises('a buyer cannot approve a split', UserError, lambda: a6.action_approve_award(note='x', shares=split))
+preview = a6.sudo()._split_preview(split)
+check('the preview divides every item and adds up', [sum(i['qty'] for r_ in preview for i in r_['items']
+      if i['productName'] == n) for n in ('Dell Latitude 5440 Laptop', 'USB-C Docking Station')] == [10, 5],
+      preview)
+check('and keeps the value shares close to 60/40',
+      all(abs(r_['actualPercent'] - r_['percent']) < 6 for r_ in preview), [r_['actualPercent'] for r_ in preview])
+a6.with_user(admin).action_approve_award(note='Spread the supply', shares=split)
+check('the split is approved, L1 first', a6.is_split and a6.approved_participant_id == s_primus
+      and a6.approval_note == 'Spread the supply', (a6.is_split, a6.approved_participant_id.partner_id.name))
+check('the approval total is the sum of the parts',
+      abs(a6.approved_total - sum(a6.award_share_ids.mapped('amount'))) < 0.01, a6.approved_total)
+a6.action_award()
+r6.invalidate_recordset()
+check('awarding a split reprices the request at the blended total',
+      abs(r6.total_cost - a6.awarded_total) < 0.01 and a6.state == 'awarded', (r6.total_cost, a6.awarded_total))
+check('both vendors won', (s_primus.state, s_apex.state) == ('won', 'won'))
+r6.with_user(buyer).action_create_purchase_order()
+orders = r6.sudo().purchase_order_ids
+check('one purchase order per vendor', len(orders) == 2 and set(orders.partner_id.mapped('name'))
+      == {'Primus Technologies', 'Apex Systems'} and set(orders.mapped('state')) == {'purchase'},
+      orders.mapped('partner_id.name'))
+check('each at its own quantities and prices', sorted(
+    (o.partner_id.name, l.product_id.name, l.product_qty, l.price_unit) for o in orders for l in o.order_line) == sorted(
+    (sh.partner_id.name, ln.product_name, ln.quantity, ln.unit_price) for sh in a6.award_share_ids for ln in sh.line_ids))
+check('the second vendor can read the request', bool(env['smartspend.request'].with_user(v_apex).search(
+    [('id', '=', r6.id)])) and r6.sudo()._placed_with(v_apex))
+mine = r6.sudo()._to_vendor_portal_dict(v_apex)
+check('and sees only their own part', mine['purchaseOrders'] == orders.filtered(
+    lambda o: o.partner_id == apex).mapped('name') and abs(mine['totalCost'] - a6.award_share_ids.filtered(
+    lambda sh: sh.partner_id == apex).amount) < 0.01, (mine['purchaseOrders'], mine['totalCost']))
+r6.with_user(admin).action_release_purchase_order()
+day = fields.Date.add(fields.Date.today(), days=7)
+r6.sudo().with_context(smartspend_ack_partner=apex.id).action_acknowledge_purchase_order(delivery_date=day)
+check('one vendor confirming is not enough', not r6.po_acknowledged
+      and orders.filtered(lambda o: o.partner_id == apex).smartspend_acknowledged)
+r6.sudo().with_context(smartspend_ack_partner=primus.id).action_acknowledge_purchase_order(delivery_date=day)
+check('both confirmed: acknowledged', r6.po_acknowledged and r6.vendor_delivery_date == day)
 
 r4 = approved_request(LINES)
 r4.sudo().bid_ids = [(0, 0, {'vendor_name': 'Primus Technologies', 'price': 1}),

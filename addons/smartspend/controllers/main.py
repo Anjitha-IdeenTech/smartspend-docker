@@ -199,6 +199,11 @@ class SmartSpendApi(http.Controller):
         if error:
             return error
         records = request.env['smartspend.request'].search([])
+        # A supplier sees only their part of an order split between vendors.
+        user = request.env.user
+        if (user.has_group('smartspend.group_smartspend_vendor')
+                and not user.has_group('smartspend.group_smartspend_buyer')):
+            return [record._to_vendor_portal_dict(request.env.user) for record in records]
         return [record._to_portal_dict() for record in records]
 
     @http.route('/api/smartspend/submit', type='json2', auth='none',
@@ -320,11 +325,17 @@ class SmartSpendApi(http.Controller):
             if step == 'release':
                 record.action_release_purchase_order()
             else:
+                if not is_staff:
+                    # On a split order a supplier confirms their own part only.
+                    record = record.with_context(
+                        smartspend_ack_partner=user.sudo().partner_id.commercial_partner_id.id)
                 record.action_acknowledge_purchase_order(
                     delivery_date=commit,
                     schedule=deliverySchedule if isinstance(deliverySchedule, list) else None)
         except (UserError, AccessError) as exc:
             return _refused(exc)
+        if not is_staff:
+            return record._to_vendor_portal_dict(user)
         return record._to_portal_dict()
 
     @http.route('/api/smartspend/attachment', type='json2', auth='none',

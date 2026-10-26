@@ -99,10 +99,13 @@
                             icon="fa-bell" invisible="state not in ('scheduled', 'live')"
                             groups="smartspend.group_smartspend_buyer"/>
                     <field name="approved_participant_id" invisible="1"/>
+                    <button name="action_open_approve_wizard" type="object" string="Approve Award…"
+                            class="oe_highlight" invisible="state != 'closed'"
+                            groups="smartspend.group_smartspend_manager"/>
                     <button name="action_award" type="object" string="Award to Approved Vendor"
                             class="oe_highlight" invisible="state != 'closed' or not approved_participant_id"
                             groups="smartspend.group_smartspend_buyer"
-                            confirm="Award this auction to the vendor the manager approved, and reprice the request at their bid?"/>
+                            confirm="Award this auction as the manager approved it — to one vendor, or split between several — and reprice the request?"/>
                     <button name="action_bid_again" type="object" string="Bid Again"
                             invisible="state != 'closed'"
                             confirm="Reopen bidding for another round?"/>
@@ -178,6 +181,18 @@
                             <field name="approved_on"/>
                             <field name="approval_note" invisible="not approval_note"/>
                         </group>
+                        <group string="Award Split" invisible="not award_share_ids" colspan="2">
+                            <field name="award_share_ids" nolabel="1" colspan="2">
+                                <list>
+                                    <field name="rank" string="Level"/>
+                                    <field name="partner_id"/>
+                                    <field name="share_percent"/>
+                                    <field name="amount" widget="monetary"/>
+                                    <field name="line_ids" widget="many2many_tags" string="Quantities"/>
+                                    <field name="currency_id" column_invisible="1"/>
+                                </list>
+                            </field>
+                        </group>
                         <group string="Outcome" invisible="state not in ('awarded', 'cancelled')">
                             <field name="winner_id" invisible="not winner_id"/>
                             <field name="awarded_total" widget="monetary" invisible="not winner_id"/>
@@ -224,8 +239,7 @@
                                     <!-- The manager picks any bidder's level; the buyer then awards it. -->
                                     <button name="action_approve_this" type="object" string="Approve"
                                             icon="fa-check-circle" groups="smartspend.group_smartspend_manager"
-                                            invisible="parent.state != 'closed' or not rank"
-                                            confirm="Approve awarding the auction to this vendor at their final total?"/>
+                                            invisible="parent.state != 'closed' or not rank"/>
                                 </list>
                             </field>
                         </page>
@@ -451,6 +465,38 @@
                 <field name="awarded_auction_id" invisible="not awarded_auction_id"
                        groups="smartspend.group_smartspend_buyer"/>
             </xpath>
+        </field>
+    </record>
+
+    <!-- The manager approves the award: a required reason, and one level at
+         100% or several levels with their share of the order's value. -->
+    <record id="smartspend_auction_approve_wizard_view_form" model="ir.ui.view">
+        <field name="name">smartspend.auction.approve.wizard.form</field>
+        <field name="model">smartspend.auction.approve.wizard</field>
+        <field name="arch" type="xml">
+            <form string="Approve the award">
+                <p class="text-muted">
+                    Give one level 100%, or split the award: each vendor's share is a share of the order's
+                    value, and their quantities are worked out from their own bid prices.
+                </p>
+                <field name="auction_id" invisible="1"/>
+                <field name="line_ids">
+                    <list editable="bottom" create="0" delete="0">
+                        <field name="rank" string="Level"/>
+                        <field name="participant_id" force_save="1"/>
+                        <field name="total" widget="monetary"/>
+                        <field name="share_percent"/>
+                        <field name="currency_id" column_invisible="1"/>
+                    </list>
+                </field>
+                <group>
+                    <field name="note" required="1" placeholder="Why this level, or this split — required"/>
+                </group>
+                <footer>
+                    <button name="action_confirm" type="object" string="Approve" class="btn-primary"/>
+                    <button string="Cancel" class="btn-secondary" special="cancel"/>
+                </footer>
+            </form>
         </field>
     </record>
 

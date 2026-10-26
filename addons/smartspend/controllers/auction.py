@@ -274,14 +274,19 @@ class SmartSpendAuctionApi(http.Controller):
 
     @http.route('/api/smartspend/auctions/<string:reference>/action', type='json2', auth='none',
                 methods=['POST'], cors='*', readonly=False)
-    def auction_action(self, reference=None, action=None, participantId=None, reason=None, note=None, **kwargs):
+    def auction_action(self, reference=None, action=None, participantId=None, reason=None, note=None,
+                       shares=None, **kwargs):
         """The buyer's controls: start, award, bid_again, cancel.
 
         ``award`` goes to L1 unless ``participantId`` names another bidder
         (L2, L3…); ``reason`` is kept with the award. ``remind`` nudges every
         pending vendor, or only ``participantId``; ``note`` is added to it.
         ``approve`` (procurement manager only) picks the level the buyer may
-        award — ``participantId``, L1 when left out — with ``reason`` as its note.
+        award — ``participantId``, L1 when left out — with ``reason`` as its note,
+        which is required. ``shares`` (``[{'participantId', 'percent'}]``)
+        approves several levels instead, splitting the order's value between
+        them; ``split_preview`` answers what such a split would hand each
+        vendor, without saving anything.
         """
         error = _authenticate()
         if error:
@@ -295,12 +300,23 @@ class SmartSpendAuctionApi(http.Controller):
         handlers = {
             'start': auction.action_start,
             'award': lambda: auction.action_award(participant=participantId or None, reason=reason),
-            'approve': lambda: auction.action_approve_award(participant=participantId or None, note=reason or note),
+            'approve': lambda: auction.action_approve_award(
+                participant=participantId or None, note=reason or note,
+                shares=shares if isinstance(shares, list) else None),
             'bid_again': auction.action_bid_again,
             'cancel': auction.action_cancel,
             'remind': lambda: auction.action_send_reminders(
                 participants=[participantId] if participantId else None, note=note),
         }
+        if (action or '').strip().lower() == 'split_preview':
+            # What a split would hand each vendor; nothing is saved.
+            if not user.has_group('smartspend.group_smartspend_manager'):
+                return _error(_("Only a procurement manager approves which vendor is awarded."), 403)
+            try:
+                auction.sudo()._sync_state()
+                return {'split': auction.sudo()._split_preview(shares if isinstance(shares, list) else [])}
+            except (UserError, ValidationError, ValueError) as exc:
+                return _error(str(exc.args[0] if exc.args else exc), 400)
         handler = handlers.get((action or '').strip().lower())
         if not handler:
             return _error(_("Action must be one of: %s.", ", ".join(handlers)), 400)

@@ -12,3 +12,4 @@ from . import smartspend_receipt
 from . import smartspend_analytic
 from . import smartspend_product_request
 from . import smartspend_delivery_schedule
+from . import smartspend_auction_split

@@ -45,6 +45,28 @@ def _order_lines(order):
             for line in order.order_line.filtered(lambda l: not l.display_type)]
 
 
+def _current_order(record):
+    """The order goods are expected against next.
+
+    One order normally. Split between vendors there are several: the first
+    one with a delivery still open — a receipt waiting, or nothing received
+    yet — and the first order once everything is in. A supplier only ever
+    gets their own.
+    """
+    orders = record.purchase_order_ids.filtered(lambda o: o.state in ('purchase', 'done'))
+    if _is_vendor(request.env.user):
+        supplier = request.env.user.sudo().partner_id.commercial_partner_id
+        orders = orders.filtered(lambda o: o.partner_id.commercial_partner_id == supplier)
+    if len(orders) > 1:
+        Receipt = request.env['smartspend.receipt'].sudo()
+        for order in orders:
+            receipts = Receipt.search([('purchase_order_id', '=', order.id)])
+            if receipts.filtered(lambda r: r.state == 'waiting') or (not receipts and any(
+                    not l.display_type and l.product_qty > l.qty_received for l in order.order_line)):
+                return order
+    return orders[:1]
+
+
 class SmartSpendReceipts(http.Controller):
 
     def _request_for(self, reference):
@@ -69,7 +91,7 @@ class SmartSpendReceipts(http.Controller):
         record = self._request_for(reference)
         if not record:
             return _error(_("No purchase request named %s.", reference or '—'), 404)
-        order = record.purchase_order_ids.filtered(lambda o: o.state in ('purchase', 'done'))[:1]
+        order = _current_order(record)
         if not order:
             return {'requestId': record.name, 'order': '', 'lines': [], 'open': None, 'receipts': []}
         Receipt = request.env['smartspend.receipt'].sudo()
@@ -117,7 +139,7 @@ class SmartSpendReceipts(http.Controller):
         record = self._request_for(requestId)
         if not record:
             return _error(_("No purchase request named %s.", requestId or '—'), 404)
-        order = record.purchase_order_ids.filtered(lambda o: o.state in ('purchase', 'done'))[:1]
+        order = _current_order(record)
         if not order:
             return _error(_("%s has no confirmed purchase order to receive against.", record.name), 400)
         receipt = request.env['smartspend.receipt'].sudo()._waiting_for(order)

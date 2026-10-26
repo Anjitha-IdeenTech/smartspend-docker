@@ -25,6 +25,12 @@ export interface AuctionLine {
   id: number; productName: string; qty: number; uom: string;
   ceilingPrice: number; ceilingSubtotal: number;
 }
+/** One vendor's part of a split award. */
+export interface SplitRow {
+  participantId: number; vendor: string; rank: number; percent: number; amount: number;
+  actualPercent?: number; items: { productName: string; qty: number; price: number }[];
+}
+
 export interface AuctionParticipant {
   id: number; vendorId: number; vendor: string; hasLogin: boolean; login: string;
   state: string; stateLabel: string; total: number; rank: number; bidCount: number;
@@ -53,7 +59,9 @@ export interface Auction {
   /** The winner's level at the close (1 = L1), and why, when the buyer chose past L1. */
   awardedRank?: number; awardReason?: string;
   /** The procurement manager's approval of which bidder to award; the buyer awards only this one. */
-  approval?: { participantId: number; vendor: string; rank: number; total: number; note: string; by: string; at: string } | null;
+  approval?: { participantId: number; vendor: string; rank: number; total: number; note: string; by: string; at: string; split?: SplitRow[] } | null;
+  /** An award split between levels: each vendor's share of the value, and what they supply. */
+  split?: SplitRow[];
   cancelReason?: string; rebidUntil?: string;
   /** Automatic reminder: minutes before opening (0 = off), when it goes out, and whether it has. */
   reminderMinutes?: number; autoReminderAt?: string; autoReminderSent?: boolean;
@@ -1138,6 +1146,12 @@ function AuctionRoom({ api, reference, onBack, onRequestUpdated, onRaisePurchase
                         className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold text-[#2a1a00] shadow-lg disabled:opacity-40 auction-gold-btn">
                   <CheckCircle2 className="h-4 w-4" /> {busy === 'approve' ? 'Approving…' : auction.approval ? 'Change approval' : 'Choose & approve'}
                 </button>
+              ) : auction.approval?.split?.length ? (
+                <button onClick={() => act('award', `Award ${auction.id} split between ${auction.approval!.split!.map(r => `${r.vendor} (${r.percent}%)`).join(' and ')} — ${inr(auction.approval!.total)} in all, as approved by ${auction.approval!.by}? One purchase order is raised per vendor.`)}
+                        disabled={!!busy}
+                        className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold text-[#2a1a00] shadow-lg disabled:opacity-40 auction-gold-btn">
+                  <Trophy className="h-4 w-4" /> {busy === 'award' ? 'Awarding…' : `Award split · ${auction.approval.split.map(r => `L${r.rank} ${r.percent}%`).join(' + ')}`}
+                </button>
               ) : auction.approval ? (
                 <button onClick={() => act('award', `Award ${auction.id} to ${auction.approval!.vendor} (L${auction.approval!.rank}) at ${inr(auction.approval!.total)}, as approved by ${auction.approval!.by}? The request is repriced at their bid.`, { participantId: auction.approval!.participantId })}
                         disabled={!!busy}
@@ -1177,8 +1191,20 @@ function AuctionRoom({ api, reference, onBack, onRequestUpdated, onRaisePurchase
           {auction.approval ? <CheckCircle2 className="h-5 w-5 shrink-0 text-pos mt-0.5" /> : <Hourglass className="h-5 w-5 shrink-0 text-gold mt-0.5" />}
           <div className="text-xs">
             {auction.approval ? (<>
+              {auction.approval.split?.length ? (<>
+                <p className="font-bold text-textPrimary">Approved by {auction.approval.by}: split between {auction.approval.split.length} vendors — {inr(auction.approval.total)} in all</p>
+                <ul className="mt-1 space-y-0.5">
+                  {auction.approval.split.map(row => (
+                    <li key={row.participantId} className="text-textSecondary">
+                      <b className="text-textPrimary">L{row.rank} {row.vendor}</b> · {row.percent}% · {inr(row.amount)} — {row.items.map(i => `${i.qty} × ${i.productName}`).join(', ')}
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-textSecondary mt-1">{auction.approval.note ? <>“{auction.approval.note}” · </> : null}{approver ? 'The buyer now awards it — one purchase order per vendor.' : 'Award it to raise one purchase order per vendor.'}</p>
+              </>) : (<>
               <p className="font-bold text-textPrimary">Approved by {auction.approval.by}: {auction.approval.vendor} (L{auction.approval.rank}) at {inr(auction.approval.total)}</p>
               <p className="text-textSecondary mt-0.5">{auction.approval.note ? <>“{auction.approval.note}” · </> : null}{approver ? 'The buyer now awards it to this vendor.' : 'Award it to this vendor to reprice the request.'}</p>
+              </>)}
             </>) : (<>
               <p className="font-bold text-textPrimary">{approver ? 'Bidding has closed — choose the level to award and approve it.' : 'Bidding has closed — waiting for the procurement manager to approve the level to award.'}</p>
               <p className="text-textSecondary mt-0.5">{approver ? 'L1 is the lowest total; you may approve any bidder. The buyer then awards to the vendor you approve.' : 'Once approved, the award goes to the vendor the manager chose — L1 or another level.'}</p>
@@ -1415,7 +1441,14 @@ function AuctionRoom({ api, reference, onBack, onRequestUpdated, onRaisePurchase
           document.body,
         );
       })()}
-      {awardPick !== null && auction.state === 'closed' && (() => {
+      {approver && awardPick !== null && auction.state === 'closed' && (
+        <ApproveAwardDialog api={api} auction={auction} pick={awardPick} busy={busy === 'approve'} error={error}
+                            onCancel={() => setAwardPick(null)}
+                            onApprove={(shares, reason) => act('approve', undefined, {
+                              shares, reason, ...(shares.length === 1 ? { participantId: shares[0].participantId } : {}),
+                            })} />
+      )}
+      {!approver && awardPick !== null && auction.state === 'closed' && (() => {
         const ranked = (auction.participants ?? []).filter(p => p.rank > 0 && p.total > 0).sort((a, b) => a.rank - b.rank);
         const l1 = ranked[0];
         const chosen = ranked.find(p => p.id === awardPick) ?? l1;
@@ -1496,7 +1529,8 @@ function AuctionRoom({ api, reference, onBack, onRequestUpdated, onRaisePurchase
             <div className="relative">
               <div className="mx-auto grid h-20 w-20 place-items-center rounded-3xl auction-rank-gold mb-4"><Trophy className="h-10 w-10" /></div>
               <p className="text-[11px] font-bold uppercase tracking-[0.25em] text-white/55">Awarded</p>
-              <h3 className="font-outfit text-3xl font-black mt-1">{auction.winner}</h3>
+              <h3 className="font-outfit text-3xl font-black mt-1">{auction.split?.length ? auction.split.map(r => r.vendor).join(' + ') : auction.winner}</h3>
+              {auction.split?.length ? <p className="text-xs text-white/70 mt-1">{auction.split.map(r => `${r.vendor} ${r.percent}%`).join(' · ')}</p> : null}
               <p className="font-outfit text-4xl font-black tabular-nums mt-2 bg-gradient-to-r from-amber-200 to-amber-400 bg-clip-text text-transparent">{inr(auction.awardedTotal)}</p>
               <p className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-400/15 border border-emerald-300/40 px-3 py-1 text-xs font-bold text-emerald-200">
                 <PartyPopper className="h-3.5 w-3.5" /> saved {inr(auction.savings)} · {savedPct.toFixed(1)}% below opening
@@ -1612,7 +1646,7 @@ export function AuctionDesk({ api, offline, requests, launchFor, onLaunchHandled
         </div>
         <div className={`mt-3 flex items-center gap-1 text-[11px] font-bold ${a.state === 'live' ? 'text-pink-200' : 'text-brand'}`}>
           {a.state === 'live' ? 'Enter the auction room' : a.state === 'closed'
-            ? (a.approval ? (approver ? `Approved L${a.approval.rank} · view` : `Award to ${a.approval.vendor} (L${a.approval.rank})`) : (approver ? 'Review and approve' : 'Awaiting manager approval'))
+            ? (a.approval ? (approver ? (a.approval.split?.length ? `Approved split · view` : `Approved L${a.approval.rank} · view`) : (a.approval.split?.length ? `Award split · ${a.approval.split.map(r => `L${r.rank} ${r.percent}%`).join(' + ')}` : `Award to ${a.approval.vendor} (L${a.approval.rank})`)) : (approver ? 'Review and approve' : 'Awaiting manager approval'))
             : 'Open'} <ChevronRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
         </div>
       </button>
@@ -2143,5 +2177,166 @@ export function VendorAuctions({ api, offline }: { api: ApiFn; offline: boolean 
         })}
       </div>
     </div>
+  );
+}
+
+/**
+ * The procurement manager approves the award: one level at 100%, or several
+ * levels each with their share of the order's value. The server works out
+ * each vendor's quantities from their own bid prices (``split_preview``), and
+ * the reason is required.
+ */
+function ApproveAwardDialog({ api, auction, pick, busy, error, onCancel, onApprove }: {
+  api: ApiFn; auction: Auction; pick: number; busy: boolean; error: string;
+  onCancel: () => void;
+  onApprove: (shares: { participantId: number; percent: number }[], reason: string) => void;
+}) {
+  const ranked = (auction.participants ?? []).filter(p => p.rank > 0 && p.total > 0).sort((a, b) => a.rank - b.rank);
+  const l1 = ranked[0];
+  const [shares, setShares] = useState<Record<number, string>>(() => {
+    const prior = auction.approval?.split;
+    if (prior?.length) return Object.fromEntries(prior.map(r => [r.participantId, String(r.percent)]));
+    return { [pick]: '100' };
+  });
+  const [reason, setReason] = useState(auction.approval?.note ?? '');
+  const [tried, setTried] = useState(false);
+  const [preview, setPreview] = useState<SplitRow[] | null>(null);
+  const [previewError, setPreviewError] = useState('');
+  const chosen = ranked.filter(p => p.id in shares);
+  const pct = (id: number) => { const n = Number(shares[id]); return Number.isFinite(n) ? n : 0; };
+  const sum = chosen.reduce((t, p) => t + pct(p.id), 0);
+  const balanced = Math.abs(sum - 100) < 0.01 && chosen.every(p => pct(p.id) > 0);
+  const split = chosen.length > 1;
+  const key = JSON.stringify(chosen.map(p => [p.id, pct(p.id)]));
+
+  useEffect(() => {
+    setPreview(null); setPreviewError('');
+    if (!split || !balanced) return;
+    let stale = false;
+    const t = window.setTimeout(async () => {
+      const res = await call<{ split: SplitRow[] }>(api, `/api/smartspend/auctions/${auction.id}/action`, {
+        method: 'POST', body: JSON.stringify({ action: 'split_preview', shares: chosen.map(p => ({ participantId: p.id, percent: pct(p.id) })) }),
+      });
+      if (stale) return;
+      if (res.ok) setPreview(res.data.split); else setPreviewError(res.error);
+    }, 350);
+    return () => { stale = true; window.clearTimeout(t); };
+  }, [key]);
+
+  const toggle = (id: number) => setShares(prev => {
+    const next = { ...prev };
+    if (id in next) delete next[id];
+    else next[id] = Object.keys(next).length ? '0' : '100';
+    return next;
+  });
+  const evenly = () => {
+    const n = chosen.length; if (!n) return;
+    const base = Math.floor(100 / n);
+    setShares(Object.fromEntries(chosen.map((p, i) => [p.id, String(i === 0 ? 100 - base * (n - 1) : base)])));
+  };
+  const total = split ? (preview ? preview.reduce((t, r) => t + r.amount, 0) : null) : chosen[0]?.total ?? null;
+  const ready = chosen.length > 0 && balanced && !!reason.trim() && (!split || !!preview);
+  const approve = () => {
+    setTried(true);
+    if (!ready) return;
+    onApprove(chosen.map(p => ({ participantId: p.id, percent: pct(p.id) })), reason.trim());
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => !busy && onCancel()}>
+      <div onClick={e => e.stopPropagation()} className="w-full max-w-xl max-h-[92vh] flex flex-col rounded-2xl bg-surface border border-borderTheme shadow-2xl">
+        <div className="flex items-start gap-3 px-6 py-4 border-b border-borderTheme">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gold/15 text-gold"><Trophy className="h-5 w-5" /></span>
+          <div className="min-w-0 flex-1">
+            <h3 className="font-outfit font-extrabold text-lg text-textPrimary leading-tight">Approve the award · {auction.id}</h3>
+            <p className="text-[11px] text-textSecondary mt-0.5">Tick one level, or several to split the order. A share is a share of the order's value — each vendor's quantities are worked out from their own bid prices.</p>
+          </div>
+          <button onClick={onCancel} disabled={busy} className="p-1.5 rounded-lg text-textFaint hover:text-textPrimary hover:bg-secondary"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="px-6 py-5 space-y-3 overflow-y-auto">
+          <div className="space-y-2">
+            {ranked.map(p => {
+              const on = p.id in shares;
+              const over = p.total - (l1?.total ?? p.total);
+              return (
+                <div key={p.id} className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 transition-all ${on ? 'border-gold bg-gold/10 ring-1 ring-gold/40' : 'border-borderTheme'}`}>
+                  <button type="button" role="checkbox" aria-checked={on} onClick={() => toggle(p.id)}
+                          className={`h-5 w-5 shrink-0 rounded-md border flex items-center justify-center ${on ? 'bg-gold border-transparent text-[#2a1a00]' : 'border-borderTheme bg-secondary'}`}>
+                    {on && <Check className="h-3.5 w-3.5" />}
+                  </button>
+                  <span className={`shrink-0 rounded-md px-2 py-0.5 text-[11px] font-black ${p.rank === 1 ? 'bg-gold text-[#2a1a00]' : 'bg-secondary text-textSecondary border border-borderTheme'}`}>L{p.rank}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-bold text-textPrimary truncate">{p.vendor}</span>
+                    <span className={`text-[10px] font-bold ${over > 0 ? 'text-neg' : 'text-pos'}`}>{inr(p.total)} · {over > 0 ? `+${inr(over)} vs L1` : 'Lowest'}</span>
+                  </span>
+                  {on && (
+                    <span className="flex items-center gap-1 shrink-0">
+                      <input type="number" min={0} max={100} step="any" value={shares[p.id]} aria-label={`${p.vendor} share`}
+                             onChange={e => setShares(prev => ({ ...prev, [p.id]: e.target.value }))}
+                             className="w-16 rounded-lg border border-borderTheme bg-surface px-2 py-1 text-right text-sm font-bold text-textPrimary tabular-nums focus:outline-none focus:border-brand" />
+                      <span className="text-xs font-bold text-textSecondary">%</span>
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="flex items-center gap-3 text-[11px]">
+            <span className={`font-bold ${balanced ? 'text-pos' : 'text-gold'}`}>
+              Shares: {Math.round(sum * 100) / 100}% {balanced ? '✓' : `— ${sum < 100 ? `${Math.round((100 - sum) * 100) / 100}% left to give` : `${Math.round((sum - 100) * 100) / 100}% too much`}`}
+            </span>
+            {chosen.length > 1 && <button type="button" onClick={evenly} className="font-semibold text-brand hover:underline">Split evenly</button>}
+          </div>
+
+          {split && balanced && (
+            <div className="rounded-xl bg-secondary/60 border border-borderTheme px-3 py-2.5 space-y-1.5">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-textFaint">What each vendor supplies</p>
+              {previewError ? <p className="text-[11px] text-neg">{previewError}</p>
+                : !preview ? <p className="text-[11px] text-textFaint">Working it out…</p>
+                : preview.map(row => (
+                  <div key={row.participantId} className="text-[11px]">
+                    <p className="flex items-center gap-2">
+                      <b className="text-textPrimary">L{row.rank} {row.vendor}</b>
+                      <span className="ml-auto font-bold text-textPrimary tabular-nums">{inr(row.amount)}</span>
+                      <span className="text-textFaint tabular-nums w-24 text-right">{row.actualPercent}% of value</span>
+                    </p>
+                    <p className="text-textSecondary">{row.items.map(i => `${i.qty} × ${i.productName} @ ${inr(i.price)}`).join(' · ')}</p>
+                  </div>
+                ))}
+              {preview && preview.some(r => r.actualPercent !== undefined && Math.abs(r.actualPercent - r.percent) >= 0.5) && (
+                <p className="text-[10px] text-textFaint">Whole units only, so the value shares come out close to — not exactly — the percentages asked.</p>
+              )}
+            </div>
+          )}
+
+          {total !== null && l1 && (
+            <p className="text-[11px] text-textSecondary">
+              Total <b className="text-textPrimary">{inr(total)}</b>
+              {total - l1.total > 0.5 ? <> — <b className="text-neg">{inr(total - l1.total)}</b> more than all to L1 ({l1.vendor}).</> : ' — the lowest total.'}
+            </p>
+          )}
+
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-textFaint block mb-1">Reason <span className="text-neg">*</span></label>
+            <textarea rows={2} value={reason} onChange={e => setReason(e.target.value)} aria-required="true"
+                      placeholder={split ? 'e.g. Split to reduce supply risk — both vendors can deliver on time' : 'e.g. Lowest price and on-time delivery history'}
+                      className={`w-full rounded-xl border bg-secondary p-2.5 text-xs text-textPrimary focus:outline-none focus:border-brand ${tried && !reason.trim() ? 'border-neg' : 'border-borderTheme'}`} />
+            {tried && !reason.trim() && <p className="mt-1 text-[11px] font-semibold text-neg">Give the reason for this approval — it is required.</p>}
+          </div>
+          {tried && !balanced && <p className="text-[11px] font-semibold text-neg">The shares have to add up to 100%.</p>}
+          <ErrorNote text={error} />
+        </div>
+        <div className="flex justify-end gap-2 px-6 py-4 border-t border-borderTheme">
+          <button onClick={onCancel} disabled={busy} className="rounded-lg border border-borderTheme bg-secondary px-4 py-2 text-xs font-bold text-textSecondary hover:text-textPrimary">Cancel</button>
+          <button onClick={approve} disabled={busy || !chosen.length}
+                  className="inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-bold text-[#2a1a00] shadow disabled:opacity-40 auction-gold-btn">
+            <Trophy className="h-4 w-4" />
+            {busy ? 'Approving…' : split ? `Approve split between ${chosen.length} vendors` : chosen[0] ? `Approve ${chosen[0].vendor} (L${chosen[0].rank})` : 'Approve'}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }

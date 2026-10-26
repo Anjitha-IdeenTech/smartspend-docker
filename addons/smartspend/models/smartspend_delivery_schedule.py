@@ -24,6 +24,9 @@ class SmartspendDeliverySlot(models.Model):
     line_id = fields.Many2one('smartspend.request.line', string='Request Line', ondelete='cascade')
     product_name = fields.Char(string='Product', required=True)
     quantity = fields.Float(string='Quantity', digits='Product Unit', required=True)
+    partner_id = fields.Many2one(
+        'res.partner', string='Vendor',
+        help="Set when the order is split between vendors: whose delivery this is.")
 
 
 class SmartspendRequest(models.Model):
@@ -32,10 +35,13 @@ class SmartspendRequest(models.Model):
     delivery_slot_ids = fields.One2many(
         'smartspend.delivery.slot', 'request_id', string='Delivery Schedule', readonly=True, copy=False)
 
-    def _read_delivery_schedule(self, schedule):
+    def _read_delivery_schedule(self, schedule, ordered=None):
         """Check a schedule the vendor sent and turn it into slot values.
 
         :param schedule: ``[{'date': 'YYYY-MM-DD', 'items': [{'productName', 'quantity'}]}]``
+        :param ordered: what this vendor was ordered, ``{product name: qty}``,
+            when the order is split between vendors; the request's lines
+            otherwise.
         :return: ``(last date, [slot values])``
         """
         self.ensure_one()
@@ -43,10 +49,13 @@ class SmartspendRequest(models.Model):
         by_name = {}
         for line in lines:
             by_name.setdefault(line.product_name.strip().casefold(), line)
-        ordered = {}
-        for line in lines:
-            key = line.product_name.strip().casefold()
-            ordered[key] = ordered.get(key, 0.0) + line.product_qty
+        if ordered is not None:
+            ordered = {name.strip().casefold(): qty for name, qty in ordered.items()}
+        else:
+            ordered = {}
+            for line in lines:
+                key = line.product_name.strip().casefold()
+                ordered[key] = ordered.get(key, 0.0) + line.product_qty
         today = fields.Date.context_today(self)
         seen_dates, slots, scheduled = set(), [], {}
         for index, part in enumerate(schedule or [], 1):
@@ -66,7 +75,7 @@ class SmartspendRequest(models.Model):
             for item in (part or {}).get('items') or []:
                 key = str(item.get('productName') or '').strip().casefold()
                 line = by_name.get(key)
-                if not line:
+                if not line or key not in ordered:
                     raise UserError(_("“%s” is not on this order.", item.get('productName')))
                 try:
                     quantity = float(item.get('quantity') or 0)
@@ -91,11 +100,17 @@ class SmartspendRequest(models.Model):
                     product=by_name[key].product_name, scheduled=f"{scheduled.get(key, 0.0):g}", ordered=f"{quantity:g}"))
         return max(seen_dates), slots
 
-    def _delivery_schedule(self):
-        """``[{'date': 'YYYY-MM-DD', 'items': [{'productName', 'quantity'}]}]``, by date."""
+    def _delivery_schedule(self, partner=None):
+        """``[{'date': 'YYYY-MM-DD', 'items': [{'productName', 'quantity'}]}]``, by date.
+
+        :param partner: only that vendor's deliveries, on a split order.
+        """
         self.ensure_one()
         parts = {}
-        for slot in self.delivery_slot_ids:
+        slots = self.delivery_slot_ids
+        if partner:
+            slots = slots.filtered(lambda s: not s.partner_id or s.partner_id == partner)
+        for slot in slots:
             parts.setdefault(slot.date, []).append({'productName': slot.product_name, 'quantity': slot.quantity})
         return [{'date': fields.Date.to_string(day), 'items': items} for day, items in sorted(parts.items())]
 

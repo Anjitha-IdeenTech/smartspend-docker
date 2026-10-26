@@ -106,9 +106,21 @@ class SmartSpendDeliveryCommitments(http.Controller):
             [('vendor_delivery_date', '!=', False)], limit=2000)
         if _is_vendor(user):
             records = records.filtered(lambda record: record._placed_with(user))
-        else:
-            # What this user may open, and nothing beyond it.
-            records = request.env['smartspend.request'].search([('id', 'in', records.ids)])
+            supplier = user.sudo().partner_id.commercial_partner_id
+            dates = {}
+            for record in records:
+                # On a split order, the date this supplier committed to.
+                own = record.sudo().purchase_order_ids.filtered(
+                    lambda o: o.state != 'cancel' and o.partner_id.commercial_partner_id == supplier)
+                mine = own.filtered('smartspend_acknowledged').mapped('smartspend_delivery_date')
+                if record._is_split_order():
+                    if mine:
+                        dates[record.name] = fields.Date.to_string(max(mine))
+                else:
+                    dates[record.name] = fields.Date.to_string(record.vendor_delivery_date)
+            return dates
+        # What this user may open, and nothing beyond it.
+        records = request.env['smartspend.request'].search([('id', 'in', records.ids)])
         return {record.name: fields.Date.to_string(record.vendor_delivery_date) for record in records}
 
     @http.route('/api/smartspend/delivery-schedules', type='json2', auth='none',
@@ -129,6 +141,8 @@ class SmartSpendDeliveryCommitments(http.Controller):
             [('delivery_slot_ids', '!=', False)], limit=2000)
         if _is_vendor(user):
             records = records.filtered(lambda record: record._placed_with(user))
-        else:
-            records = request.env['smartspend.request'].search([('id', 'in', records.ids)]).sudo()
+            # On a split order, only their own deliveries.
+            supplier = user.sudo().partner_id.commercial_partner_id
+            return {record.name: record._delivery_schedule(partner=supplier) for record in records}
+        records = request.env['smartspend.request'].search([('id', 'in', records.ids)]).sudo()
         return {record.name: record._delivery_schedule() for record in records}

@@ -95,6 +95,42 @@
         <field name="perm_unlink" eval="False"/>
     </record>
 
+    <!-- A split award places orders with several vendors: each of them reads
+         the request (and its lines and timeline) too. OR'd with the rules
+         above; the portal then shows each vendor only their own part. -->
+    <record id="rule_smartspend_request_vendor_split" model="ir.rule">
+        <field name="name">SmartSpend: orders split with a vendor</field>
+        <field name="model_id" ref="model_smartspend_request"/>
+        <field name="domain_force">[('state', 'in', ['po_confirmed', 'paid']), ('supplier_partner_ids', 'in', [user.commercial_partner_id.id])]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_vendor'))]"/>
+        <field name="perm_read" eval="True"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+
+    <record id="rule_smartspend_request_line_vendor_split" model="ir.rule">
+        <field name="name">SmartSpend: lines of orders split with a vendor</field>
+        <field name="model_id" ref="model_smartspend_request_line"/>
+        <field name="domain_force">[('request_id.state', 'in', ['po_confirmed', 'paid']), ('request_id.supplier_partner_ids', 'in', [user.commercial_partner_id.id])]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_vendor'))]"/>
+        <field name="perm_read" eval="True"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+
+    <record id="rule_smartspend_request_history_vendor_split" model="ir.rule">
+        <field name="name">SmartSpend: timeline of orders split with a vendor</field>
+        <field name="model_id" ref="model_smartspend_request_history"/>
+        <field name="domain_force">[('request_id.state', 'in', ['po_confirmed', 'paid']), ('request_id.supplier_partner_ids', 'in', [user.commercial_partner_id.id])]</field>
+        <field name="groups" eval="[Command.link(ref('group_smartspend_vendor'))]"/>
+        <field name="perm_read" eval="True"/>
+        <field name="perm_write" eval="False"/>
+        <field name="perm_create" eval="False"/>
+        <field name="perm_unlink" eval="False"/>
+    </record>
+
     <record id="rule_smartspend_request_line_vendor" model="ir.rule">
         <field name="name">SmartSpend: lines of orders placed with a vendor</field>
         <field name="model_id" ref="model_smartspend_request_line"/>

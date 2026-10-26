@@ -1318,6 +1318,10 @@ class SmartspendRequest(models.Model):
         if not partner:
             raise UserError(
                 _("Set a vendor on %s (or match a rate contract) before creating a purchase order.", self.name))
+        # A split award raises its own orders (smartspend_auction_split): it
+        # runs every check above first, and stops here.
+        if self.env.context.get('smartspend_check_only'):
+            return partner
 
         order = self.env['purchase.order'].create(self._prepare_purchase_order_vals(partner))
         for line in self.line_ids:
