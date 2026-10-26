@@ -1,7 +1,8 @@
 /**
  * The vendor's order acknowledgment — confirmed with the delivery schedule
  * they commit to: one delivery, or several, each a date with the quantity of
- * every item coming that day. Opened by every "Confirm order" button (and by
+ * every item coming that day — or, item-wise, one date for each item (items
+ * sharing a date travel as one delivery). Opened by every "Confirm order" button (and by
  * the buyer's "Simulate Vendor Acknowledgment"); Odoo refuses a schedule that
  * does not add up to the order, and the last date becomes the committed one.
  */
@@ -48,6 +49,10 @@ export function VendorAckDialog({ target, asBuyer, error, onCancel, onConfirm }:
   const [agreed, setAgreed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [tried, setTried] = useState(false);
+  // 'delivery': deliveries with quantities; 'item': one date per item.
+  const [mode, setMode] = useState<'delivery' | 'item'>('delivery');
+  const [itemDates, setItemDates] = useState<Record<string, string>>(() =>
+    Object.fromEntries(lines.map(l => [l.productName, needed && needed >= today() ? iso(needed) : ''])));
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !busy) onCancel(); };
@@ -67,8 +72,18 @@ export function VendorAckDialog({ target, asBuyer, error, onCancel, onConfirm }:
     return '';
   };
   const balanced = lines.every(l => Math.abs(scheduled(l.productName) - l.qty) < 0.005);
-  const last = dates.reduce<Date | null>((m, d) => (d && (!m || d > m) ? d : m), null);
-  const ready = parts.every((_, i) => !partProblem(i)) && balanced && agreed;
+  // Item-wise: every item needs a date, none in the past.
+  const itemProblem = (name: string) => {
+    const d = parse(itemDates[name]);
+    return !d ? 'Choose a date.' : d < today() ? 'The date cannot be in the past.' : '';
+  };
+  const itemDays = [...new Set(lines.map(l => itemDates[l.productName]).filter(Boolean))].sort();
+  const byItem = mode === 'item';
+  const last = byItem
+    ? lines.reduce<Date | null>((m, l) => { const d = parse(itemDates[l.productName]); return d && (!m || d > m) ? d : m; }, null)
+    : dates.reduce<Date | null>((m, d) => (d && (!m || d > m) ? d : m), null);
+  const deliveryCount = byItem ? itemDays.length : parts.length;
+  const ready = (byItem ? lines.every(l => !itemProblem(l.productName)) : parts.every((_, i) => !partProblem(i)) && balanced) && agreed;
   const gap = last && needed ? Math.round((last.getTime() - needed.getTime()) / 86400000) : null;
 
   const setDate = (i: number, date: string) => setParts(prev => prev.map((p, j) => (j === i ? { ...p, date } : p)));
@@ -88,10 +103,16 @@ export function VendorAckDialog({ target, asBuyer, error, onCancel, onConfirm }:
     setTried(true);
     if (!ready) return;
     setBusy(true);
-    const schedule: Delivery[] = parts.map(p => ({
-      date: p.date,
-      items: lines.map(l => ({ productName: l.productName, quantity: num(p.qty[l.productName]) })).filter(x => x.quantity > 0),
-    }));
+    const schedule: Delivery[] = byItem
+      // Items sharing a date travel together, in full.
+      ? itemDays.map(date => ({
+          date,
+          items: lines.filter(l => itemDates[l.productName] === date).map(l => ({ productName: l.productName, quantity: l.qty })),
+        }))
+      : parts.map(p => ({
+          date: p.date,
+          items: lines.map(l => ({ productName: l.productName, quantity: num(p.qty[l.productName]) })).filter(x => x.quantity > 0),
+        }));
     const ok = await onConfirm(schedule);
     setBusy(false);
     if (ok) onCancel();
@@ -134,8 +155,51 @@ export function VendorAckDialog({ target, asBuyer, error, onCancel, onConfirm }:
 
           <div>
             <p className="text-xs text-textSecondary font-bold uppercase tracking-wider mb-1">
-              Expected delivery {parts.length > 1 ? 'schedule' : 'date'} <span className="text-neg">*</span>
+              Expected delivery {deliveryCount > 1 ? 'schedule' : 'date'} <span className="text-neg">*</span>
             </p>
+            {lines.length > 1 && (
+              <div className="mb-2 inline-flex rounded-lg border border-borderTheme bg-secondary p-0.5 text-[11px] font-bold" role="tablist">
+                {([['delivery', 'Split into deliveries'], ['item', 'Date per item']] as const).map(([key, label]) => (
+                  <button key={key} type="button" role="tab" aria-selected={mode === key} onClick={() => { setMode(key); setTried(false); }}
+                          className={`px-3 py-1.5 rounded-md transition-all ${mode === key ? 'bg-surface text-textPrimary shadow-sm' : 'text-textFaint hover:text-textPrimary'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {byItem ? (<>
+              <p className="text-[11px] text-textFaint mb-2">Give each item the date it will arrive. Items with the same date come as one delivery.</p>
+              <div className="rounded-xl border border-borderTheme bg-secondary/40 divide-y divide-borderTheme">
+                {lines.map(l => {
+                  const problem = tried ? itemProblem(l.productName) : (parse(itemDates[l.productName]) && parse(itemDates[l.productName])! < today() ? 'The date cannot be in the past.' : '');
+                  return (
+                    <div key={l.productName} className={`px-3 py-2 ${problem ? 'bg-neg/5' : ''}`}>
+                      <div className="flex items-center gap-2">
+                        <span className="flex-1 min-w-0 text-[11px]">
+                          <span className="block truncate font-semibold text-textPrimary" title={l.productName}>{l.productName}</span>
+                          <span className="text-textFaint">× {l.qty.toLocaleString('en-IN')}</span>
+                        </span>
+                        <input type="date" value={itemDates[l.productName] ?? ''} min={iso(today())} aria-required="true"
+                               aria-label={`${l.productName} delivery date`}
+                               onChange={e => setItemDates(prev => ({ ...prev, [l.productName]: e.target.value }))}
+                               className={`w-40 bg-surface border rounded-lg px-2 py-1.5 text-sm font-semibold text-textPrimary focus:outline-none ${problem ? 'border-neg' : 'border-borderTheme focus:border-textPrimary'}`} />
+                      </div>
+                      {problem && <p className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-neg"><AlertCircle className="h-3 w-3" />{problem}</p>}
+                    </div>
+                  );
+                })}
+              </div>
+              {itemDays.length > 1 && (
+                <div className="mt-2.5 rounded-xl bg-secondary/60 border border-borderTheme px-3 py-2 space-y-0.5">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-textFaint">{itemDays.length} deliveries</p>
+                  {itemDays.map(date => (
+                    <p key={date} className="text-[11px] text-textSecondary">
+                      <b className="text-textPrimary">{showDate(date)}</b> — {lines.filter(l => itemDates[l.productName] === date).map(l => `${l.productName} ×${l.qty.toLocaleString('en-IN')}`).join(', ')}
+                    </p>
+                  ))}
+                </div>
+              )}
+            </>) : (<>
             <p className="text-[11px] text-textFaint mb-2">Delivering in parts? Add a delivery for each date and say how much comes that day.</p>
             <div className="space-y-2.5">
               {parts.map((p, i) => {
@@ -194,9 +258,10 @@ export function VendorAckDialog({ target, asBuyer, error, onCancel, onConfirm }:
             {tried && !balanced && (
               <p className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-neg"><AlertCircle className="h-3 w-3" />The deliveries have to add up to what was ordered.</p>
             )}
+            </>)}
             {last && last >= today() && gap !== null && (
               <p className={`mt-1.5 text-[11px] font-bold ${gap > 0 ? 'text-gold' : 'text-pos'}`}>
-                {parts.length > 1 ? 'Last delivery: ' : ''}
+                {deliveryCount > 1 ? 'Last delivery: ' : ''}
                 {gap > 0 ? `${gap} day${gap === 1 ? '' : 's'} after the date it is needed by`
                   : gap === 0 ? 'On the date it is needed by' : `${-gap} day${gap === -1 ? '' : 's'} ahead of the date it is needed by`}
               </p>
@@ -209,8 +274,8 @@ export function VendorAckDialog({ target, asBuyer, error, onCancel, onConfirm }:
                    className="mt-0.5 h-4 w-4 rounded border-borderTheme" />
             <span className="text-xs text-textSecondary leading-relaxed">
               I acknowledge this purchase order at the agreed pricing and commit to deliver
-              {parts.length > 1 ? <> in <b className="text-textPrimary">{parts.length} deliveries</b> on the dates above</>
-                : last && last >= today() ? <> by <b className="text-textPrimary">{showDate(parts[0].date)}</b></> : ' by the date above'}.
+              {deliveryCount > 1 ? <> in <b className="text-textPrimary">{deliveryCount} deliveries</b> on the dates above</>
+                : last && last >= today() ? <> by <b className="text-textPrimary">{showDate(iso(last))}</b></> : ' by the date above'}.
             </span>
           </label>
 
