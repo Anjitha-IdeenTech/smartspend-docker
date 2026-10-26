@@ -260,7 +260,7 @@ class SmartSpendApi(http.Controller):
 
     @http.route('/api/smartspend/purchase-order/step', type='json2', auth='none',
                 methods=['POST'], cors='*', readonly=False)
-    def purchase_order_step(self, id=None, step=None, expectedDelivery=None, **kwargs):
+    def purchase_order_step(self, id=None, step=None, expectedDelivery=None, deliverySchedule=None, **kwargs):
         """Record one of the two steps that follow the order, and echo the request back.
 
         The portal used to hold both in component state, which forgot them on
@@ -270,6 +270,9 @@ class SmartSpendApi(http.Controller):
             release terms; ``acknowledge`` — the vendor confirms the order.
         :param expectedDelivery: ``acknowledge`` only, and required there — the
             delivery date (YYYY-MM-DD) the vendor commits to.
+        :param deliverySchedule: ``acknowledge`` only, instead of
+            ``expectedDelivery`` — the order delivered over several dates:
+            ``[{'date', 'items': [{'productName', 'quantity'}]}]``.
         """
         error = _authenticate()
         if error:
@@ -317,7 +320,9 @@ class SmartSpendApi(http.Controller):
             if step == 'release':
                 record.action_release_purchase_order()
             else:
-                record.action_acknowledge_purchase_order(delivery_date=commit)
+                record.action_acknowledge_purchase_order(
+                    delivery_date=commit,
+                    schedule=deliverySchedule if isinstance(deliverySchedule, list) else None)
         except (UserError, AccessError) as exc:
             return _refused(exc)
         return record._to_portal_dict()

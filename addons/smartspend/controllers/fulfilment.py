@@ -110,3 +110,25 @@ class SmartSpendDeliveryCommitments(http.Controller):
             # What this user may open, and nothing beyond it.
             records = request.env['smartspend.request'].search([('id', 'in', records.ids)])
         return {record.name: fields.Date.to_string(record.vendor_delivery_date) for record in records}
+
+    @http.route('/api/smartspend/delivery-schedules', type='json2', auth='none',
+                methods=['GET'], cors='*', readonly=True)
+    def delivery_schedules(self, **kwargs):
+        """Each order a vendor committed to deliver over several dates.
+
+        A supplier sees the schedules of the orders placed with them and no
+        others.
+
+        :return: ``{'PR-2026-487': [{'date', 'items': [{'productName', 'quantity'}]}], ...}``
+        """
+        error = _authenticate()
+        if error:
+            return error
+        user = request.env.user
+        records = request.env['smartspend.request'].sudo().search(
+            [('delivery_slot_ids', '!=', False)], limit=2000)
+        if _is_vendor(user):
+            records = records.filtered(lambda record: record._placed_with(user))
+        else:
+            records = request.env['smartspend.request'].search([('id', 'in', records.ids)]).sudo()
+        return {record.name: record._delivery_schedule() for record in records}

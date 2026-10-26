@@ -23,7 +23,7 @@ import { PriceHistoryStrip } from './priceHistory';
 import { ProductCategoriesMaster } from './productCategories';
 import { MasterDetailPanel, DetailChips, DetailRequests } from './masterDetail';
 import { FALLBACK_METHODS, MethodSelect, methodLabel } from './fulfilment';
-import { VendorAckDialog, showDate } from './vendorAck';
+import { VendorAckDialog, showDate, type Delivery } from './vendorAck';
 import { SubscriptionsDesk } from './subscriptions';
 import { NewProductHint, ProductRequestsDesk, ProductRequestsPanel } from './productRequests';
 import { LineAnalytics } from './analytics';
@@ -2482,8 +2482,14 @@ export default function App() {
    */
   const recordPurchaseOrderStep = async (
     reqId: string, step: 'release' | 'acknowledge', url: string = odooApiUrl,
-    expectedDelivery?: string,
+    expectedDelivery?: string, deliverySchedule?: Delivery[],
   ) => {
+    // Several deliveries: the record keeps them, the last date is the commitment.
+    const keepSchedule = (id: string) => {
+      if (step === 'acknowledge' && deliverySchedule && deliverySchedule.length > 1) {
+        setDeliverySchedules(prev => ({ ...prev, [id]: [...deliverySchedule].sort((a, b) => a.date.localeCompare(b.date)) }));
+      }
+    };
     if (!authToken) return null;
     // Same again, and the same guards the backend applies — the steps run in
     // order whether or not there is an Odoo to enforce it.
@@ -2508,6 +2514,7 @@ export default function App() {
             }],
           };
       if (step === 'acknowledge' && expectedDelivery) setDeliveryCommitments(prev => ({ ...prev, [reqId]: expectedDelivery }));
+      keepSchedule(reqId);
       setRequests(prev => prev.map(r => (r.id === reqId ? updated : r)));
       return updated;
     }
@@ -2517,13 +2524,16 @@ export default function App() {
         ? 'purchase order release was not recorded'
         : 'vendor acknowledgment was not recorded',
       message: message + SIMULATED,
-      retry: () => recordPurchaseOrderStep(reqId, step, url, expectedDelivery),
+      retry: () => recordPurchaseOrderStep(reqId, step, url, expectedDelivery, deliverySchedule),
     }); };
     setPoStepError('');
     try {
       const res = await apiFetch(`/api/smartspend/purchase-order/step`, {
         method: 'POST',
-        body: JSON.stringify({ id: reqId, step, ...(expectedDelivery ? { expectedDelivery } : {}) }),
+        body: JSON.stringify({
+          id: reqId, step, ...(expectedDelivery ? { expectedDelivery } : {}),
+          ...(deliverySchedule && deliverySchedule.length > 1 ? { deliverySchedule } : {}),
+        }),
       }, url);
       if (res.ok) {
         const updated = await res.json();
@@ -2534,6 +2544,7 @@ export default function App() {
         });
         clearSyncError(`po-step:${step}:${reqId}`);
         if (step === 'acknowledge' && expectedDelivery) setDeliveryCommitments(prev => ({ ...prev, [updated.id || reqId]: expectedDelivery }));
+        keepSchedule(updated.id || reqId);
         return updated as RequestItem;
       }
       const message = await refusalMessage(res);
@@ -2554,6 +2565,8 @@ export default function App() {
       try {
         const res = await apiFetch('/api/smartspend/delivery-commitments', { method: 'GET' });
         if (res.ok && !stale) setDeliveryCommitments(await res.json());
+        const sched = await apiFetch('/api/smartspend/delivery-schedules', { method: 'GET' });
+        if (sched.ok && !stale) setDeliverySchedules(await sched.json());
       } catch { /* the dates simply stay unshown */ }
     })();
     return () => { stale = true; };
@@ -3358,6 +3371,15 @@ export default function App() {
   const [poStepError, setPoStepError] = useState<string>("");
   // Delivery date each vendor committed to, by request — from Odoo.
   const [deliveryCommitments, setDeliveryCommitments] = useState<Record<string, string>>({});
+  // Orders the vendor delivers over several dates: the deliveries, by date.
+  const [deliverySchedules, setDeliverySchedules] = useState<Record<string, Delivery[]>>({});
+  /** "in 2 deliveries — 5 Nov: Dell ×10, Monitor ×5 · 12 Nov: …", or '' for a single date. */
+  const scheduleNote = (id: string) => {
+    const parts = deliverySchedules[id];
+    if (!parts || parts.length < 2) return '';
+    return `in ${parts.length} deliveries — ` + parts.map(p =>
+      `${showDate(p.date)}: ${p.items.map(it => `${it.productName} ×${it.quantity.toLocaleString('en-IN')}`).join(', ')}`).join(' · ');
+  };
 
   // Manager Clarification Prompt State
   const [managerQueryText, setManagerQueryText] = useState<string>("");
@@ -7169,6 +7191,7 @@ export default function App() {
                                 <p className="text-[10px] text-accent-savings font-semibold mt-1">
                                   ✓ Vendor Acknowledged (PO Confirmed)
                                   {deliveryCommitments[currentRequest.id] && <> · delivery committed for <b>{showDate(deliveryCommitments[currentRequest.id])}</b></>}
+                                  {scheduleNote(currentRequest.id) && <span className="block font-normal text-textSecondary mt-0.5">{scheduleNote(currentRequest.id)}</span>}
                                 </p>
                               )}
                               {!poApprovedByHead && (
@@ -7495,6 +7518,16 @@ export default function App() {
                           <span className="text-textSecondary">Committed delivery:</span>
                           <span className="font-semibold text-textPrimary">{deliveryCommitments[currentRequest.id] ? showDate(deliveryCommitments[currentRequest.id]) : '—'}</span>
                         </div>
+                        {(deliverySchedules[currentRequest.id]?.length ?? 0) > 1 && (
+                          <div className="rounded-lg bg-secondary/60 border border-borderTheme px-3 py-2 space-y-1">
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-textFaint">Delivery schedule</p>
+                            {deliverySchedules[currentRequest.id].map(p => (
+                              <p key={p.date} className="text-[11px] text-textSecondary">
+                                <b className="text-textPrimary">{showDate(p.date)}</b> — {p.items.map(it => `${it.productName} ×${it.quantity.toLocaleString('en-IN')}`).join(', ')}
+                              </p>
+                            ))}
+                          </div>
+                        )}
                         <div className="flex justify-between">
                           <span className="text-textSecondary">Destination:</span>
                           <span className="font-semibold text-textPrimary">Bangalore Warehouse</span>
@@ -8590,7 +8623,10 @@ export default function App() {
                                       </td>
                                       <td className="px-4 py-3 text-xs font-bold text-textPrimary">{r.productQty}× {reqSummary(r)}</td>
                                       <td className="px-4 py-3 text-xs text-textSecondary whitespace-nowrap">{r.location}</td>
-                                      <td className="px-4 py-3 text-xs font-semibold text-textPrimary whitespace-nowrap">{deliveryCommitments[r.id] ? showDate(deliveryCommitments[r.id]) : '—'}</td>
+                                      <td className="px-4 py-3 text-xs font-semibold text-textPrimary whitespace-nowrap" title={scheduleNote(r.id) || undefined}>
+                                        {deliveryCommitments[r.id] ? showDate(deliveryCommitments[r.id]) : '—'}
+                                        {(deliverySchedules[r.id]?.length ?? 0) > 1 && <span className="block text-[10px] font-normal text-textFaint">{deliverySchedules[r.id].length} deliveries, from {showDate(deliverySchedules[r.id][0].date)}</span>}
+                                      </td>
                                       <td className="px-4 py-3 text-xs font-bold text-textPrimary tabular-nums text-right whitespace-nowrap">{money(r.totalCost)}</td>
                                       <td className="px-4 py-3">
                                         <span className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2 py-0.5 rounded-full bg-pos/10 text-pos border border-pos/25">
@@ -8725,7 +8761,7 @@ export default function App() {
                       <div className="flex justify-between items-center gap-3 px-6 py-4 border-t border-borderTheme">
                         <span className="text-[11px] text-textFaint">
                           {r.poAcknowledged
-                            ? `You have confirmed this order${deliveryCommitments[r.id] ? ` — delivery committed for ${showDate(deliveryCommitments[r.id])}` : ''}.`
+                            ? `You have confirmed this order${deliveryCommitments[r.id] ? ` — delivery committed for ${showDate(deliveryCommitments[r.id])}` : ''}${scheduleNote(r.id) ? `, ${scheduleNote(r.id)}` : ''}.`
                             : r.poReleased ? 'This order is waiting on your confirmation.' : ''}
                         </span>
                         <div className="flex items-center gap-2">
@@ -8785,13 +8821,21 @@ export default function App() {
                     location: ackTarget.req.location,
                     neededBy: ackTarget.req.deliveryDate,
                     value: `₹${Math.round(ackTarget.req.totalCost || 0).toLocaleString('en-IN')}`,
+                    // One row per product, as Odoo checks the totals by name.
+                    lines: Object.values(reqLines(ackTarget.req).reduce<Record<string, { productName: string; qty: number }>>((acc, l) => {
+                      const key = l.productName.trim().toLowerCase();
+                      acc[key] = { productName: acc[key]?.productName ?? l.productName.trim(), qty: (acc[key]?.qty ?? 0) + l.productQty };
+                      return acc;
+                    }, {})),
                   }}
                   asBuyer={ackTarget.asBuyer}
                   error={poStepError}
                   onCancel={() => setAckTarget(null)}
-                  onConfirm={async (date) => {
+                  onConfirm={async (schedule) => {
                     setPoStepBusy(ackTarget.asBuyer ? 'acknowledge' : ackTarget.req.id);
-                    const done = await recordPurchaseOrderStep(ackTarget.req.id, 'acknowledge', odooApiUrl, date);
+                    // The last delivery is the date committed to.
+                    const last = schedule.map(p => p.date).sort().pop() || '';
+                    const done = await recordPurchaseOrderStep(ackTarget.req.id, 'acknowledge', odooApiUrl, last, schedule);
                     setPoStepBusy('');
                     return !!done;
                   }}

@@ -283,6 +283,15 @@
                                 </list>
                             </field>
                         </page>
+                        <page string="Delivery Schedule" name="delivery_schedule" invisible="not delivery_slot_ids">
+                            <field name="delivery_slot_ids" readonly="1">
+                                <list>
+                                    <field name="date"/>
+                                    <field name="product_name"/>
+                                    <field name="quantity"/>
+                                </list>
+                            </field>
+                        </page>
                         <page string="Vendor Bids" name="bids">
                             <field name="bid_ids">
                                 <list editable="bottom">
