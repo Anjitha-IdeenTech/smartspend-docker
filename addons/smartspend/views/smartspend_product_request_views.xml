@@ -29,10 +29,10 @@
                 <header>
                     <button name="action_approve_button" type="object" string="Approve &amp; Add to Catalogue"
                             class="btn-primary" invisible="state != 'pending'"
-                            groups="smartspend.group_smartspend_manager"/>
+                            groups="smartspend.group_smartspend_buyer"/>
                     <button name="action_reject_button" type="object" string="Reject"
-                            invisible="state != 'pending'" groups="smartspend.group_smartspend_manager"
-                            confirm="Reject this product? Put the reason in Manager Note first."/>
+                            invisible="state != 'pending'" groups="smartspend.group_smartspend_buyer"
+                            confirm="Reject this product? Put the reason in Buyer Note first."/>
                     <field name="state" widget="statusbar" statusbar_visible="pending,approved"/>
                 </header>
                 <sheet>

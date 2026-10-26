@@ -137,7 +137,8 @@
 
     <menuitem id="menu_smartspend_config_product_requests"
               name="Product Creation Requests"
-              parent="menu_smartspend_config"
+              parent="menu_smartspend_requests"
+              groups="smartspend.group_smartspend_buyer"
               action="smartspend_product_request_action"
               sequence="36"/>
 

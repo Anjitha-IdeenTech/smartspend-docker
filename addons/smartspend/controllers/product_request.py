@@ -1,8 +1,8 @@
 """Products the master does not have — checking, requesting, deciding.
 
 Anyone on the buying side checks a product name against the master (the
-request form does, line by line) and can ask for a new product. The procurement
-manager decides. A requester sees their own requests and is told of each
+request form does, line by line) and can ask for a new product. The SCM buyer
+decides. A requester sees their own requests and is told of each
 decision until they have seen it; suppliers have no part in it.
 """
 from odoo import _, fields, http
@@ -74,7 +74,7 @@ class SmartSpendProductRequests(http.Controller):
         if error:
             return error
         user = request.env.user
-        can_decide = user.has_group('smartspend.group_smartspend_manager')
+        can_decide = user.has_group('smartspend.group_smartspend_buyer')
         found = request.env['smartspend.product.request'].search([], limit=300)
         categories = request.env['product.category'].sudo().search([], order='complete_name')
         return {
@@ -131,8 +131,8 @@ class SmartSpendProductRequests(http.Controller):
         error = self._check()
         if error:
             return error
-        if not request.env.user.has_group('smartspend.group_smartspend_manager'):
-            return _error(_("Only a procurement manager decides what goes into the product master."), 403)
+        if not request.env.user.has_group('smartspend.group_smartspend_buyer'):
+            return _error(_("Only an SCM buyer decides what goes into the product master."), 403)
         pr = request.env['smartspend.product.request'].browse(pr_id).exists()
         if not pr:
             return _error(_("That product request no longer exists."), 404)

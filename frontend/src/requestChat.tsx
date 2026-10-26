@@ -156,7 +156,7 @@ const readPrice = (text: string) => {
 /** What the assistant says when the item is not in the catalogue. */
 const newProductNote = (name?: string) => (
   <><b>“{name || 'That item'}” isn't in our catalogue yet</b>, so I'll add it as a new product — a request to add
-    it goes to the procurement manager when you submit, and your request still goes for approval meanwhile.
+    it goes to the SCM buyer when you submit, and your request still goes for approval meanwhile.
     A few quick details will help the buyer get exactly what you need.</>
 );
 

@@ -4,13 +4,13 @@
  *
  * Nobody is made to wait to ask: a request naming a new product goes for
  * approval as usual, and a product creation request goes to the procurement
- * manager alongside it. Three pieces:
+ * SCM buyer alongside it. Three pieces:
  *
  * - `NewProductHint` under each line of the request form — "new product", the
  *   closest catalogue names to switch to, or the state of an earlier ask;
  * - `ProductRequestsPanel` on the employee portal — decisions announced until
  *   seen, their own requests, and asking for a product on its own;
- * - `ProductRequestsDesk` for the procurement manager — approve into the
+ * - `ProductRequestsDesk` for the SCM buyer — approve into the
  *   catalogue, point at an existing product, or reject.
  */
 import { useEffect, useState } from 'react';
@@ -79,7 +79,7 @@ export function NewProductHint({ product, fetcher, offline, onPick }: {
             ? <span><b className="text-neg">Not added to the catalogue</b> ({check.pending.name}){check.pending.note && <>: “{check.pending.note}”</>} — choose another product.</span>
             : <span><b className="text-textPrimary">Already requested</b> as a new product ({check.pending.name} · {check.pending.stateLabel}). Your request can still go ahead.</span>
         ) : (
-          <span><b className="text-textPrimary">New product</b> — not in the catalogue yet. When you submit, a product creation request goes to the procurement manager; your request still goes for approval meanwhile.</span>
+          <span><b className="text-textPrimary">New product</b> — not in the catalogue yet. When you submit, a product creation request goes to the SCM buyer; your request still goes for approval meanwhile.</span>
         )}
       </p>
       {check.suggestions.length > 0 && (
@@ -113,7 +113,7 @@ function AskDialog({ fetcher, categories, onClose, onDone }: {
       const body = await res.json().catch(() => ({}));
       if (!res.ok) { setError(body?.error || 'The request was not sent.'); return; }
       onDone(body.alreadyRequested ? `“${body.productName}” was already requested (${body.name}) — you will be told when it is decided.`
-        : `${body.name} sent — the procurement manager will review “${body.productName}”.`);
+        : `${body.name} sent — the SCM buyer will review “${body.productName}”.`);
     } catch (e) { setError(e instanceof Error ? e.message : 'The request was not sent.'); }
     finally { setBusy(false); }
   };
@@ -124,7 +124,7 @@ function AskDialog({ fetcher, categories, onClose, onDone }: {
           <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand/10 text-brand"><PackagePlus className="h-5 w-5" /></span>
           <div className="flex-1">
             <h3 className="font-outfit font-extrabold text-lg text-textPrimary">Request a new product</h3>
-            <p className="text-[11px] text-textSecondary">For something the catalogue does not have. The procurement manager reviews it, and you are told the outcome here.</p>
+            <p className="text-[11px] text-textSecondary">For something the catalogue does not have. The SCM buyer reviews it, and you are told the outcome here.</p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg text-textFaint hover:text-textPrimary hover:bg-secondary"><X className="h-4 w-4" /></button>
         </div>
@@ -225,7 +225,7 @@ export function ProductRequestsPanel({ fetcher, offline, userKey }: { fetcher: F
 }
 
 // ---------------------------------------------------------------------------
-// The procurement manager's desk.
+// The SCM buyer's desk.
 // ---------------------------------------------------------------------------
 export function ProductRequestsDesk({ fetcher, offline, onCount }: { fetcher: Fetcher; offline: boolean; onCount?: (n: number) => void }) {
   const [feed, setFeed] = useState<Feed | null>(null);

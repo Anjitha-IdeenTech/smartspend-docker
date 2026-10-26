@@ -3,8 +3,8 @@ the product master does not have.
 
 The requester is never blocked: a requisition naming a product the master does
 not know is raised as usual, and a product creation request goes to the
-procurement manager alongside it (one can also be raised on its own). The
-manager approves it into the master (choosing its category), points it at a
+SCM buyer alongside it (one can also be raised on its own). The
+buyer approves it into the master (choosing its category), points it at a
 product the master already has, or rejects it. The requester is told either
 way. Until every new product on a requisition is settled, no purchase order is
 raised from it — the master stays clean without making anyone wait to ask.
@@ -67,12 +67,12 @@ class SmartspendProductRequest(models.Model):
     state = fields.Selection(STATES, default='pending', required=True, tracking=True, index=True)
     product_id = fields.Many2one('product.product', string='Catalogue Product', readonly=True, tracking=True,
                                  help="The product created on approval, or the existing one chosen instead.")
-    decision_note = fields.Char(string='Manager Note')
+    decision_note = fields.Char(string='Buyer Note')
     decided_by_id = fields.Many2one('res.users', string='Decided By', readonly=True)
     decided_on = fields.Datetime(string='Decided On', readonly=True)
     requester_seen = fields.Boolean(
         string='Seen by Requester', default=True, copy=False,
-        help="Cleared when the manager decides; set once the requester has seen the decision.")
+        help="Cleared when the buyer decides; set once the requester has seen the decision.")
     company_id = fields.Many2one('res.company', required=True, default=lambda self: self.env.company)
 
     @api.model_create_multi
@@ -127,11 +127,11 @@ class SmartspendProductRequest(models.Model):
         }
 
     # ------------------------------------------------------------------
-    # Decisions — the procurement manager's
+    # Decisions — the SCM buyer's
     # ------------------------------------------------------------------
-    def _check_manager(self):
-        if not (self.env.su or self.env.user.has_group('smartspend.group_smartspend_manager')):
-            raise UserError(_("Only a procurement manager decides what goes into the product master."))
+    def _check_buyer(self):
+        if not (self.env.su or self.env.user.has_group('smartspend.group_smartspend_buyer')):
+            raise UserError(_("Only an SCM buyer decides what goes into the product master."))
 
     def _decide(self, state, note, product=None):
         self.write({
@@ -143,7 +143,7 @@ class SmartspendProductRequest(models.Model):
 
     def action_approve(self, product_category=None, final_name=None, note=None):
         """Add the product to the master — named as requested unless renamed."""
-        self._check_manager()
+        self._check_buyer()
         for req in self:
             if req.state != 'pending':
                 raise UserError(_("%s has already been decided.", req.name))
@@ -167,7 +167,7 @@ class SmartspendProductRequest(models.Model):
 
     def action_map(self, product, note=None):
         """The master already has it: use ``product`` wherever this was asked for."""
-        self._check_manager()
+        self._check_buyer()
         product = self.env['product.product'].browse(product.id if hasattr(product, 'id') else int(product)).exists()
         if not product:
             raise UserError(_("Choose the existing product to use instead."))
@@ -181,7 +181,7 @@ class SmartspendProductRequest(models.Model):
         return True
 
     def action_reject(self, note=None):
-        self._check_manager()
+        self._check_buyer()
         if not (note or '').strip():
             raise UserError(_("Say why the product is not being added, so the requester knows what to do."))
         for req in self:
@@ -254,7 +254,7 @@ class SmartspendRequest(models.Model):
                     'requested_by_id': request.user_id.id,
                     'request_ids': [fields.Command.link(request.id)],
                 })
-                text = _("“%(product)s” is not in the product catalogue — %(ref)s sent to the procurement manager "
+                text = _("“%(product)s” is not in the product catalogue — %(ref)s sent to the SCM buyer "
                          "to add it. The request goes on for approval meanwhile.", product=pr.product_name, ref=pr.name)
                 request._log_history(_("New Product Requested"), text)
                 request.message_post(body=text)
@@ -285,11 +285,11 @@ class SmartspendRequest(models.Model):
                 if pending:
                     raise UserError(_(
                         "%(request)s includes a product that is not in the catalogue yet (%(items)s). "
-                        "The procurement manager has to approve it before a purchase order is raised.",
+                        "The SCM buyer has to approve it before a purchase order is raised.",
                         request=request.name,
                         items=', '.join(f"{r.product_name} — {r.name}" for r in pending)))
                 raise UserError(_(
-                    "%(request)s includes a product the procurement manager did not add to the catalogue "
+                    "%(request)s includes a product the SCM buyer did not add to the catalogue "
                     "(%(items)s). Change or remove that item first.",
                     request=request.name,
                     items=', '.join(f"{r.product_name}: {r.decision_note or _('rejected')}" for r in blocking)))

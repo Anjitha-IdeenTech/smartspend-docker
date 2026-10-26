@@ -2694,12 +2694,12 @@ export default function App() {
   // Role-keyed so Employee, SCM Buyer, Manager and CEO each persist their own order.
   const DEFAULT_NAV_ORDER: Record<string, string[]> = {
     Employee: ['chat', 'favorites', 'list', 'tracking', 'clarify'],
-    Manager: ['queue', 'clarify', 'auctions', 'newProducts', 'tracking', 'backorders', 'subscriptions', 'masters'],
+    Manager: ['queue', 'clarify', 'auctions', 'tracking', 'backorders', 'subscriptions', 'masters'],
     // 'tracking' is here because raising the PO moves the request to "PO
     // Confirmed", which drops it straight out of the To Source queue — and the
     // buyer had no other route to the tracking screen, so the vendor
     // acknowledgment step it owns became unreachable the moment it was due.
-    'SCM Buyer': ['requests', 'auctions', 'subscriptions', 'discovery', 'tracking', 'backorders'],
+    'SCM Buyer': ['requests', 'newProducts', 'auctions', 'subscriptions', 'discovery', 'tracking', 'backorders'],
     CEO: ['analytics', 'tracking', 'masters'],
   };
   const [navOrder, setNavOrder] = useState<Record<string, string[]>>(() => {
@@ -2761,6 +2761,7 @@ export default function App() {
       else if (key === 'auctions') { setActiveScene(19); }
       else if (key === 'subscriptions') { setActiveScene(20); }
       else if (key === 'backorders') { setActiveScene(21); }
+      else if (key === 'newProducts') { setActiveScene(22); }
       else { setActiveScene(6); setScmTab(key === 'discovery' ? 'discovery' : 'requests'); }
     }
     else if (role === 'CEO') { setActiveScene(key === 'masters' ? 16 : key === 'tracking' ? 11 : 15); }
@@ -2781,6 +2782,7 @@ export default function App() {
       if (key === 'auctions') return activeScene === 19;
       if (key === 'subscriptions') return activeScene === 20;
       if (key === 'backorders') return activeScene === 21;
+      if (key === 'newProducts') return activeScene === 22;
       return activeScene === 6 && scmTab === (key === 'discovery' ? 'discovery' : 'requests');
     }
     if (role === 'CEO') return key === 'masters' ? activeScene === 16 : key === 'tracking' ? activeScene === 11 : activeScene === 15;
@@ -2802,7 +2804,7 @@ export default function App() {
       'Manager/tracking': { icon: <History className="h-4 w-4" />, label: 'Track Request' },
       'Manager/subscriptions': { icon: <Repeat className="h-4 w-4" />, label: 'Subscriptions' },
       'Manager/backorders': { icon: <Truck className="h-4 w-4" />, label: 'Backorders' },
-      'Manager/newProducts': { icon: <Package className="h-4 w-4" />, label: 'New Products', badge: pill(newProductCount, 'bg-gold/20 text-gold border border-gold/30', newProductCount > 0) },
+      'SCM Buyer/newProducts': { icon: <Package className="h-4 w-4" />, label: 'New Products', badge: pill(newProductCount, 'bg-gold/20 text-gold border border-gold/30', newProductCount > 0) },
       'SCM Buyer/backorders': { icon: <Truck className="h-4 w-4" />, label: 'Backorders' },
       'Manager/auctions': { icon: <Gavel className="h-4 w-4" />, label: 'Auction Approvals', badge: pill(auctionToApproveCount, 'bg-gold/20 text-gold border border-gold/30', auctionToApproveCount > 0) },
       'Manager/masters': { icon: <Boxes className="h-4 w-4" />, label: 'Master Data', badge: pill(pendingDrafts.length, 'bg-brand/20 text-brand border border-brand/30', true) },
@@ -3289,10 +3291,10 @@ export default function App() {
   // Closed auctions: the manager approves the level first, then the buyer awards.
   const auctionToAwardCount = auctionIndex.filter(a => a.state === 'closed' && a.approved).length;
   const auctionToApproveCount = auctionIndex.filter(a => a.state === 'closed' && !a.approved).length;
-  // Product creation requests waiting on the procurement manager, for the sidebar badge.
+  // Product creation requests waiting on the SCM buyer, for the sidebar badge.
   const [newProductCount, setNewProductCount] = useState(0);
   useEffect(() => {
-    if (!authToken || offlineDemo || userRole !== 'Manager') { setNewProductCount(0); return; }
+    if (!authToken || offlineDemo || userRole !== 'SCM Buyer') { setNewProductCount(0); return; }
     let stopped = false;
     const tick = async () => {
       try {
@@ -8796,7 +8798,7 @@ export default function App() {
                 />
               )}
 
-              {/* --- SCENE 22: NEW PRODUCTS (procurement manager) --- */}
+              {/* --- SCENE 22: NEW PRODUCTS (SCM buyer) --- */}
               {activeScene === 22 && (
                 <div className="max-w-6xl mx-auto animate-fadeIn">
                   <ProductRequestsDesk fetcher={apiFetch} offline={offlineDemo} onCount={setNewProductCount} />
