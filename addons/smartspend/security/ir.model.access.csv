@@ -64,3 +64,5 @@ access_smartspend_product_request_user,smartspend.product.request.user,model_sma
 access_smartspend_product_request_manager,smartspend.product.request.manager,model_smartspend_product_request,group_smartspend_manager,1,1,1,1
 access_smartspend_delivery_slot_user,smartspend.delivery.slot.user,model_smartspend_delivery_slot,group_smartspend_user,1,0,0,0
 access_smartspend_delivery_slot_buyer,smartspend.delivery.slot.buyer,model_smartspend_delivery_slot,group_smartspend_buyer,1,1,1,1
+access_smartspend_favorite_group_user,smartspend.favorite.group.user,model_smartspend_favorite_group,group_smartspend_user,1,1,1,1
+access_smartspend_favorite_group_item_user,smartspend.favorite.group.item.user,model_smartspend_favorite_group_item,group_smartspend_user,1,1,1,1

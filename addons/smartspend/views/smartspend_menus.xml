@@ -148,6 +148,12 @@
               action="smartspend_favorite_product_action"
               sequence="37"/>
 
+    <menuitem id="menu_smartspend_config_favorite_groups"
+              name="Favourite Groups"
+              parent="menu_smartspend_config"
+              action="smartspend_favorite_group_action"
+              sequence="38"/>
+
     <!-- Who signs what: the approval matrix and the designations it routes to. -->
     <menuitem id="menu_smartspend_config_workflows"
               name="Approval Workflows"

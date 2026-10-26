@@ -10,11 +10,14 @@
  *
  * Three pieces share one list: the Favourites tab, the quick bar above the
  * New Request chat, and the heart beside each line of the request form.
+ *
+ * Favourite groups are named sets of products ordered together ("New joiner
+ * kit"): picked, raised or added to the request form's lines in one go.
  */
 import { useEffect, useState } from 'react';
 import {
-  ArrowDown, ArrowUp, Check, FileText, Heart, Minus, Pencil, Plus, Send, ShieldCheck,
-  Sparkles, TrendingDown, TrendingUp, Users, X,
+  ArrowDown, ArrowUp, Check, FileText, Heart, Layers, Minus, Pencil, Plus, Send, ShieldCheck,
+  Sparkles, Trash2, TrendingDown, TrendingUp, Users, X,
 } from 'lucide-react';
 
 export interface Favorite {
@@ -35,9 +38,12 @@ interface Popular {
   usualQty: number; lastPrice: number; category: string;
 }
 
+/** A named set of products ordered together. */
+export interface FavoriteGroup { id: number; name: string; items: { productName: string; qty: number; price: number }[] }
+
 interface Feed {
   favorites: Favorite[]; frequent: Frequent[]; popular: Popular[];
-  categories: string[]; department: string;
+  categories: string[]; department: string; groups?: FavoriteGroup[];
 }
 
 /** A line handed to the request flow. */
@@ -50,6 +56,20 @@ const day = (iso: string) => iso
   ? new Date(`${iso}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
   : '';
 const fold = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
+
+/** The same product twice becomes one line, quantities added. */
+export function mergeLines(lines: FavoriteLine[]): FavoriteLine[] {
+  const out: FavoriteLine[] = [];
+  for (const l of lines) {
+    const at = out.findIndex(o => fold(o.productName) === fold(l.productName));
+    if (at >= 0) out[at] = { ...out[at], productQty: out[at].productQty + l.productQty, targetPrice: out[at].targetPrice || l.targetPrice };
+    else out.push({ ...l });
+  }
+  return out;
+}
+
+const groupLines = (g: FavoriteGroup): FavoriteLine[] =>
+  g.items.map(i => ({ productName: i.productName, productQty: i.qty || 1, targetPrice: i.price || 0 }));
 
 /** The price a favourite is ordered at: the user's own, else the contract's, else the last paid. */
 const priceOf = (f: Favorite) => f.targetPrice || f.contract?.price || f.lastPaid || 0;
@@ -116,6 +136,9 @@ export function useFavorites(fetcher: Fetcher, offline: boolean, userKey: string
       }),
     unstar: (id: number) => post('/api/smartspend/favorites/delete', { id }),
     reorder: (ids: number[]) => post('/api/smartspend/favorites/reorder', { ids }),
+    saveGroup: (g: { id?: number; name: string; items: FavoriteGroup['items'] }) =>
+      post('/api/smartspend/favorites/groups/save', g),
+    deleteGroup: (id: number) => post('/api/smartspend/favorites/groups/delete', { id }),
   };
 }
 
@@ -154,24 +177,36 @@ export function FavoriteToggle({ fetcher, offline, userKey, productName, qty, pr
 // ---------------------------------------------------------------------------
 function useBasket() {
   const [picked, setPicked] = useState<Record<number, number>>({});
+  const [groups, setGroups] = useState<Record<number, true>>({});
   return {
     picked,
+    groups,
     has: (id: number) => id in picked,
+    hasGroup: (id: number) => id in groups,
     toggle: (f: Favorite) => setPicked(prev => {
       const next = { ...prev };
       if (f.id in next) delete next[f.id]; else next[f.id] = f.defaultQty || 1;
       return next;
     }),
+    toggleGroup: (id: number) => setGroups(prev => {
+      const next = { ...prev };
+      if (id in next) delete next[id]; else next[id] = true;
+      return next;
+    }),
     setQty: (id: number, qty: number) => setPicked(prev => ({ ...prev, [id]: Math.max(1, qty) })),
     selectAll: (list: Favorite[]) => setPicked(Object.fromEntries(list.map(f => [f.id, f.defaultQty || 1]))),
-    clear: () => setPicked({}),
+    clear: () => { setPicked({}); setGroups({}); },
   };
 }
 
-function linesFor(list: Favorite[], picked: Record<number, number>): FavoriteLine[] {
-  return list.filter(f => f.id in picked).map(f => ({
-    productName: f.productName, productQty: picked[f.id], targetPrice: priceOf(f),
-  }));
+function linesFor(list: Favorite[], picked: Record<number, number>,
+                  groups: FavoriteGroup[] = [], pickedGroups: Record<number, true> = {}): FavoriteLine[] {
+  return mergeLines([
+    ...groups.filter(g => g.id in pickedGroups).flatMap(groupLines),
+    ...list.filter(f => f.id in picked).map(f => ({
+      productName: f.productName, productQty: picked[f.id], targetPrice: priceOf(f),
+    })),
+  ]);
 }
 
 // ---------------------------------------------------------------------------
@@ -186,7 +221,8 @@ export function FavoritesQuickBar({ fetcher, offline, userKey, onRaise, onManage
   const feed = fav.feed;
   if (offline || !feed) return null;
 
-  if (!feed.favorites.length) {
+  const groups = feed.groups || [];
+  if (!feed.favorites.length && !groups.length) {
     const ideas = feed.frequent.slice(0, 3);
     if (!ideas.length) return null;
     return (
@@ -205,7 +241,7 @@ export function FavoritesQuickBar({ fetcher, offline, userKey, onRaise, onManage
     );
   }
 
-  const lines = linesFor(feed.favorites, basket.picked);
+  const lines = linesFor(feed.favorites, basket.picked, groups, basket.groups);
   return (
     <div className="rounded-2xl border border-borderTheme bg-surface shadow-sm px-4 py-3 space-y-2.5">
       <div className="flex items-center gap-2">
@@ -215,6 +251,20 @@ export function FavoritesQuickBar({ fetcher, offline, userKey, onRaise, onManage
         <button onClick={onManage} className="ml-auto text-[11px] font-bold text-brand hover:underline">Manage</button>
       </div>
       <div className="flex flex-wrap gap-2">
+        {groups.map(g => {
+          const on = basket.hasGroup(g.id);
+          return (
+            <button key={`g${g.id}`} onClick={() => basket.toggleGroup(g.id)}
+                    title={g.items.map(i => `${i.qty} × ${i.productName}`).join(' · ')}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
+                      on ? 'bg-brand text-onbrand border-transparent shadow-sm'
+                         : 'bg-brand/5 text-brand border-brand/30 hover:bg-brand/10'}`}>
+              {on ? <Check className="h-3.5 w-3.5" /> : <Layers className="h-3.5 w-3.5" />}
+              {g.name}
+              <span className={`text-[10px] font-semibold ${on ? 'opacity-80' : 'opacity-70'}`}>{g.items.length} item{g.items.length === 1 ? '' : 's'}</span>
+            </button>
+          );
+        })}
         {feed.favorites.map(f => {
           const on = basket.has(f.id);
           return (
@@ -365,6 +415,8 @@ export function FavoritesPage({ fetcher, offline, userKey, onRaise, busy }: {
   const basket = useBasket();
   const [editing, setEditing] = useState<Favorite | null>(null);
   const [adding, setAdding] = useState({ productName: '', qty: '1', price: '' });
+  // The group being created or changed.
+  const [groupDraft, setGroupDraft] = useState<GroupDraft | null>(null);
   const [toast, setToast] = useState('');
   const [error, setError] = useState('');
 
@@ -395,7 +447,8 @@ export function FavoritesPage({ fetcher, offline, userKey, onRaise, busy }: {
   }
 
   const list = feed.favorites;
-  const lines = linesFor(list, basket.picked);
+  const groups = feed.groups || [];
+  const lines = linesFor(list, basket.picked, groups, basket.groups);
   const total = lines.reduce((s, l) => s + l.productQty * l.targetPrice, 0);
   const onContract = list.filter(f => f.contract).length;
   const ordered = list.reduce((s, f) => s + f.timesOrdered, 0);
@@ -434,6 +487,67 @@ export function FavoritesPage({ fetcher, offline, userKey, onRaise, busy }: {
           {error || toast}
         </p>
       )}
+
+      {/* Favourite groups — products ordered together, added in one go. */}
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <h3 className="font-outfit text-lg font-extrabold text-textPrimary inline-flex items-center gap-2"><Layers className="h-5 w-5 text-brand" />Favourite groups</h3>
+            <p className="text-[11px] text-textFaint">Products you order together — e.g. a new joiner's kit. Pick a group and every product comes with it.</p>
+          </div>
+          <button onClick={() => setGroupDraft({ name: '', items: [{ productName: '', qty: '1', price: '' }] })}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-borderTheme bg-surface text-xs font-bold text-textSecondary hover:text-textPrimary transition-all">
+            <Plus className="h-3.5 w-3.5" />New group
+          </button>
+        </div>
+        {groups.length ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {groups.map(g => {
+              const on = basket.hasGroup(g.id);
+              const value = g.items.reduce((t, i) => t + (i.qty || 1) * (i.price || 0), 0);
+              return (
+                <div key={g.id} className={`req-tile p-4 pl-5 flex flex-col gap-3 ${on ? 'ring-2 ring-brand' : ''}`}
+                     style={{ '--tint': '99 86 168' } as React.CSSProperties}>
+                  <div className="flex items-start gap-3">
+                    <button onClick={() => basket.toggleGroup(g.id)} title={on ? 'Leave out of the request' : 'Add the whole group to the request'}
+                            className={`mt-0.5 h-5 w-5 shrink-0 rounded-md border flex items-center justify-center transition-all ${
+                              on ? 'bg-brand border-transparent text-onbrand' : 'border-borderTheme bg-secondary hover:border-brand'}`}>
+                      {on && <Check className="h-3.5 w-3.5" />}
+                    </button>
+                    <div className="min-w-0 flex-1">
+                      <h4 className="font-outfit font-extrabold text-sm text-textPrimary leading-snug inline-flex items-center gap-1.5"><Layers className="h-3.5 w-3.5 text-brand" />{g.name}</h4>
+                      <p className="text-[11px] text-textFaint mt-0.5">{g.items.length} product{g.items.length === 1 ? '' : 's'}{value ? ` · about ${inr(value)}` : ''}</p>
+                    </div>
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      <button onClick={() => setGroupDraft({ id: g.id, name: g.name, items: g.items.map(i => ({ productName: i.productName, qty: String(i.qty), price: i.price ? String(i.price) : '' })) })}
+                              title="Edit group" className="p-1 rounded text-textFaint hover:text-textPrimary"><Pencil className="h-3.5 w-3.5" /></button>
+                      <button onClick={() => { if (window.confirm(`Delete the group “${g.name}”? The products stay in your favourites.`)) run(() => fav.deleteGroup(g.id), `Group “${g.name}” deleted.`); }}
+                              title="Delete group" className="p-1 rounded text-textFaint hover:text-neg"><Trash2 className="h-3.5 w-3.5" /></button>
+                    </div>
+                  </div>
+                  <ul className="space-y-1 pt-3 border-t border-borderTheme">
+                    {g.items.map(i => (
+                      <li key={i.productName} className="flex items-center gap-2 text-xs">
+                        <span className="font-bold text-textPrimary tabular-nums w-10 shrink-0">{i.qty} ×</span>
+                        <span className="flex-1 truncate text-textSecondary" title={i.productName}>{i.productName}</span>
+                        <span className="text-[11px] text-textFaint tabular-nums">{i.price ? inr(i.price) : '—'}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <button onClick={() => onRaise(groupLines(g))} disabled={busy}
+                          className="mt-auto inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-brand/10 text-brand text-xs font-bold hover:bg-brand/15 disabled:opacity-50 transition-all">
+                    <Send className="h-3.5 w-3.5" />Raise a request with this group
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-dashed border-borderTheme bg-surface/60 p-5 text-center">
+            <p className="text-xs text-textFaint">No groups yet. Tick a few favourites below and choose <b>Save as group</b>, or start a <b>New group</b>.</p>
+          </div>
+        )}
+      </div>
 
       {list.length ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -547,12 +661,27 @@ export function FavoritesPage({ fetcher, offline, userKey, onRaise, busy }: {
             </span>
             <span className="text-xs text-textSecondary">Estimated <b className="text-textPrimary tabular-nums">{inr(total)}</b></span>
             <button onClick={basket.clear} className="text-[11px] text-textFaint hover:text-textPrimary">Clear</button>
+            <button onClick={() => setGroupDraft({ name: '', items: lines.map(l => ({ productName: l.productName, qty: String(l.productQty), price: l.targetPrice ? String(l.targetPrice) : '' })) })}
+                    className="ml-auto inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-borderTheme bg-secondary text-xs font-bold text-textSecondary hover:text-textPrimary transition-all">
+              <Layers className="h-3.5 w-3.5" />Save as group
+            </button>
             <button onClick={() => { onRaise(lines); basket.clear(); }} disabled={busy}
-                    className="ml-auto inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-brand text-onbrand text-xs font-bold hover:brightness-110 disabled:opacity-50 transition-all">
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-brand text-onbrand text-xs font-bold hover:brightness-110 disabled:opacity-50 transition-all">
               <Send className="h-3.5 w-3.5" />{busy ? 'Drafting…' : 'Raise request'}
             </button>
           </div>
         </div>
+      )}
+
+      {groupDraft && (
+        <GroupEditor draft={groupDraft} favorites={list} onCancel={() => setGroupDraft(null)}
+                     onSave={async g => {
+                       let ok = false;
+                       await run(async () => { await fav.saveGroup(g); ok = true; },
+                                 g.id ? `Group “${g.name}” updated.` : `Group “${g.name}” saved — pick it to add every product at once.`);
+                       if (ok) { setGroupDraft(null); basket.clear(); }
+                       return ok;
+                     }} />
       )}
 
       {editing && (
@@ -599,6 +728,173 @@ export function FavoritesPage({ fetcher, offline, userKey, onRaise, busy }: {
               </button>
             </div>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Creating or changing a favourite group.
+// ---------------------------------------------------------------------------
+interface GroupDraft { id?: number; name: string; items: { productName: string; qty: string; price: string }[] }
+
+function GroupEditor({ draft, favorites, onCancel, onSave }: {
+  draft: GroupDraft; favorites: Favorite[]; onCancel: () => void;
+  onSave: (g: { id?: number; name: string; items: FavoriteGroup['items'] }) => Promise<boolean>;
+}) {
+  const [d, setD] = useState<GroupDraft>(draft);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const items = d.items.filter(i => i.productName.trim());
+  const valid = !!d.name.trim() && items.length > 0 && items.every(i => Number(i.qty) > 0);
+  const setItem = (idx: number, patch: Partial<GroupDraft['items'][number]>) =>
+    setD(prev => ({ ...prev, items: prev.items.map((it, i) => (i === idx ? { ...it, ...patch } : it)) }));
+  const inGroup = (name: string) => d.items.some(i => fold(i.productName) === fold(name));
+  const addFavorite = (f: Favorite) => setD(prev => ({
+    ...prev,
+    items: [...prev.items.filter(i => i.productName.trim()), { productName: f.productName, qty: String(f.defaultQty || 1), price: priceOf(f) ? String(priceOf(f)) : '' }],
+  }));
+  const save = async () => {
+    setError('');
+    if (!valid) { setError(!d.name.trim() ? 'Give the group a name.' : 'Add at least one product, each with a quantity above zero.'); return; }
+    setBusy(true);
+    const ok = await onSave({
+      id: d.id, name: d.name.trim(),
+      items: items.map(i => ({ productName: i.productName.trim(), qty: Number(i.qty) || 1, price: Number(i.price) || 0 })),
+    });
+    setBusy(false);
+    if (!ok) setError('The group was not saved — see the message above.');
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 backdrop-blur-sm p-4 sm:p-8">
+      <div className="w-full max-w-lg rounded-2xl bg-surface border border-borderTheme shadow-xl my-auto">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-borderTheme">
+          <h3 className="font-outfit font-extrabold text-lg text-textPrimary inline-flex items-center gap-2"><Layers className="h-5 w-5 text-brand" />{d.id ? 'Edit group' : 'New favourite group'}</h3>
+          <button onClick={onCancel} className="p-1.5 rounded-lg text-textFaint hover:text-textPrimary hover:bg-secondary"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="px-6 py-5 space-y-4">
+          <div>
+            <label className={label}>Group name</label>
+            <input value={d.name} onChange={e => setD({ ...d, name: e.target.value })} placeholder="e.g. New joiner kit" className={field} autoFocus />
+          </div>
+          <div>
+            <div className="grid grid-cols-12 gap-2 text-[10px] text-textFaint font-bold uppercase tracking-wider mb-1">
+              <span className="col-span-7">Product</span><span className="col-span-2">Qty</span><span className="col-span-2">Price ₹</span><span className="col-span-1" />
+            </div>
+            <div className="space-y-2">
+              {d.items.map((it, idx) => (
+                <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+                  <input value={it.productName} onChange={e => setItem(idx, { productName: e.target.value })} placeholder="Product"
+                         list="favorite-group-products" className={`col-span-7 ${field}`} />
+                  <input type="number" min={1} value={it.qty} onChange={e => setItem(idx, { qty: e.target.value })} className={`col-span-2 ${field}`} />
+                  <input type="number" min={0} value={it.price} onChange={e => setItem(idx, { price: e.target.value })} className={`col-span-2 ${field}`} />
+                  <button onClick={() => setD(prev => ({ ...prev, items: prev.items.filter((_, i) => i !== idx) }))} title="Remove"
+                          className="col-span-1 flex justify-center text-textFaint hover:text-neg"><X className="h-4 w-4" /></button>
+                </div>
+              ))}
+            </div>
+            <datalist id="favorite-group-products">{favorites.map(f => <option key={f.id} value={f.productName} />)}</datalist>
+            <button onClick={() => setD(prev => ({ ...prev, items: [...prev.items, { productName: '', qty: '1', price: '' }] }))}
+                    className="mt-2 text-xs font-semibold text-brand hover:underline inline-flex items-center gap-1"><Plus className="h-3.5 w-3.5" />Add a product</button>
+          </div>
+          {favorites.some(f => !inGroup(f.productName)) && (
+            <div>
+              <p className={label}>Add from your favourites</p>
+              <div className="flex flex-wrap gap-1.5">
+                {favorites.filter(f => !inGroup(f.productName)).map(f => (
+                  <button key={f.id} onClick={() => addFavorite(f)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-secondary border border-borderTheme text-[11px] font-bold text-textSecondary hover:text-textPrimary">
+                    <Plus className="h-3 w-3" />{f.productName}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {error && <p className="text-xs text-neg">{error}</p>}
+        </div>
+        <div className="flex justify-end gap-2 px-6 py-4 border-t border-borderTheme">
+          <button onClick={onCancel} className="px-4 py-2 rounded-lg border border-borderTheme bg-secondary text-xs font-bold text-textSecondary hover:text-textPrimary">Cancel</button>
+          <button onClick={save} disabled={busy}
+                  className="px-4 py-2 rounded-lg bg-brand text-onbrand text-xs font-bold hover:brightness-110 disabled:opacity-50">
+            {busy ? 'Saving…' : 'Save group'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// On the request form: add a group, or several favourites, as lines at once.
+// ---------------------------------------------------------------------------
+export function FavoritesLinePicker({ fetcher, offline, userKey, onAdd }: {
+  fetcher: Fetcher; offline: boolean; userKey: string;
+  onAdd: (lines: FavoriteLine[]) => void;
+}) {
+  const fav = useFavorites(fetcher, offline, userKey);
+  const [open, setOpen] = useState(false);
+  const [picked, setPicked] = useState<Record<number, true>>({});
+  const feed = fav.feed;
+  if (offline || !feed || (!feed.favorites.length && !(feed.groups || []).length)) return null;
+  const groups = feed.groups || [];
+  const chosen = feed.favorites.filter(f => f.id in picked);
+  const add = (lines: FavoriteLine[]) => { onAdd(mergeLines(lines)); setPicked({}); setOpen(false); };
+  return (
+    <div className="relative">
+      <button type="button" onClick={() => setOpen(o => !o)}
+              className="text-xs font-semibold text-brand hover:underline flex items-center gap-1">
+        <Heart className="h-3.5 w-3.5" />Add from favourites
+      </button>
+      {open && (
+        <div className="mt-2 rounded-xl border border-borderTheme bg-surface shadow-lg p-3 space-y-3">
+          {groups.length > 0 && (
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-textFaint mb-1.5">Groups — every product at once</p>
+              <div className="space-y-1.5">
+                {groups.map(g => (
+                  <div key={g.id} className="flex items-center gap-2 rounded-lg bg-secondary/60 border border-borderTheme px-2.5 py-1.5">
+                    <Layers className="h-3.5 w-3.5 text-brand shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-bold text-textPrimary truncate">{g.name}</p>
+                      <p className="text-[10px] text-textFaint truncate">{g.items.map(i => `${i.qty} × ${i.productName}`).join(' · ')}</p>
+                    </div>
+                    <button type="button" onClick={() => add(groupLines(g))}
+                            className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-brand text-onbrand text-[11px] font-bold hover:brightness-110">
+                      <Plus className="h-3 w-3" />Add {g.items.length} line{g.items.length === 1 ? '' : 's'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {feed.favorites.length > 0 && (
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-textFaint mb-1.5">Favourites — tick as many as you need</p>
+              <div className="flex flex-wrap gap-1.5">
+                {feed.favorites.map(f => {
+                  const on = f.id in picked;
+                  return (
+                    <button type="button" key={f.id}
+                            onClick={() => setPicked(prev => { const n = { ...prev }; if (on) delete n[f.id]; else n[f.id] = true; return n; })}
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold border transition-all ${
+                              on ? 'bg-brand text-onbrand border-transparent' : 'bg-secondary text-textSecondary border-borderTheme hover:text-textPrimary'}`}>
+                      {on ? <Check className="h-3 w-3" /> : <Plus className="h-3 w-3" />}{f.productName}
+                      <span className="opacity-70 font-semibold">× {f.defaultQty}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="flex items-center gap-2 mt-2">
+                <button type="button" disabled={!chosen.length}
+                        onClick={() => add(chosen.map(f => ({ productName: f.productName, productQty: f.defaultQty || 1, targetPrice: priceOf(f) })))}
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-brand text-onbrand text-[11px] font-bold hover:brightness-110 disabled:opacity-40">
+                  <Plus className="h-3 w-3" />Add {chosen.length || ''} selected
+                </button>
+                <button type="button" onClick={() => { setPicked({}); setOpen(false); }} className="text-[11px] text-textFaint hover:text-textPrimary">Close</button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

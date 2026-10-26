@@ -35,3 +35,41 @@ class SmartspendFavoriteProduct(models.Model):
             if vals.get('product_name'):
                 vals['product_name'] = ' '.join(vals['product_name'].split())
         return super().create(vals_list)
+
+
+class SmartspendFavoriteGroup(models.Model):
+    """A named set of products a user orders together — "New joiner kit".
+
+    Added to a request in one go: every item becomes a line at its usual
+    quantity. Each user keeps their own groups, beside their favourites.
+    """
+    _name = 'smartspend.favorite.group'
+    _description = 'SmartSpend Favourite Group'
+    _order = 'sequence, id'
+
+    user_id = fields.Many2one(
+        'res.users', string='User', required=True, index=True, ondelete='cascade',
+        default=lambda self: self.env.user)
+    name = fields.Char(string='Group', required=True)
+    sequence = fields.Integer(default=10)
+    item_ids = fields.One2many('smartspend.favorite.group.item', 'group_id', string='Products', copy=True)
+    company_id = fields.Many2one(
+        'res.company', required=True, default=lambda self: self.env.company)
+
+    _user_name_uniq = models.Constraint(
+        'UNIQUE(user_id, name)',
+        'You already have a group with this name.',
+    )
+
+
+class SmartspendFavoriteGroupItem(models.Model):
+    _name = 'smartspend.favorite.group.item'
+    _description = 'SmartSpend Favourite Group Product'
+    _order = 'sequence, id'
+    _rec_name = 'product_name'
+
+    group_id = fields.Many2one('smartspend.favorite.group', required=True, ondelete='cascade', index=True)
+    sequence = fields.Integer(default=10)
+    product_name = fields.Char(string='Product', required=True)
+    quantity = fields.Float(string='Quantity', default=1.0, digits='Product Unit')
+    target_price = fields.Float(string='Usual Price')

@@ -30,7 +30,7 @@ import { LineAnalytics } from './analytics';
 import { BackorderDialog, BackordersBoard, ShipmentChain } from './backorders';
 import type { ReceiptInfo, Receipt as GoodsReceipt, Shortage } from './backorders';
 import type { MethodOption } from './fulfilment';
-import { FavoritesPage, FavoritesQuickBar, FavoriteToggle } from './favorites';
+import { FavoritesLinePicker, FavoritesPage, FavoritesQuickBar, FavoriteToggle } from './favorites';
 import type { FavoriteLine } from './favorites';
 import type { AuctionableRequest } from './auction';
 import { RequestChat } from './requestChat';
@@ -3635,6 +3635,35 @@ export default function App() {
       return null;
     }
   };
+  /** Favourites (or a whole favourite group) added to the open request form's
+   *  lines in one go: the empty first line is filled first, a product already
+   *  on the form gets the quantity added, anything else becomes a new line. */
+  const addFavoriteLinesToForm = (lines: FavoriteLine[]) => {
+    const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+    let rest = [...lines];
+    if (!editProductName.trim() && rest.length) {
+      const [first, ...others] = rest;
+      setEditProductName(first.productName); setEditProductQty(first.productQty); setEditTargetPrice(first.targetPrice);
+      rest = others;
+    } else {
+      const onPrimary = rest.find(l => same(l.productName, editProductName));
+      if (onPrimary) { setEditProductQty(q => q + onPrimary.productQty); rest = rest.filter(l => l !== onPrimary); }
+    }
+    if (!rest.length) return;
+    setExtraItems(prev => {
+      const next = [...prev];
+      for (const l of rest) {
+        const at = next.findIndex(x => same(x.productName, l.productName));
+        if (at >= 0) next[at] = { ...next[at], productQty: next[at].productQty + l.productQty };
+        else {
+          const blank = next.findIndex(x => !x.productName.trim());
+          const line = { productName: l.productName, productQty: l.productQty, targetPrice: l.targetPrice };
+          if (blank >= 0) next[blank] = line; else next.push(line);
+        }
+      }
+      return next;
+    });
+  };
   /** Favourites picked in one go become the draft request, as a chat would. */
   const raiseFromFavorites = (lines: FavoriteLine[]) => {
     void handleChatSubmit(undefined, { text: '', items: lines });
@@ -5471,8 +5500,13 @@ export default function App() {
                           <LineAnalytics requestId={currentOdooRequestName} productName={it.productName} fetcher={apiFetch} offline={offlineDemo} />
                           </React.Fragment>
                         ))}
+                        <div className="flex flex-wrap items-start gap-x-5 gap-y-1">
                         <button onClick={() => setExtraItems(prev => [...prev, { productName: '', productQty: 1, targetPrice: 0 }])}
                           className="text-xs font-semibold text-brand hover:underline flex items-center gap-1"><span className="text-base leading-none">+</span> Add another product</button>
+                        <div className="basis-full sm:basis-auto sm:flex-1">
+                          <FavoritesLinePicker fetcher={apiFetch} offline={offlineDemo} userKey={favoritesKey} onAdd={addFavoriteLinesToForm} />
+                        </div>
+                        </div>
                       </div>
 
                       {/* Editable meta fields (#3, #8) */}

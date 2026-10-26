@@ -59,6 +59,15 @@ def _history(lines):
     return seen
 
 
+def _group_row(group):
+    return {
+        'id': group.id,
+        'name': group.name,
+        'items': [{'productName': item.product_name, 'qty': item.quantity, 'price': item.target_price}
+                  for item in group.item_ids],
+    }
+
+
 class SmartSpendFavorites(http.Controller):
 
     def _check(self):
@@ -175,6 +184,8 @@ class SmartSpendFavorites(http.Controller):
             } for _key_, entry in popular[:MAX_SUGGESTIONS]],
             'categories': env['smartspend.expense.category'].sudo().search([]).mapped('name'),
             'department': department.name or '',
+            'groups': [_group_row(group) for group in env['smartspend.favorite.group'].search(
+                [('user_id', '=', user.id)])],
         }
 
     @http.route('/api/smartspend/favorites/save', type='json2', auth='none',
@@ -263,3 +274,79 @@ class SmartSpendFavorites(http.Controller):
         except (AccessError, UserError) as exc:
             return _refused(exc)
         return {'ok': True}
+
+    @http.route('/api/smartspend/favorites/groups/save', type='json2', auth='none',
+                methods=['POST'], cors='*', readonly=False)
+    def save_group(self, id=None, name=None, items=None, **kwargs):
+        """Create a favourite group, or change one when ``id`` is given.
+
+        :param items: ``[{'productName', 'qty', 'price'}]`` — replaces the
+            group's products, in this order. The same product twice is kept
+            once, its quantities added.
+        """
+        error = self._check()
+        if error:
+            return error
+        name = ' '.join((name or '').split())
+        if not name:
+            return _error(_("A group needs a name."), 400)
+        merged = {}
+        try:
+            for item in items or []:
+                product = ' '.join(str((item or {}).get('productName') or '').split())
+                if not product:
+                    continue
+                qty = 1.0 if item.get('qty') in (None, '') else float(item['qty'])
+                price = float(item.get('price') or 0)
+                if qty <= 0 or price < 0:
+                    return _error(_("Quantities have to be above zero and prices not below it."), 400)
+                entry = merged.setdefault(product.casefold(), {'product_name': product, 'quantity': 0.0, 'target_price': price})
+                entry['quantity'] += qty
+                entry['target_price'] = entry['target_price'] or price
+            group_id = int(id) if id else False
+        except (TypeError, ValueError, AttributeError):
+            return _error(_("Quantities and prices have to be numbers."), 400)
+        if not merged:
+            return _error(_("Put at least one product in the group."), 400)
+        Group = request.env['smartspend.favorite.group']
+        user = request.env.user
+        if Group.search_count([('user_id', '=', user.id), ('name', '=ilike', name), ('id', '!=', group_id or 0)]):
+            return _error(_("You already have a group called “%s”.", name), 400)
+        lines = [fields.Command.clear()] + [
+            fields.Command.create(dict(values, sequence=position))
+            for position, values in enumerate(merged.values(), 1)]
+        try:
+            if group_id:
+                # search, not browse: another user's group reads as missing.
+                group = Group.search([('id', '=', group_id), ('user_id', '=', user.id)])
+                if not group:
+                    return _error(_("That group no longer exists."), 404)
+                group.write({'name': name, 'item_ids': lines})
+            else:
+                last = Group.search([('user_id', '=', request.env.user.id)], order='sequence desc', limit=1)
+                group = Group.create({'name': name, 'item_ids': lines, 'sequence': last.sequence + 1})
+            # Now, so a second group of the same name is refused here.
+            request.env.flush_all()
+        except (AccessError, UserError, ValidationError) as exc:
+            return _refused(exc)
+        return _group_row(group)
+
+    @http.route('/api/smartspend/favorites/groups/delete', type='json2', auth='none',
+                methods=['POST'], cors='*', readonly=False)
+    def delete_group(self, id=None, **kwargs):
+        """Delete a favourite group (its products stay favourites if they are)."""
+        error = self._check()
+        if error:
+            return error
+        try:
+            group = request.env['smartspend.favorite.group'].search(
+                [('id', '=', int(id or 0)), ('user_id', '=', request.env.user.id)])
+        except (TypeError, ValueError):
+            return _error(_("Which group? Its id has to be a number."), 400)
+        if not group:
+            return _error(_("That group no longer exists."), 404)
+        try:
+            group.unlink()
+        except (AccessError, UserError) as exc:
+            return _refused(exc)
+        return {'deleted': True}
