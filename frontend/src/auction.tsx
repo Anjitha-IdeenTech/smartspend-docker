@@ -437,7 +437,7 @@ function Leaderboard({ auction, now }: { auction: Auction; now: number }) {
                     <span className="truncate text-sm font-bold text-white">{p.vendor}</span>
                     {p.state === 'won' && <Trophy className="h-3.5 w-3.5 text-amber-300 shrink-0" />}
                   </div>
-                  <div className="text-[10px] text-white/50 truncate">
+                  <div className="text-[10px] text-white/50 truncate uppercase tracking-wide">
                     {p.bidCount ? `${p.bidCount} bid${p.bidCount > 1 ? 's' : ''} · last ${ago(ts(p.lastBidAt), now)}`
                       : p.state === 'accepted' ? 'accepted · waiting for bidding' : 'no bid yet'}
                     {!p.hasLogin && ' · no portal login'}
