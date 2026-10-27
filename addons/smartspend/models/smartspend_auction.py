@@ -186,6 +186,12 @@ class SmartspendAuction(models.Model):
         string='Terms & Conditions',
         help="What a vendor agrees to when they accept the invitation.")
     reminder_sent = fields.Boolean(copy=False, readonly=True)
+    repeat_reminder_minutes = fields.Integer(
+        string='Repeat Reminders (every N minutes)', default=0,
+        help="Keep reminding, every this many minutes, the vendors who still owe something: "
+             "before bidding opens, those who have not answered the invitation; while it is "
+             "live, those who accepted but have not bid. Stops when nobody is pending. 0 is off.")
+    repeat_reminded_on = fields.Datetime(string='Last Repeat Reminder', readonly=True, copy=False)
     reminder_minutes = fields.Integer(
         string='Auto-Reminder (minutes before opening)', default=REMINDER_MINUTES,
         help="Vendors who have not answered the invitation are reminded this long before "
@@ -368,7 +374,7 @@ class SmartspendAuction(models.Model):
     def _launch_for_request(self, request, partners, start_at, duration_minutes,
                             extension_window=2, extension_minutes=2, min_decrement=0.0,
                             visibility='rank', rebid_minutes=REBID_WINDOW_MINUTES, terms=False,
-                            reminder_minutes=REMINDER_MINUTES):
+                            reminder_minutes=REMINDER_MINUTES, repeat_reminder_minutes=0):
         """Create the auction for ``request``, invite ``partners`` and schedule it."""
         request.ensure_one()
         if request.state not in LAUNCHABLE_REQUEST_STATES:
@@ -421,6 +427,7 @@ class SmartspendAuction(models.Model):
             'visibility': visibility if visibility in dict(VISIBILITY) else 'rank',
             'rebid_minutes': max(int(rebid_minutes or 0), 0) or REBID_WINDOW_MINUTES,
             'reminder_minutes': max(int(reminder_minutes or 0), 0),
+            'repeat_reminder_minutes': max(int(repeat_reminder_minutes or 0), 0),
             'terms': terms or False,
             'line_ids': [fields.Command.create({
                 'request_line_id': line.id,
@@ -834,6 +841,63 @@ class SmartspendAuction(models.Model):
         """Open and close auctions on time, and remind vendors before they open."""
         self.search([('state', 'in', ('scheduled', 'live'))])._sync_state()
         self.search([('state', '=', 'scheduled'), ('reminder_sent', '=', False)])._send_auto_reminder()
+        self.search([('state', 'in', ('scheduled', 'live')),
+                     ('repeat_reminder_minutes', '>', 0)])._send_repeat_reminders()
+
+    def _repeat_reminder_due_at(self):
+        """When the next repeat reminder goes out, or False when none will.
+
+        Counted from the last one; from the opening once bidding is live (so
+        vendors get the first minutes to bid), and from the invitations before.
+        """
+        self.ensure_one()
+        if not self.repeat_reminder_minutes or self.state not in ('scheduled', 'live'):
+            return False
+        since = self.repeat_reminded_on or self.create_date
+        if self.state == 'live' and self.start_date and (not since or self.start_date > since):
+            since = self.start_date
+        return since + timedelta(minutes=self.repeat_reminder_minutes) if since else False
+
+    def _send_repeat_reminders(self, now=None):
+        """Remind the vendors who still owe an answer or a bid, every N minutes."""
+        now = now or fields.Datetime.now()
+        for auction in self:
+            due = auction._repeat_reminder_due_at()
+            if not due or due > now:
+                continue
+            pending = auction.participant_ids.filtered(lambda p: p._reminder_kind())
+            auction.repeat_reminded_on = now
+            if not pending:
+                continue
+            if auction.state == 'scheduled':
+                left, what = auction.start_date - now, _("bidding opens")
+            else:
+                left, what = auction.end_date - now, _("bidding closes")
+            minutes = max(int(left.total_seconds() // 60), 1)
+            when = _("%s minute(s)", minutes) if minutes < 120 else _("%s hour(s)", minutes // 60)
+            auction.action_send_reminders(
+                participants=pending, auto=True,
+                note=_("Automatic reminder (every %(every)s minutes) — %(what)s in %(when)s.",
+                       every=auction.repeat_reminder_minutes, what=what, when=when))
+
+    def action_set_repeat_reminders(self, minutes):
+        """The buyer turns repeat reminders on, changes how often, or turns them off."""
+        try:
+            minutes = int(minutes or 0)
+        except (TypeError, ValueError):
+            raise UserError(_("How often has to be a number of minutes."))
+        if minutes < 0 or minutes > 1440:
+            raise UserError(_("Choose between 1 minute and a day — or 0 to turn repeat reminders off."))
+        for auction in self:
+            auction._sync_state()
+            if auction.state not in ('scheduled', 'live'):
+                raise UserError(_("%s is not open for answers or bids, so there is no one to remind.", auction.name))
+            # The next one goes out a full interval from now.
+            auction.write({'repeat_reminder_minutes': minutes, 'repeat_reminded_on': fields.Datetime.now()})
+            auction.message_post(body=_("%(user)s set reminders to repeat every %(every)s minutes.",
+                                        user=self.env.user.name, every=minutes) if minutes else
+                                 _("%s turned repeat reminders off.", self.env.user.name))
+        return True
 
     def _auto_reminder_due_at(self):
         """When the automatic reminder goes out, or False when it will not.
@@ -1059,6 +1123,9 @@ class SmartspendAuction(models.Model):
                 'at': iso_utc(self.approved_on),
             } if self.approved_participant_id else None,
             'reminderMinutes': self.reminder_minutes,
+            'repeatReminderMinutes': self.repeat_reminder_minutes,
+            'repeatReminderNextAt': iso_utc(self._repeat_reminder_due_at()),
+            'repeatRemindedAt': iso_utc(self.repeat_reminded_on),
             'autoReminderAt': iso_utc(self._auto_reminder_due_at()),
             'autoReminderSent': self.reminder_sent,
             'awardReason': self.award_reason or '',

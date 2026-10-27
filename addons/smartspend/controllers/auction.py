@@ -225,7 +225,7 @@ class SmartSpendAuctionApi(http.Controller):
     def launch_auction(self, requestId=None, vendorIds=None, startAt=None, startInMinutes=None,
                        durationMinutes=None, extensionWindow=2, extensionMinutes=2,
                        minDecrement=0, visibility='rank', rebidMinutes=15, terms=None,
-                       reminderMinutes=None, **kwargs):
+                       reminderMinutes=None, repeatReminderMinutes=None, **kwargs):
         """Put a request up for auction and send the invitations."""
         error = _authenticate()
         if error:
@@ -267,6 +267,7 @@ class SmartSpendAuctionApi(http.Controller):
                 rebid_minutes=rebidMinutes,
                 terms=(terms or '').strip() or False,
                 **({'reminder_minutes': reminderMinutes} if reminderMinutes is not None else {}),
+                **({'repeat_reminder_minutes': repeatReminderMinutes} if repeatReminderMinutes is not None else {}),
             )
         except (UserError, ValidationError, AccessError) as exc:
             return _refused(exc)
@@ -275,7 +276,7 @@ class SmartSpendAuctionApi(http.Controller):
     @http.route('/api/smartspend/auctions/<string:reference>/action', type='json2', auth='none',
                 methods=['POST'], cors='*', readonly=False)
     def auction_action(self, reference=None, action=None, participantId=None, reason=None, note=None,
-                       shares=None, **kwargs):
+                       shares=None, minutes=None, **kwargs):
         """The buyer's controls: start, award, bid_again, cancel.
 
         ``award`` goes to L1 unless ``participantId`` names another bidder
@@ -305,6 +306,7 @@ class SmartSpendAuctionApi(http.Controller):
                 shares=shares if isinstance(shares, list) else None),
             'bid_again': auction.action_bid_again,
             'cancel': auction.action_cancel,
+            'repeat_reminders': lambda: auction.action_set_repeat_reminders(minutes),
             'remind': lambda: auction.action_send_reminders(
                 participants=[participantId] if participantId else None, note=note),
         }

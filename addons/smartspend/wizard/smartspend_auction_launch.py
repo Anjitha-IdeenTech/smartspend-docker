@@ -43,6 +43,11 @@ class SmartspendAuctionLaunch(models.TransientModel):
          ('60', '1 hour before'), ('1440', '1 day before')],
         string='Auto-Reminder', default='30', required=True,
         help="Remind vendors who have not answered the invitation this long before bidding opens.")
+    repeat_reminder_minutes = fields.Selection(
+        [('0', 'Off'), ('5', 'Every 5 minutes'), ('10', 'Every 10 minutes'), ('15', 'Every 15 minutes'),
+         ('30', 'Every 30 minutes'), ('60', 'Every hour')],
+        string='Repeat Reminders', default='0', required=True,
+        help="Keep reminding vendors who have not answered (before opening) or not bid (while live).")
     terms = fields.Text(
         string='Terms & Conditions',
         default=lambda self: _(
@@ -80,6 +85,7 @@ class SmartspendAuctionLaunch(models.TransientModel):
             visibility=self.visibility,
             rebid_minutes=self.rebid_minutes,
             reminder_minutes=int(self.reminder_minutes or 0),
+            repeat_reminder_minutes=int(self.repeat_reminder_minutes or 0),
             terms=self.terms,
         )
         return {

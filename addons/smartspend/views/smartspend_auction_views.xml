@@ -173,6 +173,8 @@
                             <field name="rebid_minutes" readonly="state in ('awarded', 'cancelled')"/>
                             <field name="reminder_minutes" readonly="state != 'scheduled' or reminder_sent"/>
                             <field name="reminder_sent" string="Auto-Reminder Sent" invisible="not reminder_minutes"/>
+                            <field name="repeat_reminder_minutes" readonly="state not in ('scheduled', 'live')"/>
+                            <field name="repeat_reminded_on" invisible="not repeat_reminded_on"/>
                         </group>
                         <group string="Award Approval" invisible="not approved_participant_id">
                             <field name="approved_rank"/>
@@ -428,6 +430,7 @@
                         <field name="visibility" widget="radio"/>
                         <field name="rebid_minutes"/>
                         <field name="reminder_minutes"/>
+                        <field name="repeat_reminder_minutes"/>
                     </group>
                 </group>
                 <group string="Terms &amp; Conditions">

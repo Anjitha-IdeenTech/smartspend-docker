@@ -408,6 +408,53 @@ try:
 except Exception as e:
     check('the request form still compiles for a requester', False, repr(e)[:120])
 
+print('\n--- repeat reminders every N minutes ---')
+r7 = approved_request(LINES)
+a7 = Auction._launch_for_request(r7, vendors3, soon(60), 10, repeat_reminder_minutes=5)
+check('launch keeps the repeat interval', a7.repeat_reminder_minutes == 5, a7.repeat_reminder_minutes)
+t0 = fields.Datetime.now()
+a7.sudo().write({'repeat_reminded_on': t0 - timedelta(minutes=4)})
+a7._send_repeat_reminders(now=t0)
+check('nothing goes out before the interval is up', sum(a7.participant_ids.mapped('reminder_count')) == 0)
+a7.sudo().write({'repeat_reminded_on': t0 - timedelta(minutes=6)})
+a7._send_repeat_reminders(now=t0)
+check('once it is up, every vendor who has not answered is reminded',
+      a7.participant_ids.mapped('reminder_count') == [1, 1, 1] and all(a7.participant_ids.mapped('last_reminder_auto')),
+      a7.participant_ids.mapped('reminder_count'))
+check('the reminder says how often and when bidding opens',
+      'every 5 minutes' in (a7.participant_ids[0].last_reminder_note or '') and 'bidding opens' in a7.participant_ids[0].last_reminder_note,
+      a7.participant_ids[0].last_reminder_note)
+a7._send_repeat_reminders(now=t0 + timedelta(minutes=1))
+check('and not again until the next interval', a7.participant_ids.mapped('reminder_count') == [1, 1, 1])
+q_primus = a7.participant_ids.filtered(lambda p: p.partner_id == primus)
+q_apex = a7.participant_ids.filtered(lambda p: p.partner_id == apex)
+q_primus.with_user(v_primus).sudo()._respond(True)
+a7.sudo().write({'repeat_reminded_on': t0 - timedelta(minutes=6)})
+a7._send_repeat_reminders(now=t0)
+check('a vendor who answered is left alone', q_primus.reminder_count == 1 and q_apex.reminder_count == 2,
+      (q_primus.reminder_count, q_apex.reminder_count))
+q_apex.with_user(v_apex).sudo()._respond(True)
+a7.participant_ids.filtered(lambda p: p.partner_id == secure).with_user(v_secure).sudo()._respond(False)
+check('everyone answered: bidding opened', a7.state == 'live', a7.state)
+k1, k2 = a7.line_ids.sorted('sequence')
+a7.with_user(v_primus)._place_bid(q_primus, {k1.id: 69000, k2.id: 8400})
+# Opened seven minutes ago, last reminded six: the next one is due.
+a7.sudo().write({'start_date': fields.Datetime.now() - timedelta(minutes=7),
+                 'repeat_reminded_on': fields.Datetime.now() - timedelta(minutes=6)})
+a7._send_repeat_reminders()
+check('live: only the vendor who has not bid is reminded', (q_primus.reminder_count, q_apex.reminder_count) == (1, 3)
+      and 'bidding closes' in (q_apex.last_reminder_note or ''), (q_primus.reminder_count, q_apex.reminder_count, q_apex.last_reminder_note))
+a7.with_user(v_apex)._place_bid(q_apex, {k1.id: 68000, k2.id: 8400})
+a7.sudo().write({'repeat_reminded_on': fields.Datetime.now() - timedelta(minutes=6)})
+a7._send_repeat_reminders()
+check('everyone has bid: no more reminders', (q_primus.reminder_count, q_apex.reminder_count) == (1, 3))
+raises('the interval cannot be negative', UserError, lambda: a7.action_set_repeat_reminders(-5))
+a7.action_set_repeat_reminders(10)
+check('the buyer can change the interval while it runs', a7.repeat_reminder_minutes == 10
+      and a7._to_buyer_dict()['repeatReminderMinutes'] == 10 and a7._to_buyer_dict()['repeatReminderNextAt'])
+a7.action_set_repeat_reminders(0)
+check('and turn it off', a7.repeat_reminder_minutes == 0 and not a7._repeat_reminder_due_at())
+
 print('\n--- an award split between levels ---')
 LINES10 = [{'product_name': 'Dell Latitude 5440 Laptop', 'product_qty': 10, 'price_unit': 70000},
            {'product_name': 'USB-C Docking Station', 'product_qty': 5, 'price_unit': 8500}]

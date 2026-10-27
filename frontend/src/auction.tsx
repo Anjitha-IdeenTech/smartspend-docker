@@ -65,6 +65,8 @@ export interface Auction {
   cancelReason?: string; rebidUntil?: string;
   /** Automatic reminder: minutes before opening (0 = off), when it goes out, and whether it has. */
   reminderMinutes?: number; autoReminderAt?: string; autoReminderSent?: boolean;
+  /** Repeat reminders every N minutes (0 = off), and when the next one goes out. */
+  repeatReminderMinutes?: number; repeatReminderNextAt?: string; repeatRemindedAt?: string;
   participants?: AuctionParticipant[]; bids?: AuctionBid[];
   // a vendor's view
   competitors?: number; leaderTotal?: number | null; nextMaxBid?: number;
@@ -655,6 +657,7 @@ function LaunchPanel({ api, requests, initialRequestId, onClose, onLaunched }: {
   const [rebid, setRebid] = useState<number>(15);
   // Remind vendors who have not answered this long before bidding opens; 0 is off.
   const [reminderMinutes, setReminderMinutes] = useState<number>(30);
+  const [repeatMinutes, setRepeatMinutes] = useState<number>(0);
   const [terms, setTerms] = useState<string>(DEFAULT_TERMS);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -706,7 +709,7 @@ function LaunchPanel({ api, requests, initialRequestId, onClose, onLaunched }: {
       body: JSON.stringify({
         requestId: req.id, vendorIds: picked, startAt: opensDate.toISOString(), durationMinutes: duration,
         extensionWindow: windowMin, extensionMinutes: extendBy, minDecrement: decrement,
-        visibility, rebidMinutes: rebid, terms, reminderMinutes,
+        visibility, rebidMinutes: rebid, terms, reminderMinutes, repeatReminderMinutes: repeatMinutes,
       }),
     });
     setBusy(false);
@@ -905,6 +908,12 @@ function LaunchPanel({ api, requests, initialRequestId, onClose, onLaunched }: {
                       ? <p className="text-[11px] font-semibold text-gold">Bidding opens in about {Math.max(Math.round(lead), 0)} min — sooner than that, so no automatic reminder will go out. Use Remind in the auction room instead.</p>
                       : <p className="text-[11px] text-textFaint">Goes out at {new Date(Date.parse(opensAt) - reminderMinutes * 60000).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}.</p>;
                   })()}
+                  <div className="pt-2 mt-1 border-t border-borderTheme space-y-2">
+                    <div className="flex items-center gap-2 text-xs font-bold text-textPrimary"><RotateCcw className="h-4 w-4 text-gold" /> Repeat reminders</div>
+                    <p className="text-[11px] text-textSecondary leading-snug">Keep nudging until everyone has answered — and, once bidding is live, until everyone who accepted has bid.</p>
+                    <Segmented value={repeatMinutes} options={[0, 5, 10, 15, 30, 60]} onChange={setRepeatMinutes}
+                               fmt={m => (m === 0 ? 'Off' : m === 60 ? 'Every hour' : `Every ${m} min`)} />
+                  </div>
                 </div>
               </section>
 
@@ -1055,7 +1064,7 @@ function AuctionRoom({ api, reference, onBack, onRequestUpdated, onRaisePurchase
   const state = auction?.state;
   useInterval(load, state === 'live' ? 1500 : state === 'scheduled' || !state ? 3000 : state === 'closed' ? 5000 : null);
 
-  const act = async (action: 'start' | 'award' | 'bid_again' | 'cancel' | 'remind' | 'approve', confirmText?: string, extra: Record<string, unknown> = {}) => {
+  const act = async (action: 'start' | 'award' | 'bid_again' | 'cancel' | 'remind' | 'approve' | 'repeat_reminders', confirmText?: string, extra: Record<string, unknown> = {}) => {
     if (confirmText && !window.confirm(confirmText)) return;
     setBusy(action); setError('');
     const res = await call<{ auction: Auction; request: AuctionableRequest }>(api, `/api/smartspend/auctions/${reference}/action`, {
@@ -1125,6 +1134,19 @@ function AuctionRoom({ api, reference, onBack, onRequestUpdated, onRaisePurchase
           <span className="rounded-full border border-brand/30 bg-brand/10 px-2.5 py-0.5 text-[11px] font-bold text-brand">Round {auction.round}</span>
         )}
         <div className="ml-auto flex flex-wrap gap-2">
+          {!approver && ['scheduled', 'live'].includes(auction.state) && (
+            <label className="inline-flex items-center gap-1.5 rounded-xl border border-borderTheme bg-surface px-3 py-1.5 text-xs font-bold text-textSecondary"
+                   title="Keep reminding vendors who have not answered (before opening) or not bid (while live)">
+              <RotateCcw className="h-4 w-4 text-gold" />
+              Repeat reminders
+              <select value={auction.repeatReminderMinutes ?? 0} disabled={!!busy}
+                      onChange={e => act('repeat_reminders', undefined, { minutes: Number(e.target.value) })}
+                      aria-label="Repeat reminders"
+                      className="rounded-lg border border-borderTheme bg-secondary px-1.5 py-1 text-xs font-bold text-textPrimary focus:outline-none">
+                {[0, 5, 10, 15, 30, 60].map(m => <option key={m} value={m}>{m === 0 ? 'Off' : m === 60 ? 'Every hour' : `Every ${m} min`}</option>)}
+              </select>
+            </label>
+          )}
           {!approver && auction.state === 'scheduled' && (
             <button onClick={() => act('start', 'Open bidding now? Vendors who have not accepted are dropped.')} disabled={!!busy || accepted < 2}
                     title={accepted < 2 ? 'Needs two accepted vendors' : undefined}
@@ -1369,6 +1391,9 @@ function AuctionRoom({ api, reference, onBack, onRequestUpdated, onRaisePurchase
               : auction.autoReminderSent ? `Automatic reminder ${auction.autoReminderAt ? 'sent' : 'skipped — bidding opened too soon after the invitations'}`
               : auction.autoReminderAt ? <>Automatic reminder to vendors who have not answered at {hhmm(auction.autoReminderAt)} ({auction.reminderMinutes >= 60 ? `${auction.reminderMinutes / 60 >= 24 ? '1 day' : `${auction.reminderMinutes / 60} h`}` : `${auction.reminderMinutes} min`} before opening)</>
               : 'No automatic reminder — bidding opens too soon after the invitations'}</li>}
+            {['scheduled', 'live'].includes(auction.state) && <li className="flex gap-2"><RotateCcw className="h-4 w-4 text-textFaint shrink-0" />{auction.repeatReminderMinutes
+              ? <>Reminders repeat every {auction.repeatReminderMinutes} min to vendors who have not {auction.state === 'live' ? 'bid' : 'answered'}{auction.repeatReminderNextAt ? <> — next at {hhmm(auction.repeatReminderNextAt)}</> : null}</>
+              : 'No repeat reminders'}</li>}
             <li className="flex gap-2"><Lock className="h-4 w-4 text-textFaint shrink-0" />Every bid is logged and cannot be edited</li>
             <li className="flex gap-2"><RotateCcw className="h-4 w-4 text-textFaint shrink-0" />Bid Again opens a fresh round from the opening price; earlier rounds stay in the log</li>
           </ul>
