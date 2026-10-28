@@ -28,6 +28,7 @@ import { VendorAckDialog, showDate, type Delivery } from './vendorAck';
 import { SubscriptionsDesk } from './subscriptions';
 import { ManagerDashboard } from './managerDashboard';
 import { BuyerDashboard } from './buyerDashboard';
+import { VendorDashboard } from './vendorDashboard';
 import { NewProductHint, ProductRequestsDesk, ProductRequestsPanel } from './productRequests';
 import { LineAnalytics } from './analytics';
 import { BackorderDialog, BackordersBoard, ShipmentChain } from './backorders';
@@ -181,6 +182,7 @@ const companyForBranch = (branch?: string): Company => {
  * delivered against those orders, and the ones still waiting on their word.
  */
 const VENDOR_TABS = [
+  { key: 'dashboard' as const, label: 'Dashboard',       icon: LayoutDashboard },
   { key: 'orders' as const,    label: 'Purchase Orders', icon: Package },
   { key: 'receipts' as const,  label: 'Receipts',        icon: Truck },
   { key: 'approvals' as const, label: 'Approvals',       icon: CheckCircle2 },
@@ -3272,7 +3274,7 @@ export default function App() {
   };
 
   // Which of the vendor's three views is open.
-  const [vendorTab, setVendorTab] = useState<'orders' | 'receipts' | 'approvals' | 'auctions'>('orders');
+  const [vendorTab, setVendorTab] = useState<'dashboard' | 'orders' | 'receipts' | 'approvals' | 'auctions'>('dashboard');
   // The order a supplier has opened. A row is a summary; this is the order and
   // the delivery against it in full.
   const [vendorDetailId, setVendorDetailId] = useState<string | null>(null);
@@ -3502,6 +3504,7 @@ export default function App() {
     setUserRole(role);
     if (role === "Vendor") {
       setActiveScene(18); // the supplier's own portal
+      setVendorTab('dashboard');
     } else {
       // Land on the role's first (drag-ordered) nav item.
       applyNav(role, (navOrder[role] || DEFAULT_NAV_ORDER[role])?.[0]);
@@ -4569,7 +4572,7 @@ export default function App() {
                     const active = activeScene === 18 && vendorTab === t.key;
                     const count = t.key === 'orders' ? vendorOrders.length
                       : t.key === 'receipts' ? vendorReceipts.length
-                        : t.key === 'auctions' ? vendorAuctionCount : vendorAwaiting.length;
+                        : t.key === 'auctions' ? vendorAuctionCount : t.key === 'dashboard' ? 0 : vendorAwaiting.length;
                     return (
                       <button
                         key={t.key}
@@ -8480,6 +8483,17 @@ export default function App() {
                     <p className="text-xs text-textFaint mt-1">{what}</p>
                   </div>
                 );
+                if (vendorTab === 'dashboard') return (
+                  <VendorDashboard
+                    orders={vendorOrders}
+                    companyName={vendorOwn.length ? vendorCompany : (vendorOrders[0]?.vendor || '')}
+                    userName={currentUser?.name || ''}
+                    companies={companyRows}
+                    fetcher={apiFetch}
+                    offline={offlineDemo}
+                    onTab={(key) => setVendorTab(key)}
+                  />
+                );
                 return (
                 <div className="max-w-6xl mx-auto space-y-6 animate-fadeIn">
                   <SceneHeader
@@ -8497,7 +8511,7 @@ export default function App() {
                     {VENDOR_TABS.map(t => {
                       const count = t.key === 'orders' ? vendorOrders.length
                         : t.key === 'receipts' ? vendorReceipts.length
-                          : t.key === 'auctions' ? vendorAuctionCount : vendorAwaiting.length;
+                          : t.key === 'auctions' ? vendorAuctionCount : t.key === 'dashboard' ? 0 : vendorAwaiting.length;
                       return (
                         <button
                           key={t.key}
@@ -8507,8 +8521,8 @@ export default function App() {
                               : 'text-textSecondary hover:text-textPrimary hover:bg-secondary'}`}
                         >
                           <t.icon className="h-3.5 w-3.5" /> {t.label}
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
-                            vendorTab === t.key ? 'bg-white/20' : 'bg-raised text-textFaint'}`}>{count}</span>
+                          {t.key !== 'dashboard' && <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+                            vendorTab === t.key ? 'bg-white/20' : 'bg-raised text-textFaint'}`}>{count}</span>}
                         </button>
                       );
                     })}
