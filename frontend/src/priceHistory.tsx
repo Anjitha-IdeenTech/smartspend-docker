@@ -11,6 +11,8 @@ import { ChevronDown, ChevronUp, History, TrendingDown, TrendingUp } from 'lucid
 
 export interface PriceHistoryRow {
   date: string; vendor: string; po: string; product: string;
+  /** The branch it was ordered for, and the buying company. */
+  branch?: string; company?: string;
   qty: number; unitPrice: number; currency: string;
 }
 
@@ -26,8 +28,10 @@ const day = (iso: string) => iso
   ? new Date(`${iso}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
   : '—';
 
-export function PriceHistoryStrip({ product, unitPrice, fetcher }: {
+export function PriceHistoryStrip({ product, unitPrice, fetcher, companyOf }: {
   product: string; unitPrice: number; fetcher: Fetcher;
+  /** The company a branch belongs to, from the portal's Company master. */
+  companyOf?: (branch: string) => string | undefined;
 }) {
   const [data, setData] = useState<PriceHistory | null>(null);
   const [open, setOpen] = useState(false);
@@ -87,6 +91,8 @@ export function PriceHistoryStrip({ product, unitPrice, fetcher }: {
               <tr className="text-[10px] uppercase tracking-wider text-textFaint">
                 <th className="py-1 pr-3 font-bold">Date</th>
                 <th className="py-1 pr-3 font-bold">Vendor</th>
+                <th className="py-1 pr-3 font-bold">Branch</th>
+                <th className="py-1 pr-3 font-bold">Company</th>
                 <th className="py-1 pr-3 font-bold">PO</th>
                 <th className="py-1 pr-3 font-bold text-right">Qty</th>
                 <th className="py-1 font-bold text-right">Unit price</th>
@@ -97,6 +103,8 @@ export function PriceHistoryStrip({ product, unitPrice, fetcher }: {
                 <tr key={`${r.po}-${i}`} className="border-t border-borderTheme">
                   <td className="py-1 pr-3 whitespace-nowrap">{day(r.date)}</td>
                   <td className="py-1 pr-3">{r.vendor}</td>
+                  <td className="py-1 pr-3">{r.branch || '—'}</td>
+                  <td className="py-1 pr-3">{(r.branch && companyOf?.(r.branch)) || r.company || '—'}</td>
                   <td className="py-1 pr-3 font-mono">{r.po}</td>
                   <td className="py-1 pr-3 text-right tabular-nums">{r.qty.toLocaleString('en-IN')}</td>
                   <td className={`py-1 text-right tabular-nums font-semibold ${r.unitPrice === data.min ? 'text-pos' : 'text-textPrimary'}`}>{inr(r.unitPrice)}</td>

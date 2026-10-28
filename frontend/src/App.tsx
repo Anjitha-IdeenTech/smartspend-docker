@@ -3148,6 +3148,9 @@ export default function App() {
     return [...odooProducts.filter(p => !known.has(p.name.trim().toLowerCase())), ...base];
   })();
   const companyRows: Company[] = [...addedMasters.companies, ...COMPANIES];
+  /** The company a branch sits under, as the Company master assigns it. */
+  const companyOfBranch = (branch: string) =>
+    companyRows.find(c => c.branches.some(b => b.trim().toLowerCase() === branch.trim().toLowerCase()))?.name;
   const allCategoryRows: MasterCategory[] = [...addedMasters.categories, ...categoryRows];
 
   /**
@@ -5476,7 +5479,7 @@ export default function App() {
                             className="col-span-3 bg-secondary border border-line2 rounded-lg p-2 text-sm text-primary focus:outline-none focus:border-brand" />
                           <span className="col-span-1 text-center text-brand" title="Primary item">★</span>
                         </div>
-                        <PriceHistoryStrip product={editProductName} unitPrice={editTargetPrice} fetcher={apiFetch} />
+                        <PriceHistoryStrip product={editProductName} unitPrice={editTargetPrice} fetcher={apiFetch} companyOf={companyOfBranch} />
                         <FavoriteToggle fetcher={apiFetch} offline={offlineDemo} userKey={favoritesKey}
                                         productName={editProductName} qty={editProductQty} price={editTargetPrice} />
                         <NewProductHint product={editProductName} fetcher={apiFetch} offline={offlineDemo} onPick={setEditProductName} />
@@ -5492,7 +5495,7 @@ export default function App() {
                               className="col-span-3 bg-secondary border border-line2 rounded-lg p-2 text-sm text-primary focus:outline-none focus:border-brand" />
                             <button onClick={() => setExtraItems(prev => prev.filter((_, i) => i !== idx))} className="col-span-1 flex justify-center text-neg" title="Remove line"><X className="h-4 w-4" /></button>
                           </div>
-                          <PriceHistoryStrip product={it.productName} unitPrice={it.targetPrice} fetcher={apiFetch} />
+                          <PriceHistoryStrip product={it.productName} unitPrice={it.targetPrice} fetcher={apiFetch} companyOf={companyOfBranch} />
                           <FavoriteToggle fetcher={apiFetch} offline={offlineDemo} userKey={favoritesKey}
                                           productName={it.productName} qty={it.productQty} price={it.targetPrice} />
                           <NewProductHint product={it.productName} fetcher={apiFetch} offline={offlineDemo}
@@ -9356,7 +9359,7 @@ export default function App() {
                                 canEdit={!!currentUser?.is_buyer && !offlineDemo} fetcher={apiFetch}
                                 onSaved={d => setOdooProducts(prev => prev.map(x => x.odooId === p.odooId ? { ...x, description: d } : x))} /> },
                             { title: 'Price history', hint: 'What was actually paid on confirmed purchase orders in Odoo.',
-                              content: <><PriceHistoryStrip product={p.name} unitPrice={p.contract} fetcher={apiFetch} /></> },
+                              content: <><PriceHistoryStrip product={p.name} unitPrice={p.contract} fetcher={apiFetch} companyOf={companyOfBranch} /></> },
                             { title: 'Vendors for this category', content: <DetailChips items={sellers} empty="No vendors listed for this category." onPick={n => vendorKnown(n) && go('vendors', n)} /> },
                             recentSection(sum.recent, 'for this product'),
                           ]}

@@ -91,6 +91,11 @@ def paid_history(user, product):
         'date': (line.order_id.date_approve or line.order_id.date_order).date().isoformat()
                 if (line.order_id.date_approve or line.order_id.date_order) else '',
         'vendor': line.order_id.partner_id.commercial_partner_id.name or '',
+        # Who bought it: the branch of the request it was ordered for, and the
+        # buying company.
+        'branch': (line.order_id.smartspend_request_id.branch_id.name
+                   or line.order_id.smartspend_request_id.location or ''),
+        'company': line.order_id.company_id.name or '',
         'po': line.order_id.name,
         'product': line.product_id.name or line.name.split('\n')[0],
         'qty': line.product_qty,
