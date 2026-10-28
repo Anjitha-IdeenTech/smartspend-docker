@@ -27,6 +27,7 @@ import { FALLBACK_METHODS, MethodSelect, methodLabel } from './fulfilment';
 import { VendorAckDialog, showDate, type Delivery } from './vendorAck';
 import { SubscriptionsDesk } from './subscriptions';
 import { ManagerDashboard } from './managerDashboard';
+import { BuyerDashboard } from './buyerDashboard';
 import { NewProductHint, ProductRequestsDesk, ProductRequestsPanel } from './productRequests';
 import { LineAnalytics } from './analytics';
 import { BackorderDialog, BackordersBoard, ShipmentChain } from './backorders';
@@ -2714,7 +2715,7 @@ export default function App() {
     // Confirmed", which drops it straight out of the To Source queue — and the
     // buyer had no other route to the tracking screen, so the vendor
     // acknowledgment step it owns became unreachable the moment it was due.
-    'SCM Buyer': ['requests', 'newProducts', 'auctions', 'subscriptions', 'discovery', 'tracking', 'backorders'],
+    'SCM Buyer': ['dashboard', 'requests', 'newProducts', 'auctions', 'subscriptions', 'discovery', 'tracking', 'backorders'],
     CEO: ['analytics', 'tracking', 'masters'],
   };
   const [navOrder, setNavOrder] = useState<Record<string, string[]>>(() => {
@@ -2760,7 +2761,8 @@ export default function App() {
       setActiveScene(key === 'dashboard' ? 23 : key === 'masters' ? 16 : key === 'tracking' ? 11 : key === 'clarify' ? 17 : key === 'subscriptions' ? 20 : key === 'auctions' ? 19 : key === 'backorders' ? 21 : key === 'newProducts' ? 22 : 10);
     }
     else if (role === 'SCM Buyer') {
-      if (key === 'masters') { setActiveScene(16); }
+      if (key === 'dashboard') { setActiveScene(23); }
+      else if (key === 'masters') { setActiveScene(16); }
       else if (key === 'tracking') {
         // Tracking has no request picker: it shows the selected request, or
         // falls back to the first in the list. Arriving cold — a fresh sign-in,
@@ -2793,6 +2795,7 @@ export default function App() {
       : key === 'tracking' ? activeScene === 11
         : key === 'clarify' ? activeScene === 17 : activeScene === 10;
     if (role === 'SCM Buyer') {
+      if (key === 'dashboard') return activeScene === 23;
       if (key === 'masters') return activeScene === 16;
       if (key === 'tracking') return activeScene === 11;
       if (key === 'auctions') return activeScene === 19;
@@ -2825,6 +2828,7 @@ export default function App() {
       'SCM Buyer/backorders': { icon: <Truck className="h-4 w-4" />, label: 'Backorders' },
       'Manager/auctions': { icon: <Gavel className="h-4 w-4" />, label: 'Auction Approvals', badge: pill(auctionToApproveCount, 'bg-gold/20 text-gold border border-gold/30', auctionToApproveCount > 0) },
       'Manager/masters': { icon: <Boxes className="h-4 w-4" />, label: 'Master Data', badge: pill(pendingDrafts.length, 'bg-brand/20 text-brand border border-brand/30', true) },
+      'SCM Buyer/dashboard': { icon: <LayoutDashboard className="h-4 w-4" />, label: 'Dashboard' },
       'SCM Buyer/requests': { icon: <Briefcase className="h-4 w-4" />, label: 'To Source', badge: pill(requests.filter(r => BUYER_QUEUE_STATUSES.includes(r.status)).length, 'bg-brand/20 text-brand border border-brand/30') },
       'SCM Buyer/auctions': { icon: <Gavel className="h-4 w-4" />, label: 'Live Auctions', badge: pill(auctionLiveCount + auctionToAwardCount, auctionLiveCount ? 'bg-neg/15 text-neg border border-neg/30' : 'bg-gold/20 text-gold border border-gold/30', auctionLiveCount > 0) },
       'SCM Buyer/subscriptions': { icon: <Repeat className="h-4 w-4" />, label: 'Subscriptions' },
@@ -8887,8 +8891,25 @@ export default function App() {
                 />
               )}
 
+              {/* --- SCENE 23: DASHBOARD (SCM buyer) --- */}
+              {activeScene === 23 && userRole === 'SCM Buyer' && (
+                <BuyerDashboard
+                  requests={requests}
+                  companies={companyRows}
+                  userName={currentUser?.name || ''}
+                  fetcher={apiFetch}
+                  offline={offlineDemo}
+                  onOpenRequest={(id, status) => {
+                    setSelectedRequestId(id);
+                    if (BUYER_QUEUE_STATUSES.includes(status)) applyNav('SCM Buyer', 'requests');
+                    else setActiveScene(11);
+                  }}
+                  onNav={(key) => applyNav('SCM Buyer', key)}
+                />
+              )}
+
               {/* --- SCENE 23: MANAGER DASHBOARD --- */}
-              {activeScene === 23 && (
+              {activeScene === 23 && userRole !== 'SCM Buyer' && (
                 <ManagerDashboard
                   requests={requests}
                   companies={companyRows}
