@@ -73,6 +73,8 @@ export interface Auction {
   me?: {
     participantId: number; vendor: string; state: string; stateLabel: string; total: number;
     rank: number; bidCount: number; lastBidAt: string; prices: Record<string, number>;
+    /** Why the buyer removed this vendor, when they did. */
+    removedNote?: string;
     /** The buyer's latest reminder, while there is still something to do about it. */
     reminder?: { at: string; count: number; note: string; kind: 'respond' | 'bid'; auto?: boolean } | null;
   };
@@ -409,7 +411,7 @@ function Leaderboard({ auction, now }: { auction: Auction; now: number }) {
   const ROW = 64;
   const bidding = (auction.participants ?? []).filter(p => ['live', 'closed', 'won', 'lost', 'accepted'].includes(p.state));
   const ordered = [...bidding].sort((a, b) => (a.rank || 999) - (b.rank || 999) || a.vendor.localeCompare(b.vendor));
-  const out = (auction.participants ?? []).filter(p => ['declined', 'cancelled', 'invited'].includes(p.state));
+  const out = (auction.participants ?? []).filter(p => ['declined', 'cancelled', 'invited', 'removed'].includes(p.state));
   const best = auction.bestTotal || 0;
   const vendorIds = [...new Set((auction.participants ?? []).map(p => p.vendorId))].sort((a, b) => a - b);
   const colorOf = (vendorId: number) => SERIES[Math.max(0, vendorIds.indexOf(vendorId)) % SERIES.length];
@@ -1037,6 +1039,9 @@ function AuctionRoom({ api, reference, onBack, onRequestUpdated, onRaisePurchase
   const [remindFor, setRemindFor] = useState<'all' | number | null>(null);
   const [remindNote, setRemindNote] = useState('');
   const [remindSent, setRemindSent] = useState('');
+  // Removing a vendor from the invitation list: who, and why (optional).
+  const [removeFor, setRemoveFor] = useState<number | null>(null);
+  const [removeReason, setRemoveReason] = useState('');
   const [awardReason, setAwardReason] = useState('');
   const [poBusy, setPoBusy] = useState(false);
   const [burst, setBurst] = useState<string | null>(null);
@@ -1064,7 +1069,7 @@ function AuctionRoom({ api, reference, onBack, onRequestUpdated, onRaisePurchase
   const state = auction?.state;
   useInterval(load, state === 'live' ? 1500 : state === 'scheduled' || !state ? 3000 : state === 'closed' ? 5000 : null);
 
-  const act = async (action: 'start' | 'award' | 'bid_again' | 'cancel' | 'remind' | 'approve' | 'repeat_reminders', confirmText?: string, extra: Record<string, unknown> = {}) => {
+  const act = async (action: 'start' | 'award' | 'bid_again' | 'cancel' | 'remind' | 'approve' | 'repeat_reminders' | 'remove_vendor', confirmText?: string, extra: Record<string, unknown> = {}) => {
     if (confirmText && !window.confirm(confirmText)) return;
     setBusy(action); setError('');
     const res = await call<{ auction: Auction; request: AuctionableRequest }>(api, `/api/smartspend/auctions/${reference}/action`, {
@@ -1076,6 +1081,7 @@ function AuctionRoom({ api, reference, onBack, onRequestUpdated, onRaisePurchase
     if (res.data.request) onRequestUpdated(res.data.request);
     if (action === 'award') { setAwardPick(null); setAwardReason(''); setCelebrate(true); }
     if (action === 'approve') { setAwardPick(null); setAwardReason(''); }
+    if (action === 'remove_vendor') { setRemoveFor(null); setRemoveReason(''); }
     if (action === 'remind') {
       const names = remindFor === 'all'
         ? (auction?.participants ?? []).filter(p => p.reminderKind).map(p => p.vendor)
@@ -1346,7 +1352,24 @@ function AuctionRoom({ api, reference, onBack, onRequestUpdated, onRaisePurchase
                           className="rounded-md bg-emerald-400/90 px-2 py-0.5 text-[10px] font-bold text-[#062a1f]">Accept for them</button>
                   <button onClick={() => respondFor(p.id, false)} disabled={!!busy}
                           className="rounded-md bg-white/10 px-2 py-0.5 text-[10px] font-bold text-white/70">Decline</button>
+                  <button onClick={() => { setRemoveReason(''); setRemoveFor(p.id); }} disabled={!!busy}
+                          title="Take this vendor off the invitation list"
+                          className="inline-flex items-center gap-1 rounded-md bg-rose-400/20 px-2 py-0.5 text-[10px] font-bold text-rose-200 hover:bg-rose-400/30"><X className="h-3 w-3" />Remove</button>
                   </>}
+                </div>
+              ))}
+            </div>
+          )}
+          {!approver && auction.state === 'scheduled' && (auction.participants ?? []).some(p => ['accepted', 'declined'].includes(p.state)) && (
+            <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-3 space-y-2">
+              <p className="text-[11px] font-bold text-white/70">Answered</p>
+              {(auction.participants ?? []).filter(p => ['accepted', 'declined'].includes(p.state)).map(p => (
+                <div key={p.id} className="flex items-center gap-2 text-xs">
+                  {p.state === 'accepted' ? <Check className="h-3.5 w-3.5 text-emerald-300" /> : <X className="h-3.5 w-3.5 text-white/50" />}
+                  <span className="flex-1 truncate">{p.vendor} <span className="text-white/40">· {p.stateLabel.toLowerCase()}</span></span>
+                  <button onClick={() => { setRemoveReason(''); setRemoveFor(p.id); }} disabled={!!busy}
+                          title="Take this vendor off the invitation list"
+                          className="inline-flex items-center gap-1 rounded-md bg-rose-400/20 px-2 py-0.5 text-[10px] font-bold text-rose-200 hover:bg-rose-400/30"><X className="h-3 w-3" />Remove</button>
                 </div>
               ))}
             </div>
@@ -1459,6 +1482,49 @@ function AuctionRoom({ api, reference, onBack, onRequestUpdated, onRaisePurchase
                         disabled={!!busy || !targets.length}
                         className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-4 py-2 text-xs font-bold text-onbrand shadow disabled:opacity-40">
                   <BellRing className="h-4 w-4" />{busy === 'remind' ? 'Sending…' : `Send reminder${targets.length > 1 ? ` to ${targets.length} vendors` : ''}`}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        );
+      })()}
+      {removeFor !== null && auction.state === 'scheduled' && (() => {
+        const target = (auction.participants ?? []).find(p => p.id === removeFor);
+        if (!target) return null;
+        const staying = (auction.participants ?? []).filter(p => p.id !== removeFor && ['invited', 'accepted'].includes(p.state)).length;
+        return createPortal(
+          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => !busy && setRemoveFor(null)}>
+            <div onClick={e => e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-surface border border-borderTheme shadow-2xl">
+              <div className="flex items-start gap-3 px-6 py-4 border-b border-borderTheme">
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-neg/10 text-neg"><X className="h-5 w-5" /></span>
+                <div className="min-w-0 flex-1">
+                  <h3 className="font-outfit font-extrabold text-lg text-textPrimary leading-tight">Remove {target.vendor}?</h3>
+                  <p className="text-[11px] text-textSecondary mt-0.5">Their invitation to {auction.id} is withdrawn: they are told, and can no longer accept or bid.</p>
+                </div>
+                <button onClick={() => setRemoveFor(null)} disabled={!!busy} className="p-1.5 rounded-lg text-textFaint hover:text-textPrimary hover:bg-secondary"><X className="h-4 w-4" /></button>
+              </div>
+              <div className="px-6 py-5 space-y-3">
+                {staying < 2 && (
+                  <p className="flex items-start gap-2 rounded-xl border border-gold/30 bg-gold/10 px-3 py-2 text-[11px] text-textSecondary">
+                    <AlertTriangle className="h-4 w-4 shrink-0 text-gold" />
+                    <span>That would leave fewer than two vendors invited — an auction needs at least two. Cancel the auction instead.</span>
+                  </p>
+                )}
+                <div>
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-textFaint block mb-1">Reason (optional — the vendor sees it)</label>
+                  <textarea rows={2} value={removeReason} onChange={e => setRemoveReason(e.target.value)}
+                            placeholder="e.g. Not on the approved vendor list for this category"
+                            className="w-full rounded-xl border border-borderTheme bg-secondary p-2.5 text-xs text-textPrimary focus:outline-none focus:border-brand" />
+                </div>
+                <ErrorNote text={error} />
+              </div>
+              <div className="flex justify-end gap-2 px-6 py-4 border-t border-borderTheme">
+                <button onClick={() => setRemoveFor(null)} disabled={!!busy} className="rounded-lg border border-borderTheme bg-secondary px-4 py-2 text-xs font-bold text-textSecondary hover:text-textPrimary">Keep them</button>
+                <button onClick={() => act('remove_vendor', undefined, { participantId: removeFor, reason: removeReason.trim() })}
+                        disabled={!!busy || staying < 2}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-neg px-4 py-2 text-xs font-bold text-white shadow disabled:opacity-40">
+                  <X className="h-4 w-4" />{busy === 'remove_vendor' ? 'Removing…' : `Remove ${target.vendor}`}
                 </button>
               </div>
             </div>
@@ -1946,7 +2012,10 @@ function VendorConsole({ api, reference, onBack }: { api: ApiFn; reference: stri
               <h2 className="font-outfit text-3xl md:text-4xl font-black mt-1">You're invited to bid</h2>
             ) : me.state === 'accepted' ? (
               <h2 className="font-outfit text-3xl md:text-4xl font-black mt-1">You're in — get ready</h2>
-            ) : me.state === 'declined' || me.state === 'cancelled' ? (
+            ) : me.state === 'removed' ? (<>
+              <h2 className="font-outfit text-3xl font-black mt-1 text-white/75">The buyer withdrew your invitation</h2>
+              {me.removedNote && <p className="mt-1 text-sm text-white/60">{me.removedNote}</p>}
+            </>) : me.state === 'declined' || me.state === 'cancelled' ? (
               <h2 className="font-outfit text-3xl font-black mt-1 text-white/75">{me.state === 'declined' ? 'You declined this invitation' : 'This invitation was withdrawn'}</h2>
             ) : (
               <h2 className="font-outfit text-3xl md:text-4xl font-black mt-1">{rankLine}</h2>

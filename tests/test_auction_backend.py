@@ -455,6 +455,43 @@ check('the buyer can change the interval while it runs', a7.repeat_reminder_minu
 a7.action_set_repeat_reminders(0)
 check('and turn it off', a7.repeat_reminder_minutes == 0 and not a7._repeat_reminder_due_at())
 
+print('\n--- removing a vendor from the invitation list ---')
+r8r = approved_request(LINES)
+a8r = Auction._launch_for_request(r8r, vendors3, soon(60), 10)
+x_primus = a8r.participant_ids.filtered(lambda p: p.partner_id == primus)
+x_apex = a8r.participant_ids.filtered(lambda p: p.partner_id == apex)
+x_secure = a8r.participant_ids.filtered(lambda p: p.partner_id == secure)
+x_primus.with_user(v_primus).sudo()._respond(True)
+x_apex.with_user(v_apex).sudo()._respond(True)
+x_secure.with_user(buyer)._remove('Not approved for this category')
+check('the buyer removes a vendor who had not answered', x_secure.state == 'removed'
+      and 'Not approved' in (x_secure.response_note or ''), (x_secure.state, x_secure.response_note))
+check('the two who accepted are now everyone: bidding opens by itself', a8r.state == 'live', a8r.state)
+check('the request timeline says who was removed', any(
+    h.title == 'Vendor Removed from Auction' for h in r8r.history_ids), r8r.history_ids.mapped('title')[-3:])
+raises('a removed vendor cannot accept', UserError, lambda: x_secure.with_user(v_secure).sudo()._respond(True))
+raises('nor bid', UserError, lambda: a8r.with_user(v_secure)._place_bid(
+    x_secure, {l.id: 1000 for l in a8r.line_ids}))
+raises('nobody can be removed once bidding is open', UserError, lambda: x_apex.with_user(buyer)._remove())
+vd = a8r.sudo()._to_vendor_dict(x_secure)
+check('the vendor is told why', vd['me']['state'] == 'removed' and 'Not approved' in vd['me']['removedNote'], vd['me'])
+r8t = approved_request(LINES)
+a8t = Auction._launch_for_request(r8t, vendors3, soon(60), 10)
+y_secure = a8t.participant_ids.filtered(lambda p: p.partner_id == secure)
+y_secure.with_user(buyer)._remove()
+check('removing one of three leaves the auction waiting on the others', a8t.state == 'scheduled', a8t.state)
+raises('a removed vendor cannot accept while it is still waiting', UserError,
+       lambda: y_secure.with_user(v_secure).sudo()._respond(True))
+raises('nor decline', UserError, lambda: y_secure.with_user(v_secure).sudo()._respond(False))
+raises('nor be removed twice', UserError, lambda: y_secure.with_user(buyer)._remove())
+check('and is not reminded', not y_secure._reminder_kind())
+r8s = approved_request(LINES)
+a8s = Auction._launch_for_request(r8s, primus | apex, soon(60), 10)
+raises('an auction keeps at least two vendors', UserError,
+       lambda: a8s.participant_ids[0].with_user(buyer)._remove())
+raises('a requester cannot remove vendors through the API path', Exception,
+       lambda: a8s.with_user(requester)._participant_to_remove(a8s.participant_ids[0].id).with_user(requester).write({'state': 'removed'}))
+
 print('\n--- an award split between levels ---')
 LINES10 = [{'product_name': 'Dell Latitude 5440 Laptop', 'product_qty': 10, 'price_unit': 70000},
            {'product_name': 'USB-C Docking Station', 'product_qty': 5, 'price_unit': 8500}]

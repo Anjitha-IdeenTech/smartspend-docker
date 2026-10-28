@@ -307,6 +307,7 @@ class SmartSpendAuctionApi(http.Controller):
             'bid_again': auction.action_bid_again,
             'cancel': auction.action_cancel,
             'repeat_reminders': lambda: auction.action_set_repeat_reminders(minutes),
+            'remove_vendor': lambda: auction._participant_to_remove(participantId)._remove(reason or note),
             'remind': lambda: auction.action_send_reminders(
                 participants=[participantId] if participantId else None, note=note),
         }

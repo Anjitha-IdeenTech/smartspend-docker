@@ -235,6 +235,10 @@
                                             icon="fa-check" invisible="state != 'invited'"/>
                                     <button name="action_decline" type="object" string="Decline"
                                             icon="fa-times" invisible="state not in ('invited', 'accepted')"/>
+                                    <button name="action_remove" type="object" string="Remove"
+                                            icon="fa-user-times" groups="smartspend.group_smartspend_buyer"
+                                            invisible="parent.state not in ('draft', 'scheduled') or state not in ('invited', 'accepted', 'declined')"
+                                            confirm="Remove this vendor from the auction? They are told their invitation was withdrawn."/>
                                     <button name="action_remind" type="object" string="Remind"
                                             icon="fa-bell" groups="smartspend.group_smartspend_buyer"
                                             invisible="parent.state not in ('scheduled', 'live') or state not in ('invited', 'accepted', 'live') or (parent.state == 'scheduled' and state != 'invited') or (parent.state == 'live' and bid_count)"/>

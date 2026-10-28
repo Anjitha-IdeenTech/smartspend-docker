@@ -47,6 +47,7 @@ PARTICIPANT_STATES = [
     ('won', 'Won'),
     ('lost', 'Lost'),
     ('cancelled', 'Cancelled'),
+    ('removed', 'Removed by Buyer'),
 ]
 
 VISIBILITY = [
@@ -880,6 +881,15 @@ class SmartspendAuction(models.Model):
                 note=_("Automatic reminder (every %(every)s minutes) — %(what)s in %(when)s.",
                        every=auction.repeat_reminder_minutes, what=what, when=when))
 
+    def _participant_to_remove(self, participant):
+        self.ensure_one()
+        if not participant:
+            raise UserError(_("Which vendor should be removed?"))
+        chosen = self.env['smartspend.auction.participant'].browse(int(participant))
+        if chosen not in self.participant_ids:
+            raise UserError(_("That vendor was not invited to %s.", self.name))
+        return chosen
+
     def action_set_repeat_reminders(self, minutes):
         """The buyer turns repeat reminders on, changes how often, or turns them off."""
         try:
@@ -1189,6 +1199,8 @@ class SmartspendAuction(models.Model):
                 'vendor': participant.partner_id.name,
                 'state': participant.state,
                 'stateLabel': dict(PARTICIPANT_STATES)[participant.state],
+                # Why the buyer withdrew the invitation, when they did.
+                'removedNote': (participant.response_note or '') if participant.state == 'removed' else '',
                 'total': participant.current_total,
                 'rank': participant.rank if live_or_done else 0,
                 'bidCount': participant.bid_count,
@@ -1361,6 +1373,9 @@ class SmartspendAuctionParticipant(models.Model):
                 raise UserError(_(
                     "%s has already opened, closed or been cancelled — the invitation can no "
                     "longer be answered.", auction.name))
+            if participant.state == 'removed':
+                raise UserError(_("The buyer withdrew the invitation of %(vendor)s to %(auction)s.",
+                                  vendor=participant.partner_id.name, auction=auction.name))
             if accept and participant.state not in ('invited', 'declined'):
                 raise UserError(_("%s has already accepted.", participant.partner_id.name))
             if not accept and participant.state not in ('invited', 'accepted'):
@@ -1383,6 +1398,51 @@ class SmartspendAuctionParticipant(models.Model):
 
     def action_accept(self):
         return self._respond(True)
+
+    def _remove(self, reason=None):
+        """The buyer withdraws this vendor's invitation before bidding opens.
+
+        The vendor is told, can no longer accept or bid, and is listed as
+        removed. At least two vendors have to stay in — with fewer there is no
+        auction, and the buyer cancels it instead. Taking out the last vendor
+        still to answer opens bidding when two have accepted, as an answer would.
+        """
+        reason = (reason or '').strip()
+        for participant in self:
+            auction = participant.auction_id
+            auction._sync_state()
+            if auction.state not in ('draft', 'scheduled'):
+                raise UserError(_(
+                    "%s has already opened, closed or been cancelled — vendors can only be removed "
+                    "while invitations are out.", auction.name))
+            if participant.state not in ('invited', 'accepted', 'declined'):
+                raise UserError(_("%s is not on the invitation list any more.", participant.partner_id.name))
+            staying = auction.participant_ids.filtered(
+                lambda p: p != participant and p.state in ('invited', 'accepted'))
+            if len(staying) < MIN_BIDDERS:
+                raise UserError(_(
+                    "%(auction)s needs at least %(minimum)s vendors still invited. Invite or keep another "
+                    "vendor, or cancel the auction instead.", auction=auction.name, minimum=MIN_BIDDERS))
+            participant.write({
+                'state': 'removed',
+                'response_note': _("Removed by the buyer: %s", reason) if reason else _("Removed by the buyer."),
+            })
+            text = _("%(user)s removed %(vendor)s from %(auction)s%(reason)s",
+                     user=self.env.user.name, vendor=participant.partner_id.name, auction=auction.name,
+                     reason=_(": %s", reason) if reason else '.')
+            auction.message_post(body=text)
+            auction._post_to_request(_("Vendor Removed from Auction"), text)
+            auction.message_post(
+                body=_("Your invitation to %(auction)s (%(title)s) has been withdrawn by the buyer.%(reason)s",
+                       auction=auction.name, title=auction.request_id.sudo().product_name or '',
+                       reason=(' ' + _("Reason: %s", reason)) if reason else ''),
+                partner_ids=auction._vendor_mail_partners(participant), subtype_xmlid='mail.mt_comment')
+        self.auction_id._start_if_everyone_ready()
+        return True
+
+    def action_remove(self):
+        """Odoo's per-vendor Remove button."""
+        return self._remove()
 
     def _reminder_kind(self):
         """What this vendor still owes: 'respond' to the invitation, 'bid' in an
