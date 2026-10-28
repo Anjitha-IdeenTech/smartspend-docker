@@ -10,7 +10,7 @@ import {
   Truck, Package, Receipt, CreditCard, Moon, Sun, Bell,
   PanelLeftClose,
   Building2, Timer, Zap, Star, Activity, Boxes, Handshake, ScanLine,
-  LayoutGrid, List as ListIcon, Gavel
+  LayoutGrid, List as ListIcon, Gavel, FileSignature,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -20,6 +20,7 @@ import { AuctionDesk, VendorAuctions } from './auction';
 import { PrintButton, PrintRow } from './documents';
 import { ProductDescription } from './productDescription';
 import { PriceHistoryStrip } from './priceHistory';
+import { ContractsMaster } from './contracts';
 import { ProductCategoriesMaster } from './productCategories';
 import { MasterDetailPanel, DetailChips, DetailRequests } from './masterDetail';
 import { FALLBACK_METHODS, MethodSelect, methodLabel } from './fulfilment';
@@ -3097,7 +3098,8 @@ export default function App() {
   // Master Data Console (#16) — which master is open, its search box, and the
   // AI draft-vendor queue. A draft only becomes a vendor when someone approves
   // it here, so the decision is held in state rather than written on discovery.
-  const [mastersTab, setMastersTab] = useState<'products' | 'categories' | 'productCategories' | 'workflow' | 'company' | 'branches' | 'vendors'>('products');
+  const [mastersTab, setMastersTab] = useState<'products' | 'categories' | 'productCategories' | 'workflow' | 'company' | 'branches' | 'vendors' | 'contracts'>('products');
+  const [contractCount, setContractCount] = useState<number | null>(null);
   // Filled in by the Product Categories tab once Odoo has answered.
   const [productCategoryCount, setProductCategoryCount] = useState<number | null>(null);
   const [masterSearch, setMasterSearch] = useState<string>("");
@@ -8917,7 +8919,8 @@ export default function App() {
 
                   {/* Master switcher */}
                   <div className="p-2 rounded-2xl bg-surface border border-borderTheme shadow-sm">
-                    <div className="flex items-center gap-1.5 overflow-x-auto">
+                    {/* Wraps rather than scrolls: every master stays in sight. */}
+                    <div className="flex flex-wrap items-center gap-1.5">
                       {([
                         { key: 'products', label: 'Products', icon: Package, count: productRows.length },
                         { key: 'categories', label: 'Expense Categories', icon: Layers, count: allCategoryRows.length },
@@ -8926,6 +8929,7 @@ export default function App() {
                         { key: 'company', label: 'Companies', icon: Landmark, count: companyRows.length },
                         { key: 'branches', label: 'Branches', icon: Building2, count: branchRows.length },
                         { key: 'vendors', label: 'Vendors', icon: Handshake, count: vendorRows.length },
+                        { key: 'contracts', label: 'Contracts', icon: FileSignature, count: contractCount ?? '…' },
                       ] as const).map(t => {
                         const on = mastersTab === t.key;
                         return (
@@ -8978,7 +8982,7 @@ export default function App() {
                       )}
                       <span className="text-[11px] text-textFaint">
                         {masterData ? 'Live data' : 'Offline fallback list — server not reachable'}
-                        {['products', 'categories', 'productCategories', 'branches', 'vendors'].includes(mastersTab) && ' · click any record for its details'}
+                        {['products', 'categories', 'productCategories', 'branches', 'vendors', 'contracts'].includes(mastersTab) && ' · click any record for its details'}
                       </span>
                     </div>
                   )}
@@ -9029,6 +9033,12 @@ export default function App() {
                   )}
 
                   {/* ---------- PRODUCT CATEGORIES (Odoo, with their vendors) ---------- */}
+                  {/* ---------- RATE CONTRACTS (read from Odoo) ---------- */}
+                  {mastersTab === 'contracts' && (
+                    <ContractsMaster fetcher={apiFetch} offline={offlineDemo} search={masterSearch} onCount={setContractCount}
+                                     onVendor={name => { if (vendorRows.some(v => v.name === name)) setMasterDetail({ kind: 'vendors', key: name }); }} />
+                  )}
+
                   {mastersTab === 'productCategories' && (
                     <ProductCategoriesMaster fetcher={apiFetch} offline={offlineDemo}
                                              search={masterSearch} onCount={setProductCategoryCount} />

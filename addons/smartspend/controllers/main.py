@@ -17,6 +17,7 @@ import re
 from odoo import _, fields, http
 from odoo.exceptions import AccessDenied, AccessError, UserError
 from odoo.http import request
+from odoo.tools import html2plaintext
 
 from ..models.smartspend_request import (
     SOURCING_SELECTION as SOURCING_LABELS,
@@ -708,13 +709,34 @@ class SmartSpendApi(http.Controller):
     # ------------------------------------------------------------------
     @http.route('/api/smartspend/contracts', type='json2', auth='none',
                 methods=['GET'], cors='*', readonly=True)
-    def list_contracts(self, **kwargs):
-        """Running rate contracts and the rates they hold."""
+    def list_contracts(self, all=None, **kwargs):
+        """Rate contracts and the rates they hold — the running ones, or with
+        ``all`` every contract (draft, expired, cancelled too), as the portal's
+        Master Data lists them.
+
+        Suppliers are refused: one vendor's agreed rates are no business of
+        another's.
+        """
         error = _authenticate()
         if error:
             return error
-        contracts = request.env['smartspend.contract'].search([('is_running', '=', True)])
+        user = request.env.user
+        if (user.has_group('smartspend.group_smartspend_vendor')
+                and not user.has_group('smartspend.group_smartspend_buyer')):
+            return _error(_("Rate contracts are for the buying side only."), 403)
+        everything = str(all or request.httprequest.args.get('all') or '').lower() in ('1', 'true', 'yes')
+        Contract = request.env['smartspend.contract']
+        contracts = (Contract.with_context(active_test=False).search([], order='date_end desc, id desc')
+                     if everything else Contract.search([('is_running', '=', True)]))
+        states = dict(Contract._fields['state'].selection)
         return [{
+            # What the Master Data tab shows beside the rates.
+            'state': contract.state,
+            'stateLabel': states.get(contract.state, contract.state),
+            'running': contract.is_running,
+            'requestCount': contract.request_count,
+            'purchaseOrderCount': contract.purchase_order_count,
+            'notes': html2plaintext(contract.notes) if contract.notes else '',
             'id': contract.name,
             'vendor': contract.partner_id.name,
             'category': contract.category or '',
@@ -727,6 +749,7 @@ class SmartSpendApi(http.Controller):
                 'productName': line.product_name,
                 'minQty': line.min_qty,
                 'price': line.price_unit,
+                'uom': line.product_uom_id.name or '',
             } for line in contract.line_ids],
         } for contract in contracts]
 
