@@ -343,7 +343,8 @@ def _invoice_document(record, bill):
             {'label': _('Due date'), 'value': _date(bill.invoice_date_due)},
             {'label': _('Payment state'), 'value': dict(bill._fields['payment_state'].selection).get(
                 bill.payment_state, '')},
-            {'label': _('Payment method'), 'value': _selection_label(record, 'payment_method')},
+            {'label': _('Payment terms'), 'value': (record.payment_term_id.name or bill.invoice_payment_term_id.name
+                                                    or _selection_label(record, 'payment_method'))},
         ],
         'lines': lines,
         'totals': _totals([

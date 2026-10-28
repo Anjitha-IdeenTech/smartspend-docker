@@ -232,6 +232,22 @@ class SmartspendRequest(models.Model):
     payment_method = fields.Selection(
         PAYMENT_METHOD_SELECTION, string='Payment Method', tracking=True, copy=False,
         help="How the vendor is paid. Chosen when the vendor invoice is posted.")
+    payment_term_id = fields.Many2one(
+        'account.payment.term', string='Payment Terms', tracking=True, copy=False,
+        help="When the vendor is paid — Odoo's payment terms (Immediate, 30 Days, 30% Now "
+             "Balance 60 Days…). Chosen on the vendor invoice; carried to the purchase orders, "
+             "so the vendor bill falls due accordingly.")
+
+    def _carry_payment_terms(self):
+        """Put the request's payment terms on its orders (and any draft bill):
+        the vendor bill takes its due date from them."""
+        for request in self.filtered('payment_term_id'):
+            orders = request.sudo().purchase_order_ids.filtered(lambda o: o.state != 'cancel')
+            if orders:
+                orders.write({'payment_term_id': request.payment_term_id.id})
+                bills = orders.invoice_ids.filtered(lambda m: m.state == 'draft')
+                if bills:
+                    bills.write({'invoice_payment_term_id': request.payment_term_id.id})
 
     # -- Rate contract ------------------------------------------------------
     contract_id = fields.Many2one(
@@ -558,6 +574,9 @@ class SmartspendRequest(models.Model):
         # Items added after the first save still deserve their agreement.
         if 'line_ids' in vals:
             self._autofill_contract()
+        # Before any settlement below, so the bill falls due on these terms.
+        if 'payment_term_id' in vals:
+            self._carry_payment_terms()
         # A status changed on the Odoo form leaves the same documents behind as
         # one changed from the app.
         for request in arriving_at_paid:
@@ -1237,6 +1256,7 @@ class SmartspendRequest(models.Model):
             'date_order': fields.Datetime.now(),
             'smartspend_request_id': self.id,
             'smartspend_contract_id': self.contract_id.id or False,
+            **({'payment_term_id': self.payment_term_id.id} if self.payment_term_id else {}),
         }
 
     def action_post_bill_payment(self):

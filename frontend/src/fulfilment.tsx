@@ -1,7 +1,9 @@
 /**
- * Shipping method (goods receipt) and payment method (vendor invoice) — both
+ * Shipping method (goods receipt) and payment terms (vendor invoice) — both
  * required choices, kept on the request in Odoo (`/api/smartspend/fulfilment`)
- * and printed on the GRN and invoice documents.
+ * and printed on the GRN and invoice documents. The payment terms are Odoo's
+ * own (Immediate Payment, 30 Days, 30% Now Balance 60 Days…); the server
+ * sends the list, and the one below stands in only when it cannot be reached.
  */
 import { AlertCircle } from 'lucide-react';
 
@@ -18,16 +20,11 @@ export const FALLBACK_METHODS: { shippingMethod: MethodOption[]; paymentMethod: 
     { value: 'vendor', label: 'Vendor Delivery' },
     { value: 'pickup', label: 'Self Pickup' },
   ],
+  // Odoo's standard payment terms.
   paymentMethod: [
-    { value: 'neft', label: 'Bank Transfer (NEFT)' },
-    { value: 'rtgs', label: 'Bank Transfer (RTGS)' },
-    { value: 'imps', label: 'IMPS' },
-    { value: 'upi', label: 'UPI Corporate Pay' },
-    { value: 'cheque', label: 'Cheque' },
-    { value: 'dd', label: 'Demand Draft' },
-    { value: 'card', label: 'Corporate Card' },
-    { value: 'lc', label: 'Letter of Credit' },
-  ],
+    'Immediate Payment', '15 Days', '21 Days', '30 Days', '45 Days', 'End of Following Month',
+    '10 Days after End of Next Month', '30% Now, Balance 60 Days', '2/7 Net 30', '90 days, on the 10th',
+  ].map(label => ({ value: label, label })),
 };
 
 export const methodLabel = (options: MethodOption[], value: string) =>
@@ -57,7 +54,7 @@ export function MethodSelect({ label, value, options, onChange, missing, disable
       </select>
       {missing && !value && (
         <p className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-neg">
-          <AlertCircle className="h-3 w-3" />{label} is required.
+          <AlertCircle className="h-3 w-3" />{label} {label.endsWith('s') ? 'are' : 'is'} required.
         </p>
       )}
     </div>

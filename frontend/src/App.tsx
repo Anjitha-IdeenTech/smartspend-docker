@@ -3684,8 +3684,11 @@ export default function App() {
         const data = await res.json();
         if (stale) return;
         setShippingMethod(data.shippingMethod || '');
-        setPaymentMethod(data.paymentMethod || '');
-        if (data.options?.shippingMethod?.length && data.options?.paymentMethod?.length) setMethodOptions(data.options);
+        // The portal's "payment" choice is Odoo's payment terms.
+        setPaymentMethod(data.paymentTerm || '');
+        if (data.options?.shippingMethod?.length && data.options?.paymentTerm?.length) {
+          setMethodOptions({ shippingMethod: data.options.shippingMethod, paymentMethod: data.options.paymentTerm });
+        }
       } catch { /* the choices stay empty, and so required */ }
     })();
     return () => { stale = true; };
@@ -3743,7 +3746,7 @@ export default function App() {
     if (offlineDemo || !authToken) return true;
     try {
       const res = await apiFetch('/api/smartspend/fulfilment', {
-        method: 'POST', body: JSON.stringify({ id: currentRequest.id, [key]: value }),
+        method: 'POST', body: JSON.stringify({ id: currentRequest.id, [key === 'paymentMethod' ? 'paymentTerm' : key]: value }),
       });
       if (!res.ok) { setMethodError(await refusalMessage(res)); return false; }
       return true;
@@ -7811,7 +7814,7 @@ export default function App() {
 
                     {/* How this bill will be paid — required before it is posted. */}
                     <div className="p-4 rounded-xl bg-surface border border-borderTheme shadow-sm grid grid-cols-1 sm:grid-cols-2 gap-4 items-end">
-                      <MethodSelect label="Payment method" value={paymentMethod} options={methodOptions.paymentMethod}
+                      <MethodSelect label="Payment terms" value={paymentMethod} options={methodOptions.paymentMethod}
                                     onChange={v => { setPaymentMethod(v); setMethodMissing(m => ({ ...m, payment: false })); }}
                                     missing={methodMissing.payment} disabled={billPosted} />
                       <p className="text-[11px] text-textFaint">
@@ -7831,7 +7834,7 @@ export default function App() {
                               if (r.id === selectedRequestId) {
                                 return {
                                   ...r,
-                                  history: [...r.history, { title: "Vendor Bill Posted (BILL-2026-045)", date: "Now", desc: `Posted total AP liability of ₹${r.totalCost.toLocaleString()}. To be paid by ${methodLabel(methodOptions.paymentMethod, paymentMethod)}.` }]
+                                  history: [...r.history, { title: "Vendor Bill Posted (BILL-2026-045)", date: "Now", desc: `Posted total AP liability of ₹${r.totalCost.toLocaleString()}. Payment terms: ${methodLabel(methodOptions.paymentMethod, paymentMethod)}.` }]
                                 };
                               }
                                 return r;
@@ -7925,7 +7928,7 @@ export default function App() {
                           <div>
                             {/* Chosen on the invoice; can still be changed here, and is
                                 required before the payment is authorised. */}
-                            <MethodSelect label="Payment method" value={paymentMethod} options={methodOptions.paymentMethod}
+                            <MethodSelect label="Payment terms" value={paymentMethod} options={methodOptions.paymentMethod}
                                           onChange={v => { setPaymentMethod(v); setMethodMissing(m => ({ ...m, payment: false })); }}
                                           missing={methodMissing.payment} disabled={paymentComplete} />
                           </div>
@@ -7957,7 +7960,7 @@ export default function App() {
                                         title: "Payment Cleared & Reconciled", date: "Now",
                                         // What was actually transferred, and the
                                         // reference it can be traced by.
-                                        desc: `Paid ₹${netPayable.toLocaleString('en-IN')} via ${methodLabel(methodOptions.paymentMethod, paymentMethod)}`
+                                        desc: `Paid ₹${netPayable.toLocaleString('en-IN')} · payment terms: ${methodLabel(methodOptions.paymentMethod, paymentMethod)}`
                                           + ` (₹${billGross.toLocaleString('en-IN')} billed, less ₹${tdsAmount.toLocaleString('en-IN')} TDS`
                                           + (otherDeduction > 0 ? ` and ₹${otherDeduction.toLocaleString('en-IN')} ${otherLabel.trim() || 'other'}` : '')
                                           + `). Ref: ${paymentNote.trim() || 'TXN-98402517'}`,

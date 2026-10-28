@@ -19,15 +19,24 @@ OPTIONS = {
 }
 
 
+def _payment_terms():
+    """Odoo's payment terms, as the portal offers them."""
+    terms = request.env['account.payment.term'].sudo().search([], order='sequence, id')
+    return [{'value': str(term.id), 'label': term.name} for term in terms]
+
+
 def _payload(record):
     return {
         'id': record.name,
         'shippingMethod': record.shipping_method or '',
         'paymentMethod': record.payment_method or '',
-        'options': {
+        # Odoo's payment terms, which the portal now asks for instead of a method.
+        'paymentTerm': str(record.payment_term_id.id) if record.payment_term_id else '',
+        'paymentTermLabel': record.payment_term_id.name or '',
+        'options': dict({
             key: [{'value': value, 'label': label} for value, label in selection]
             for key, (_field, selection) in OPTIONS.items()
-        },
+        }, paymentTerm=_payment_terms()),
     }
 
 
@@ -54,7 +63,7 @@ class SmartSpendFulfilment(http.Controller):
 
     @http.route('/api/smartspend/fulfilment', type='json2', auth='none',
                 methods=['POST'], cors='*', readonly=False)
-    def set_fulfilment(self, id=None, shippingMethod=None, paymentMethod=None, **kwargs):
+    def set_fulfilment(self, id=None, shippingMethod=None, paymentMethod=None, paymentTerm=None, **kwargs):
         """Record the shipping method (GRN) and/or the payment method (invoice).
 
         A key that is sent must hold one of the offered values: an empty one is
@@ -77,8 +86,16 @@ class SmartSpendFulfilment(http.Controller):
                 label = record._fields[field].string
                 return _error(_("Choose a %s — it is required.", label.lower()), 400)
             values[field] = sent
+        if paymentTerm is not None:
+            try:
+                term = request.env['account.payment.term'].sudo().browse(int(paymentTerm or 0)).exists()
+            except (TypeError, ValueError):
+                term = None
+            if not term:
+                return _error(_("Choose the payment terms — they are required."), 400)
+            values['payment_term_id'] = term.id
         if not values:
-            return _error(_("Send a shipping method, a payment method, or both."), 400)
+            return _error(_("Send a shipping method, payment terms, or both."), 400)
         try:
             record.write(values)
         except (AccessError, UserError, ValidationError) as exc:

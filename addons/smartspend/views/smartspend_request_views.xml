@@ -193,7 +193,8 @@
                     <group invisible="state not in ('po_confirmed', 'paid')">
                         <group string="Receipt &amp; Payment">
                             <field name="shipping_method"/>
-                            <field name="payment_method"/>
+                            <field name="payment_term_id" options="{'no_create': True}"/>
+                            <field name="payment_method" invisible="not payment_method"/>
                         </group>
                     </group>
                     <group>
