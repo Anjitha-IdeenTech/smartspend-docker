@@ -1189,8 +1189,15 @@ class SmartspendAuction(models.Model):
         next_max = False
         if participant.current_total:
             next_max = participant.current_total - (self.min_decrement or 0.0)
+        request = self.request_id.sudo()
         data.update({
             'buyer': self.buyer_id.name,
+            # What kind of spend it is, so the supplier's dashboard can filter
+            # auctions the way it filters orders. The request itself stays hidden.
+            'expenseType': dict(
+                self.env['smartspend.expense.category']._fields['expense_type'].selection
+            ).get(request.expense_type, ''),
+            'expenseCategory': request.expense_category or '',
             'competitors': max(len(competing) - (1 if participant in competing else 0), 0),
             'leaderTotal': self.best_total if (self.visibility == 'leader' and live_or_done) else None,
             'nextMaxBid': next_max if next_max is not False else self.ceiling_total,

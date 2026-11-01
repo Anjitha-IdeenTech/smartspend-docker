@@ -206,6 +206,10 @@ check('the vendor sees their own rank and prices',
       vendor_view['me']['rank'] == 2 and vendor_view['me']['prices'] == {str(L1.id): 65000.0, str(L2.id): 8000.0},
       vendor_view['me'])
 check('and how many they are up against', vendor_view['competitors'] == 1, vendor_view['competitors'])
+check('the vendor sees what kind of spend it is, but not the request',
+      'requestId' not in vendor_view and vendor_view['expenseCategory'] == (a.request_id.expense_category or '')
+      and vendor_view['expenseType'] in ('', 'Capital Expenditure (CapEx)', 'Operating Expenditure (OpEx)'),
+      (vendor_view.get('expenseType'), vendor_view.get('expenseCategory')))
 check('the next bid ceiling is last minus the decrement', vendor_view['nextMaxBid'] == 145000,
       vendor_view['nextMaxBid'])
 a.sudo().visibility = 'leader'

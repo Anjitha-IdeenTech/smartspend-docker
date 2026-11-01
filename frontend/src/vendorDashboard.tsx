@@ -7,8 +7,7 @@
  * reverse auctions they were invited to (their own standing, never a rival's),
  * the delivery dates they committed to and what is still to deliver. The same
  * look and colours as the manager's and buyer's dashboards, and the same expense
- * type, category, product and amount filters over the orders. Auctions are not
- * filtered: a supplier's auction feed does not say which request it is for.
+ * type, category, product and amount filters over the orders and the auctions.
  */
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -36,8 +35,27 @@ export type VendorTabKey = 'orders' | 'receipts' | 'approvals' | 'auctions';
 interface VendorAuction {
   id: string; title: string; state: string; stateLabel: string; location: string; startAt?: string; endAt?: string;
   ceiling?: number; competitors?: number;
-  me: { state: string; stateLabel: string; total: number; rank: number; bidCount: number };
+  expenseType?: string; expenseCategory?: string;
+  lines?: { id: number; productName: string; qty: number; ceilingPrice: number }[];
+  me: { state: string; stateLabel: string; total: number; rank: number; bidCount: number; prices?: Record<string, number> };
 }
+
+/**
+ * An auction in the shape the dashboard filters read. Its amount is the
+ * supplier's own bid, or the ceiling before they have bid; each item is priced
+ * at their bid for it, or its ceiling price.
+ */
+const auctionAsRequest = (a: VendorAuction): DashRequest => {
+  const lines = (a.lines ?? []).map(l => ({
+    productName: l.productName, productQty: l.qty,
+    targetPrice: (a.me.total ? a.me.prices?.[String(l.id)] : undefined) ?? l.ceilingPrice ?? 0,
+  }));
+  return {
+    id: a.id, productName: a.title, totalCost: a.me.total || a.ceiling || sum(lines, l => l.productQty * l.targetPrice),
+    location: a.location, department: '', expenseCategory: a.expenseCategory ?? '', expenseType: a.expenseType ?? '',
+    status: a.state, urgency: '', createdDate: '', vendor: '', savings: 0, history: [], lineItems: lines,
+  };
+};
 
 /** Goods received in full: a receipt is on the timeline and no backorder is still open. */
 const receivedIn = (r: VendorDashOrder, openBackorderIds: Set<string>) =>
@@ -99,7 +117,14 @@ export function VendorDashboard({ orders: allOrders, companyName, userName, comp
 }) {
   const [grain, setGrain] = useState<'week' | 'month'>('week');
   const [more, setMore] = useState<MoreFilters>(NO_MORE_FILTERS);
-  const { auctions, commitments, schedules, backorders } = useFeeds(fetcher, offline);
+  const { auctions: allAuctions, commitments, schedules, backorders } = useFeeds(fetcher, offline);
+  // Auctions under the same filters. With a product picked, the supplier's
+  // bid counts only for that product, as an order does.
+  const auctions = useMemo(() => !moreFiltersActive(more) ? allAuctions : allAuctions.flatMap(a => {
+    const r = narrowToProduct(auctionAsRequest(a), more.product);
+    if (!matchesMoreFilters(r, more)) return [];
+    return [more.product && a.me.total ? { ...a, me: { ...a.me, total: r.totalCost } } : a];
+  }), [allAuctions, more]);
   // Every order panel reads `orders`: the supplier's orders under the chosen filters.
   const orders = useMemo(() => allOrders.map(r => narrowToProduct(r, more.product)).filter(r => matchesMoreFilters(r, more)),
     [allOrders, more]);
