@@ -76,11 +76,13 @@ const BANDS: { label: string; min: string; max: string }[] = [
   { label: 'Over ₹1 Cr', min: '10000000', max: '' },
 ];
 
-export function MoreFiltersBar({ requests, value, onChange }: {
+export function MoreFiltersBar({ requests, value, onChange, onClear }: {
   /** The requests this dashboard covers — the options are drawn from them. */
   requests: DashRequest[];
   value: MoreFilters;
   onChange: (next: MoreFilters) => void;
+  /** Shows a "Clear filters" button while a filter is set, for a dashboard with no other filters. */
+  onClear?: () => void;
 }) {
   const types = useMemo(() => [...new Set(requests.map(expenseTypeOf).filter(Boolean))].sort(), [requests]);
   const categories = useMemo(() => [...new Set(requests
@@ -141,6 +143,10 @@ export function MoreFiltersBar({ requests, value, onChange }: {
                    className={`${inputCls} ${badRange ? 'border-red-400' : ''}`} aria-label="Maximum amount" />
           </div>
         </div>
+        {onClear && moreFiltersActive(value) && (
+          <button type="button" onClick={onClear}
+                  className="rounded-xl px-3 py-2 text-sm font-bold text-brand hover:bg-brand/10">Clear filters</button>
+        )}
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <span className="text-[11px] font-bold uppercase tracking-wider text-textFaint">Quick range</span>

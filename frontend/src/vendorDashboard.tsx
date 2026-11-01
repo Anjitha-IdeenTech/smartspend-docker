@@ -6,7 +6,9 @@
  * request feed to their own; on a split award, to their own share), the
  * reverse auctions they were invited to (their own standing, never a rival's),
  * the delivery dates they committed to and what is still to deliver. The same
- * look and colours as the manager's and buyer's dashboards.
+ * look and colours as the manager's and buyer's dashboards, and the same expense
+ * type, category, product and amount filters over the orders. Auctions are not
+ * filtered: a supplier's auction feed does not say which request it is for.
  */
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -18,6 +20,8 @@ import {
   plural, shortDate, submitted, sum, whole,
 } from './managerDashboard';
 import type { DashCompany, DashRequest } from './managerDashboard';
+import { MoreFiltersBar, NO_MORE_FILTERS, matchesMoreFilters, moreFiltersActive, narrowToProduct } from './dashboardFilters';
+import type { MoreFilters } from './dashboardFilters';
 
 type Fetcher = (path: string, init?: RequestInit) => Promise<Response>;
 
@@ -82,7 +86,7 @@ function useFeeds(fetcher: Fetcher, offline: boolean) {
   return { auctions, commitments, schedules, backorders };
 }
 
-export function VendorDashboard({ orders, companyName, userName, companies, fetcher, offline, onTab }: {
+export function VendorDashboard({ orders: allOrders, companyName, userName, companies, fetcher, offline, onTab }: {
   /** The orders placed with this supplier (the portal's vendor order list). */
   orders: VendorDashOrder[];
   companyName: string;
@@ -94,13 +98,18 @@ export function VendorDashboard({ orders, companyName, userName, companies, fetc
   onTab: (key: VendorTabKey) => void;
 }) {
   const [grain, setGrain] = useState<'week' | 'month'>('week');
+  const [more, setMore] = useState<MoreFilters>(NO_MORE_FILTERS);
   const { auctions, commitments, schedules, backorders } = useFeeds(fetcher, offline);
+  // Every order panel reads `orders`: the supplier's orders under the chosen filters.
+  const orders = useMemo(() => allOrders.map(r => narrowToProduct(r, more.product)).filter(r => matchesMoreFilters(r, more)),
+    [allOrders, more]);
   const now = useMemo(() => new Date(), []);
   const nowMs = now.getTime();
   const today = new Date(now); today.setHours(0, 0, 0, 0);
 
   const value = (list: VendorDashOrder[]) => sum(list, r => r.totalCost);
-  const stillToDeliver = backorders.filter(b => b.state !== 'done' && b.state !== 'cancel');
+  const stillToDeliver = backorders.filter(b => b.state !== 'done' && b.state !== 'cancel'
+    && (!moreFiltersActive(more) || orders.some(o => o.id === b.requestId)));
   const openBackorderIds = new Set(stillToDeliver.map(b => b.requestId));
   const stage = (r: VendorDashOrder) => stageOf(r, openBackorderIds);
   const by = (key: string) => orders.filter(r => stage(r) === key);
@@ -210,6 +219,7 @@ export function VendorDashboard({ orders, companyName, userName, companies, fetc
             <Send className="h-4 w-4" /> Confirm {plural(toConfirm.length, 'order')} <ArrowRight className="h-4 w-4" />
           </button>
         )}
+        <MoreFiltersBar requests={allOrders} value={more} onChange={setMore} onClear={() => setMore(NO_MORE_FILTERS)} />
       </div>
 
       {/* ── The four numbers that matter ─────────────────────────────── */}
