@@ -10,7 +10,7 @@ import {
   Truck, Package, Receipt, CreditCard, Moon, Sun, Bell,
   PanelLeftClose,
   Building2, Timer, Zap, Star, Activity, Boxes, Handshake, ScanLine,
-  LayoutGrid, List as ListIcon, Gavel, FileSignature,
+  LayoutGrid, List as ListIcon, Gavel, FileSignature, FileBarChart,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -27,6 +27,7 @@ import { FALLBACK_METHODS, MethodSelect, methodLabel } from './fulfilment';
 import { VendorAckDialog, showDate, type Delivery } from './vendorAck';
 import { SubscriptionsDesk } from './subscriptions';
 import { ManagerDashboard } from './managerDashboard';
+import { ManagerReports } from './reports';
 import { BuyerDashboard } from './buyerDashboard';
 import { VendorDashboard } from './vendorDashboard';
 import { NewProductHint, ProductRequestsDesk, ProductRequestsPanel } from './productRequests';
@@ -1890,7 +1891,7 @@ export default function App() {
   const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
   const [activeScene, setActiveScene] = useState<number>(() => {
     const sc = Number(params?.get('scene'));
-    return sc >= 1 && sc <= 23 ? sc : 1;
+    return sc >= 1 && sc <= 24 ? sc : 1;
   });
   // --- Dark theme disabled — light (Aurora) theme only for now. ---
   // To re-enable: restore the stateful darkMode block (see git history) and
@@ -2712,7 +2713,7 @@ export default function App() {
   // Role-keyed so Employee, SCM Buyer, Manager and CEO each persist their own order.
   const DEFAULT_NAV_ORDER: Record<string, string[]> = {
     Employee: ['chat', 'favorites', 'list', 'tracking', 'clarify'],
-    Manager: ['dashboard', 'queue', 'clarify', 'auctions', 'tracking', 'backorders', 'subscriptions', 'masters'],
+    Manager: ['dashboard', 'reports', 'queue', 'clarify', 'auctions', 'tracking', 'backorders', 'subscriptions', 'masters'],
     // 'tracking' is here because raising the PO moves the request to "PO
     // Confirmed", which drops it straight out of the To Source queue — and the
     // buyer had no other route to the tracking screen, so the vendor
@@ -2760,7 +2761,7 @@ export default function App() {
       else { setActiveScene(2); setEmployeeTab(key as 'chat' | 'favorites' | 'list' | 'tracking' | 'clarify'); }
     }
     else if (role === 'Manager') {
-      setActiveScene(key === 'dashboard' ? 23 : key === 'masters' ? 16 : key === 'tracking' ? 11 : key === 'clarify' ? 17 : key === 'subscriptions' ? 20 : key === 'auctions' ? 19 : key === 'backorders' ? 21 : key === 'newProducts' ? 22 : 10);
+      setActiveScene(key === 'dashboard' ? 23 : key === 'reports' ? 24 : key === 'masters' ? 16 : key === 'tracking' ? 11 : key === 'clarify' ? 17 : key === 'subscriptions' ? 20 : key === 'auctions' ? 19 : key === 'backorders' ? 21 : key === 'newProducts' ? 22 : 10);
     }
     else if (role === 'SCM Buyer') {
       if (key === 'dashboard') { setActiveScene(23); }
@@ -2789,6 +2790,7 @@ export default function App() {
     if (role === 'Employee') return key === 'masters' ? activeScene === 16
       : key === 'approvals' ? activeScene === 10 : activeScene === 2 && employeeTab === key;
     if (role === 'Manager') return key === 'dashboard' ? activeScene === 23
+      : key === 'reports' ? activeScene === 24
       : key === 'masters' ? activeScene === 16
       : key === 'subscriptions' ? activeScene === 20
       : key === 'auctions' ? activeScene === 19
@@ -2821,6 +2823,7 @@ export default function App() {
       'Employee/clarify': { icon: <AlertTriangle className="h-4 w-4" />, label: 'Questions', badge: pill(requests.filter(isMyQuestion).length, 'bg-gold/20 text-gold border border-gold/30', true) },
       'Employee/masters': { icon: <Boxes className="h-4 w-4" />, label: 'Master Data' },
       'Manager/dashboard': { icon: <LayoutDashboard className="h-4 w-4" />, label: 'Dashboard' },
+      'Manager/reports': { icon: <FileBarChart className="h-4 w-4" />, label: 'Reports' },
       'Manager/queue': { icon: <CheckCircle2 className="h-4 w-4" />, label: 'To Approve', badge: pill(requests.filter(r => MANAGER_QUEUE_STATUSES.includes(r.status)).length, 'bg-gold/20 text-gold border border-gold/30') },
       'Manager/clarify': { icon: <AlertTriangle className="h-4 w-4" />, label: 'Questions', badge: pill(requests.filter(r => r.status === 'Needs Clarification').length, 'bg-gold/20 text-gold border border-gold/30', true) },
       'Manager/tracking': { icon: <History className="h-4 w-4" />, label: 'Track Request' },
@@ -8935,6 +8938,18 @@ export default function App() {
                     applyNav('Manager', MANAGER_QUEUE_STATUSES.includes(status) ? 'queue' : 'tracking');
                   }}
                   onNav={(key) => applyNav('Manager', key)}
+                />
+              )}
+
+              {/* --- SCENE 24: REPORTS (manager) — turn around time and PR closing time, branch-wise --- */}
+              {activeScene === 24 && (
+                <ManagerReports
+                  requests={requests}
+                  companies={companyRows}
+                  onOpenRequest={(id, status) => {
+                    setSelectedRequestId(id);
+                    applyNav('Manager', MANAGER_QUEUE_STATUSES.includes(status) ? 'queue' : 'tracking');
+                  }}
                 />
               )}
 

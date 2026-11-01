@@ -39,7 +39,7 @@ export interface DashRequest {
   vendor: string;
   savings: number;
   history: Array<{ title: string; date: string; desc?: string }>;
-  approvalChain?: { order: number; designation: string; state: string; delegatedTo?: string }[];
+  approvalChain?: { order: number; designation: string; state: string; delegatedTo?: string; decidedOn?: string }[];
   purchaseOrders?: string[];
   budgetBreach?: boolean;
   lineItems?: { productName: string; productQty: number; targetPrice: number }[];
