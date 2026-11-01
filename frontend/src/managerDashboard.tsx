@@ -5,8 +5,8 @@
  * loaded from Odoo (value, status, branch, department, approval chain and
  * timeline), plus the auction, rate contract, subscription, backorder and
  * budget feeds. Companies come from the portal's Company master by branch.
- * Nothing is sample data; a period, company or branch filter narrows every
- * panel at once.
+ * Nothing is sample data; a period, company or branch filter — or the expense
+ * type, category, product and amount range below them — narrows every panel at once.
  *
  * One colour means one thing everywhere: green approved, amber waiting,
  * red rejected, indigo totals.
@@ -19,6 +19,8 @@ import {
   Gavel, Hourglass, Landmark, LayoutDashboard, MapPin, PieChart, PiggyBank, Repeat, Store, Timer,
   TrendingUp, Truck, Wallet, XCircle,
 } from 'lucide-react';
+import { MoreFiltersBar, NO_MORE_FILTERS, matchesMoreFilters, moreFiltersActive, narrowToProduct } from './dashboardFilters';
+import type { MoreFilters } from './dashboardFilters';
 
 type Fetcher = (path: string, init?: RequestInit) => Promise<Response>;
 
@@ -41,6 +43,8 @@ export interface DashRequest {
   purchaseOrders?: string[];
   budgetBreach?: boolean;
   lineItems?: { productName: string; productQty: number; targetPrice: number }[];
+  /** Odoo's label, e.g. "Capital Expenditure (CapEx)". */
+  expenseType?: string;
 }
 
 export interface DashCompany { name: string; short: string; branches: string[] }
@@ -476,6 +480,7 @@ export function ManagerDashboard({ requests, companies, userName, fetcher, offli
   const [period, setPeriod] = useState<Period>('all');
   const [company, setCompany] = useState('');
   const [branch, setBranch] = useState('');
+  const [more, setMore] = useState<MoreFilters>(NO_MORE_FILTERS);
   const [grain, setGrain] = useState<'week' | 'month'>('week');
   const [split, setSplit] = useState<'department' | 'category'>('department');
   const feeds = useFeeds(fetcher, offline);
@@ -495,13 +500,14 @@ export function ManagerDashboard({ requests, companies, userName, fetcher, offli
   // Every panel reads `rows`: the requests in the chosen period, company and branch.
   const rows = useMemo(() => {
     const from = periodStart(period, now);
-    return requests.filter(r => {
+    return requests.map(r => narrowToProduct(r, more.product)).filter(r => {
       if (from !== null) { const t = submitted(r); if (t === null || t < from) return false; }
       if (company && companyName(r.location) !== company) return false;
       if (branch && r.location !== branch) return false;
+      if (!matchesMoreFilters(r, more)) return false;
       return true;
     });
-  }, [requests, period, company, branch, companies]);
+  }, [requests, period, company, branch, companies, more]);
 
   const live = rows.filter(r => r.status !== 'Draft');
   const pending = rows.filter(r => PENDING.includes(r.status));
@@ -646,11 +652,12 @@ export function ManagerDashboard({ requests, companies, userName, fetcher, offli
               {branchOptions.map(b => <option key={b} value={b}>{b}</option>)}
             </select>
           </label>
-          {(company || branch || period !== 'all') && (
-            <button onClick={() => { setCompany(''); setBranch(''); setPeriod('all'); }}
+          {(company || branch || period !== 'all' || moreFiltersActive(more)) && (
+            <button onClick={() => { setCompany(''); setBranch(''); setPeriod('all'); setMore(NO_MORE_FILTERS); }}
                     className="rounded-xl px-3 py-2 text-sm font-bold text-brand hover:bg-brand/10">Clear filters</button>
           )}
         </div>
+        <MoreFiltersBar requests={requests} value={more} onChange={setMore} />
       </div>
 
       {/* ── The four numbers that matter ─────────────────────────────── */}

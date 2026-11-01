@@ -19,6 +19,8 @@ import {
   SmallStat, ageDays, duration, historyTime, money, pct, periodStart, plural, shortDate, submitted, sum, whole,
 } from './managerDashboard';
 import type { DashCompany, DashRequest, Period } from './managerDashboard';
+import { MoreFiltersBar, NO_MORE_FILTERS, matchesMoreFilters, moreFiltersActive, narrowToProduct } from './dashboardFilters';
+import type { MoreFilters } from './dashboardFilters';
 
 type Fetcher = (path: string, init?: RequestInit) => Promise<Response>;
 
@@ -134,6 +136,7 @@ export function BuyerDashboard({ requests, companies, userName, fetcher, offline
   const [period, setPeriod] = useState<Period>('all');
   const [company, setCompany] = useState('');
   const [branch, setBranch] = useState('');
+  const [more, setMore] = useState<MoreFilters>(NO_MORE_FILTERS);
   const [grain, setGrain] = useState<'week' | 'month'>('week');
   const [split, setSplit] = useState<'method' | 'contract'>('method');
   const feeds = useFeeds(fetcher, offline);
@@ -153,14 +156,15 @@ export function BuyerDashboard({ requests, companies, userName, fetcher, offline
   // The buyer's requests — approved onwards — in the chosen period, company and branch.
   const rows = useMemo(() => {
     const from = periodStart(period, now);
-    return requests.filter(r => {
+    return requests.map(r => narrowToProduct(r, more.product)).filter(r => {
       if (!MINE.includes(r.status)) return false;
       if (from !== null) { const t = submitted(r); if (t === null || t < from) return false; }
       if (company && companyName(r.location) !== company) return false;
       if (branch && r.location !== branch) return false;
+      if (!matchesMoreFilters(r, more)) return false;
       return true;
     });
-  }, [requests, period, company, branch, companies]);
+  }, [requests, period, company, branch, companies, more]);
 
   const value = (list: DashRequest[]) => sum(list, r => r.totalCost);
   const toSource = rows.filter(r => TO_SOURCE.includes(r.status));
@@ -181,6 +185,7 @@ export function BuyerDashboard({ requests, companies, userName, fetcher, offline
     const req = requests.find(r => r.id === a.requestId);
     if (company && (!req || companyName(req.location) !== company) && companyName(a.location) !== company) return false;
     if (branch && a.location !== branch) return false;
+    if (moreFiltersActive(more) && (!req || !matchesMoreFilters(narrowToProduct(req, more.product), more))) return false;
     return true;
   });
   const auctionLive = auctions.filter(a => a.state === 'live');
@@ -316,11 +321,12 @@ export function BuyerDashboard({ requests, companies, userName, fetcher, offline
               {branchOptions.map(b => <option key={b} value={b}>{b}</option>)}
             </select>
           </label>
-          {(company || branch || period !== 'all') && (
-            <button onClick={() => { setCompany(''); setBranch(''); setPeriod('all'); }}
+          {(company || branch || period !== 'all' || moreFiltersActive(more)) && (
+            <button onClick={() => { setCompany(''); setBranch(''); setPeriod('all'); setMore(NO_MORE_FILTERS); }}
                     className="rounded-xl px-3 py-2 text-sm font-bold text-brand hover:bg-brand/10">Clear filters</button>
           )}
         </div>
+        <MoreFiltersBar requests={requests.filter(r => MINE.includes(r.status))} value={more} onChange={setMore} />
       </div>
 
       {/* ── The four numbers that matter ─────────────────────────────── */}
