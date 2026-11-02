@@ -451,6 +451,20 @@ class SmartspendRequest(models.Model):
     def _is_split_order(self):
         return len(self._live_orders()) > 1 and bool(self._split_shares())
 
+    def _to_portal_dict(self):
+        """On a split order, each vendor's order and whether they have confirmed
+        it — the request only reads acknowledged once all of them have."""
+        data = super()._to_portal_dict()
+        if self._is_split_order():
+            data['orderAcks'] = [{
+                'po': order.name,
+                'vendor': order.partner_id.name,
+                'acknowledged': order.smartspend_acknowledged,
+                'deliveryDate': order.smartspend_delivery_date.strftime('%b %d, %Y')
+                if order.smartspend_delivery_date else '',
+            } for order in self._live_orders().sorted('name')]
+        return data
+
     def _placed_with(self, user):
         if super()._placed_with(user):
             return True
@@ -570,6 +584,8 @@ class SmartspendRequest(models.Model):
         data = self._to_portal_dict()
         if not self._is_split_order():
             return data
+        # The other vendors' orders are not theirs to see.
+        data.pop('orderAcks', None)
         supplier = user.sudo().partner_id.commercial_partner_id
         share = self._split_shares().filtered(lambda s: s.partner_id.commercial_partner_id == supplier)[:1]
         orders = self._live_orders().filtered(lambda o: o.partner_id.commercial_partner_id == supplier)

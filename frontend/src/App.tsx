@@ -275,6 +275,8 @@ interface RequestItem {
   poReleased?: boolean;
   /** The vendor has confirmed the released order. */
   poAcknowledged?: boolean;
+  /** A split award: each vendor's order and whether they have confirmed it. */
+  orderAcks?: { po: string; vendor: string; acknowledged: boolean; deliveryDate: string }[];
   /** Rate contract Odoo matched to this request, and its vendor. */
   contract?: string;
   contractVendor?: string;
@@ -384,7 +386,9 @@ const statusRgb = (s: string) => STATUS_META[s]?.rgb ?? '100 116 139';
  * Status codes tell you the state; these tell you what it means for you.
  */
 const plainStatus = (r: RequestItem): { line: string; waitingOn: string } => {
-  const vendor = r.vendor && r.vendor !== 'Pending Sourcing' ? r.vendor : '';
+  // A split award was placed with every vendor on it, not just the lead one.
+  const vendor = r.orderAcks?.length ? [...new Set(r.orderAcks.map(a => a.vendor))].join(' and ')
+    : r.vendor && r.vendor !== 'Pending Sourcing' ? r.vendor : '';
   const order = r.purchaseOrders?.length ? r.purchaseOrders.join(', ') : '';
   switch (r.status) {
     case 'Draft':
@@ -7116,7 +7120,9 @@ export default function App() {
                           </div>
                           <div className="flex justify-between">
                             <span className="text-textSecondary">Vendor:</span>
-                            <span className="font-semibold text-textPrimary">{currentRequest.vendor || "Apex Systems"}</span>
+                            <span className="font-semibold text-textPrimary text-right">{currentRequest.orderAcks?.length
+                              ? [...new Set(currentRequest.orderAcks.map(a => a.vendor))].join(', ')
+                              : currentRequest.vendor || "Apex Systems"}</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-textSecondary">Buying company:</span>
@@ -7241,6 +7247,24 @@ export default function App() {
                             <div className="flex-grow space-y-1">
                               <p className="font-bold text-textPrimary">3. Vendor Acknowledgment</p>
                               <p className="text-[11px] text-textSecondary leading-relaxed">Simulate receipt confirmation, delivery date commit, and agreement signature from the vendor portal.</p>
+                              {/* A split award: one order per vendor, and the request
+                                  is acknowledged only once every one has confirmed. */}
+                              {poApprovedByHead && !!currentRequest.orderAcks?.length && (
+                                <ul className="mt-2 space-y-1">
+                                  {currentRequest.orderAcks.map(a => (
+                                    <li key={a.po} className="flex items-center gap-2 text-[11px]">
+                                      {a.acknowledged
+                                        ? <CheckCircle2 className="h-3.5 w-3.5 text-accent-savings shrink-0" />
+                                        : <Clock className="h-3.5 w-3.5 text-gold shrink-0" />}
+                                      <span className="font-mono font-bold text-textPrimary">{a.po}</span>
+                                      <span className="text-textPrimary">{a.vendor}</span>
+                                      <span className={a.acknowledged ? 'text-accent-savings font-semibold' : 'text-gold font-semibold'}>
+                                        {a.acknowledged ? `acknowledged${a.deliveryDate ? ` · delivery by ${a.deliveryDate}` : ''}` : 'waiting to acknowledge'}
+                                      </span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
                               {poApprovedByHead && !poAcknowledgedByVendor && (
                                 canRecordVendorReply ? (
                                   <button
@@ -7248,7 +7272,10 @@ export default function App() {
                                     disabled={poStepBusy === 'acknowledge'}
                                     className="mt-2 px-3 py-1.5 bg-accent-savings hover:opacity-90 disabled:opacity-50 text-[10px] font-bold text-surface rounded shadow-sm transition-all"
                                   >
-                                    {poStepBusy === 'acknowledge' ? 'Recording…' : 'Simulate Vendor Acknowledgment'}
+                                    {poStepBusy === 'acknowledge' ? 'Recording…'
+                                      : currentRequest.orderAcks?.length
+                                        ? `Simulate Acknowledgment for ${currentRequest.orderAcks.filter(a => !a.acknowledged).map(a => a.vendor).join(', ')}`
+                                        : 'Simulate Vendor Acknowledgment'}
                                   </button>
                                 ) : (
                                   <p className="text-[10px] text-textSecondary/60 font-semibold mt-1 italic">
