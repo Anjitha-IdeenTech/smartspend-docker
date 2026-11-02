@@ -499,16 +499,28 @@ const queueStatusesForRole = (role: string): string[] =>
 /**
  * Whether every signature the configured workflow demands has been given.
  *
- * Used to *show* the outstanding approvals, not to stop anyone: the walkthrough
- * is deliberately allowed to run ahead of them so a demo never stalls waiting
- * for a signature. Odoo still enforces the chain — a request only reaches
- * Approved there once every step has signed.
+ * Shows the outstanding approvals, and (through awaitingApproval) holds the
+ * contract check until they are given. Odoo enforces the chain too — a request
+ * only reaches Approved there once every step has signed.
  *
  * Requests with no chain (raised before the workflow master, or an offline
  * backend) count as clear.
  */
 const chainSigned = (r: RequestItem) =>
   !r.approvalChain?.length || (r.approvalDone ?? 0) >= (r.approvalTotal ?? 0);
+
+/**
+ * Still waiting on the manager: not yet approved, or a chain step unsigned.
+ * Such a request may not go on to budget verification or sourcing from the
+ * contract check — Odoo refuses its purchase order until it is approved, so
+ * letting it run ahead only strands it after the bidding.
+ */
+const awaitingApproval = (r: RequestItem) =>
+  ['Draft', ...MANAGER_QUEUE_STATUSES].includes(r.status) || !chainSigned(r);
+
+const AwaitingApprovalNote = () => (
+  <span className="text-xs font-semibold text-gold">Waiting for the manager's approval</span>
+);
 
 const filterRequests = (list: RequestItem[], statusKey: string, search: string) => {
   const q = search.trim().toLowerCase();
@@ -5792,12 +5804,13 @@ export default function App() {
                           totalLabel="Contract Value"
                         />
 
-                        {/* Where the approvals have got to. Informational only —
-                            the walkthrough is allowed to run ahead of them, so
-                            the demo never gets stuck waiting for a signature. */}
+                        {/* Where the approvals have got to. Nothing moves on to
+                            budget or sourcing until the manager has approved —
+                            Odoo will not raise a PO on it before then. */}
                         {!chainSigned(currentRequest) && <ApprovalChain request={currentRequest} compact />}
-                        <div className="flex justify-end space-x-3 pt-2">
-                          <button onClick={() => {
+                        <div className="flex items-center justify-end gap-3 pt-2">
+                          {awaitingApproval(currentRequest) && <AwaitingApprovalNote />}
+                          <button disabled={awaitingApproval(currentRequest)} onClick={() => {
                             setRequests(prev => prev.map(r => {
                               if (r.id === selectedRequestId) {
                                 const priced = reqLines(r).map(l => ({ ...l, targetPrice: getContractPrice(l.productName) }));
@@ -5812,7 +5825,7 @@ export default function App() {
                               return r;
                             }));
                             setActiveScene(9);
-                          }} className="px-5 py-2.5 bg-pos hover:bg-pos text-xs font-bold rounded-lg text-onbrand transition-all flex items-center space-x-1">
+                          }} className="px-5 py-2.5 bg-pos hover:bg-pos text-xs font-bold rounded-lg text-onbrand transition-all flex items-center space-x-1 disabled:opacity-40 disabled:cursor-not-allowed">
                             <span>Proceed to Budget Verification</span>
                             <ArrowRight className="h-4 w-4" />
                           </button>
@@ -5832,12 +5845,13 @@ export default function App() {
 
                         <LineItemsTable lines={currentLines} title="Lines to be sourced" totalLabel="Estimated Value" />
 
-                        {/* Where the approvals have got to. Informational only —
-                            the walkthrough is allowed to run ahead of them, so
-                            the demo never gets stuck waiting for a signature. */}
+                        {/* Where the approvals have got to. Nothing moves on to
+                            budget or sourcing until the manager has approved —
+                            Odoo will not raise a PO on it before then. */}
                         {!chainSigned(currentRequest) && <ApprovalChain request={currentRequest} compact />}
-                        <div className="flex justify-end space-x-3 pt-2">
-                          <button onClick={() => {
+                        <div className="flex items-center justify-end gap-3 pt-2">
+                          {awaitingApproval(currentRequest) && <AwaitingApprovalNote />}
+                          <button disabled={awaitingApproval(currentRequest)} onClick={() => {
                             setRequests(prev => prev.map(r => {
                               if (r.id === selectedRequestId) {
                                 return {
@@ -5850,7 +5864,7 @@ export default function App() {
                             setUserRole("SCM Buyer");
                             setScmTab('requests');
                             setActiveScene(6);
-                          }} className="px-5 py-2.5 bg-brand hover:bg-brand text-xs font-bold rounded-lg text-onbrand transition-all flex items-center space-x-1">
+                          }} className="px-5 py-2.5 bg-brand hover:bg-brand text-xs font-bold rounded-lg text-onbrand transition-all flex items-center space-x-1 disabled:opacity-40 disabled:cursor-not-allowed">
                             <span>Launch RFQ Sourcing Portal</span>
                             <ArrowRight className="h-4 w-4" />
                           </button>
