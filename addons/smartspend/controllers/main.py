@@ -259,7 +259,10 @@ class SmartSpendApi(http.Controller):
         # a replacement either.
         if not record.sudo().purchase_order_ids.filtered(lambda order: order.state != 'cancel'):
             try:
-                record.action_create_purchase_order()
+                # Raising the order may sign approvals still owed on the way;
+                # a refusal further on must not leave those half-done.
+                with request.env.cr.savepoint():
+                    record.action_create_purchase_order()
             except (UserError, AccessError) as exc:
                 return _refused(exc)
         return record._to_portal_dict()
