@@ -1312,18 +1312,6 @@ class SmartspendRequest(models.Model):
         # collected no signatures at all, and the order would sit next to an
         # approval chain still reading "0 of 1 signed".
         outstanding = self.approval_ids.filtered(lambda step: step.state == 'pending')
-        # The portal's walkthrough may run ahead of the chain: the contract check
-        # sends a request on to sourcing while its approval is still open, and
-        # from there it is in nobody's approval queue. When the person raising
-        # the order holds every signature still owed, raising it is their
-        # approval — signed in their name, on the timeline — rather than a dead
-        # end. Anyone else is still refused below.
-        if outstanding and self.state in ('sourcing', 'approved') \
-                and all(step._may_be_signed_by(self.env.user) for step in outstanding):
-            while self.approval_next_id:
-                self._apply_approve(_("Signed when raising the purchase order."))
-                self.invalidate_recordset(['approval_next_id'])
-            outstanding = self.approval_ids.filtered(lambda step: step.state == 'pending')
         if outstanding:
             raise UserError(_(
                 "%(request)s is still waiting on the %(designation)s. A purchase order "
