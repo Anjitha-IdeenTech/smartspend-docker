@@ -1952,10 +1952,13 @@ export default function App() {
   // Required on the vendor invoice (and used by the payment); shipping method
   // is required on the goods receipt. Both are kept on the request in Odoo.
   const [paymentMethod, setPaymentMethod] = useState<string>("");
+  // When the payment to the vendor is released; today unless the manager picks another day.
+  const todayIso = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  const [paymentReleaseDate, setPaymentReleaseDate] = useState<string>(todayIso);
   const [shippingMethod, setShippingMethod] = useState<string>("");
   const [methodOptions, setMethodOptions] = useState<{ shippingMethod: MethodOption[]; paymentMethod: MethodOption[] }>(FALLBACK_METHODS);
   // Which required choice was left empty when its step was attempted.
-  const [methodMissing, setMethodMissing] = useState<{ shipping?: boolean; payment?: boolean }>({});
+  const [methodMissing, setMethodMissing] = useState<{ shipping?: boolean; payment?: boolean; release?: boolean }>({});
   const [methodError, setMethodError] = useState<string>("");
   // What comes off the bill before the vendor is paid. Both are editable: the
   // rate a bill attracts is a judgement made on the bill, not a constant, and
@@ -3704,7 +3707,7 @@ export default function App() {
   };
   // The open request's shipping and payment method, as Odoo holds them.
   useEffect(() => {
-    setShippingMethod(''); setPaymentMethod(''); setMethodMissing({}); setMethodError('');
+    setShippingMethod(''); setPaymentMethod(''); setPaymentReleaseDate(todayIso()); setMethodMissing({}); setMethodError('');
     const reference = currentRequest?.id;
     if (!reference || offlineDemo || !authToken) return;
     let stale = false;
@@ -3717,6 +3720,7 @@ export default function App() {
         setShippingMethod(data.shippingMethod || '');
         // The portal's "payment" choice is Odoo's payment terms.
         setPaymentMethod(data.paymentTerm || '');
+        if (data.paymentReleaseDate) setPaymentReleaseDate(data.paymentReleaseDate);
         if (data.options?.shippingMethod?.length && data.options?.paymentTerm?.length) {
           setMethodOptions({ shippingMethod: data.options.shippingMethod, paymentMethod: data.options.paymentTerm });
         }
@@ -3772,12 +3776,12 @@ export default function App() {
   };
 
   /** Store a method on the request in Odoo. False, with the reason shown, when refused. */
-  const saveMethod = async (key: 'shippingMethod' | 'paymentMethod', value: string): Promise<boolean> => {
+  const saveMethod = async (key: 'shippingMethod' | 'paymentMethod', value: string, extra: Record<string, string> = {}): Promise<boolean> => {
     setMethodError('');
     if (offlineDemo || !authToken) return true;
     try {
       const res = await apiFetch('/api/smartspend/fulfilment', {
-        method: 'POST', body: JSON.stringify({ id: currentRequest.id, [key === 'paymentMethod' ? 'paymentTerm' : key]: value }),
+        method: 'POST', body: JSON.stringify({ id: currentRequest.id, [key === 'paymentMethod' ? 'paymentTerm' : key]: value, ...extra }),
       });
       if (!res.ok) { setMethodError(await refusalMessage(res)); return false; }
       return true;
@@ -7989,8 +7993,11 @@ export default function App() {
                                           missing={methodMissing.payment} disabled={paymentComplete} />
                           </div>
                           <div>
-                            <span className="text-textSecondary font-bold uppercase tracking-wider block mb-1">Value Date</span>
-                            <span className="text-sm font-semibold text-textPrimary block bg-secondary p-2.5 rounded-lg border border-borderTheme">July 13, 2026</span>
+                            <label className="text-textSecondary font-bold uppercase tracking-wider block mb-1">Payment Release Date</label>
+                            <input type="date" value={paymentReleaseDate} disabled={paymentComplete}
+                                   onChange={e => { setPaymentReleaseDate(e.target.value); setMethodMissing(m => ({ ...m, release: false })); }}
+                                   className={`w-full text-sm font-semibold text-textPrimary bg-secondary p-2 rounded-lg border ${methodMissing.release ? 'border-neg' : 'border-borderTheme'} disabled:opacity-70`} />
+                            {methodMissing.release && <span className="text-[10px] text-neg mt-1 block">Choose the date the payment is released.</span>}
                           </div>
                         </div>
                       </div>
@@ -8016,7 +8023,8 @@ export default function App() {
                                         title: "Payment Cleared & Reconciled", date: "Now",
                                         // What was actually transferred, and the
                                         // reference it can be traced by.
-                                        desc: `Paid ₹${netPayable.toLocaleString('en-IN')} · payment terms: ${methodLabel(methodOptions.paymentMethod, paymentMethod)}`
+                                        desc: `Paid ₹${netPayable.toLocaleString('en-IN')} · released ${new Date(paymentReleaseDate + 'T00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}`
+                                          + ` · payment terms: ${methodLabel(methodOptions.paymentMethod, paymentMethod)}`
                                           + ` (₹${billGross.toLocaleString('en-IN')} billed, less ₹${tdsAmount.toLocaleString('en-IN')} TDS`
                                           + (otherDeduction > 0 ? ` and ₹${otherDeduction.toLocaleString('en-IN')} ${otherLabel.trim() || 'other'}` : '')
                                           + `). Ref: ${paymentNote.trim() || 'TXN-98402517'}`,
@@ -8063,7 +8071,11 @@ export default function App() {
                                   setMethodMissing(m => ({ ...m, payment: true }));
                                   return;
                                 }
-                                if (!(await saveMethod('paymentMethod', paymentMethod))) return;
+                                if (!paymentReleaseDate) {
+                                  setMethodMissing(m => ({ ...m, release: true }));
+                                  return;
+                                }
+                                if (!(await saveMethod('paymentMethod', paymentMethod, { paymentReleaseDate }))) return;
                                 setPaymentComplete(true);
                               }}
                               className="px-5 py-2.5 bg-accent-savings hover:opacity-90 text-xs font-bold rounded-lg text-surface transition-all flex items-center space-x-1 shadow-sm"

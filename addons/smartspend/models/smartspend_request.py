@@ -237,6 +237,9 @@ class SmartspendRequest(models.Model):
         help="When the vendor is paid — Odoo's payment terms (Immediate, 30 Days, 30% Now "
              "Balance 60 Days…). Chosen on the vendor invoice; carried to the purchase orders, "
              "so the vendor bill falls due accordingly.")
+    payment_release_date = fields.Date(
+        string='Payment Release Date', tracking=True, copy=False,
+        help="The date the payment to the vendor is released. Set when the payment is authorised.")
 
     def _carry_payment_terms(self):
         """Put the request's payment terms on its orders (and any draft bill):

@@ -33,6 +33,7 @@ def _payload(record):
         # Odoo's payment terms, which the portal now asks for instead of a method.
         'paymentTerm': str(record.payment_term_id.id) if record.payment_term_id else '',
         'paymentTermLabel': record.payment_term_id.name or '',
+        'paymentReleaseDate': fields.Date.to_string(record.payment_release_date) if record.payment_release_date else '',
         'options': dict({
             key: [{'value': value, 'label': label} for value, label in selection]
             for key, (_field, selection) in OPTIONS.items()
@@ -63,7 +64,8 @@ class SmartSpendFulfilment(http.Controller):
 
     @http.route('/api/smartspend/fulfilment', type='json2', auth='none',
                 methods=['POST'], cors='*', readonly=False)
-    def set_fulfilment(self, id=None, shippingMethod=None, paymentMethod=None, paymentTerm=None, **kwargs):
+    def set_fulfilment(self, id=None, shippingMethod=None, paymentMethod=None, paymentTerm=None,
+                       paymentReleaseDate=None, **kwargs):
         """Record the shipping method (GRN) and/or the payment method (invoice).
 
         A key that is sent must hold one of the offered values: an empty one is
@@ -94,6 +96,14 @@ class SmartSpendFulfilment(http.Controller):
             if not term:
                 return _error(_("Choose the payment terms — they are required."), 400)
             values['payment_term_id'] = term.id
+        if paymentReleaseDate is not None:
+            try:
+                released = fields.Date.to_date(paymentReleaseDate or None)
+            except (TypeError, ValueError):
+                released = None
+            if not released:
+                return _error(_("Choose the payment release date — it is required."), 400)
+            values['payment_release_date'] = released
         if not values:
             return _error(_("Send a shipping method, payment terms, or both."), 400)
         try:
