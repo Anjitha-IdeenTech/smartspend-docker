@@ -14,8 +14,8 @@
 import { Fragment, useMemo, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
-  CheckCircle2, ChevronDown, ChevronRight, Download, FileBarChart, Hourglass, MapPin, Timer, TrendingDown, TrendingUp,
-  Wallet,
+  CheckCircle2, ChevronDown, ChevronRight, Download, FileBarChart, FlaskConical, Hourglass, MapPin, Timer, TrendingDown, TrendingUp,
+  UserRound, Users, Wallet,
 } from 'lucide-react';
 import {
   C, Card, HBars, PERIODS, SmallStat, duration, historyTime, money, periodStart, plural, submitted, sum,
@@ -23,6 +23,7 @@ import {
 import type { DashCompany, DashRequest, Period } from './managerDashboard';
 
 type ReportKey = 'tat' | 'closing';
+type GroupKey = 'branch' | 'user';
 
 const APPROVED = ['Sourcing', 'Approved', 'PO Confirmed', 'Paid'];
 const PENDING = ['Pending Approval', 'Needs Clarification'];
@@ -39,6 +40,122 @@ const span = (from: number | null, to: number | null) => {
   if (to >= from) return (to - from) / HOUR;
   return from - to < 60000 ? 0 : null;
 };
+
+/**
+ * Who raised the request: Odoo writes "Raised by <name>" (or "Raised by
+ * <name> (created by <author>)" when raised on someone's behalf) on the
+ * "Request Submitted" timeline entry.
+ */
+const requesterOf = (r: DashRequest) => {
+  for (const h of r.history) {
+    const m = /^Raised by (.+?)(?: \(created by .*\))?$/.exec((h.desc || '').trim());
+    if (m) return m[1].trim();
+  }
+  return 'Not recorded';
+};
+
+// ---------------------------------------------------------------------------
+// Sample data — demo only. Never sent to Odoo; shown only while the
+// "Sample data" switch is on, and labelled as such on screen.
+// ---------------------------------------------------------------------------
+
+const SAMPLE_USERS: { name: string; department: string; speed: number }[] = [
+  { name: 'Priya Menon', department: 'IT', speed: 0.6 },
+  { name: 'Rahul Varma', department: 'Finance', speed: 1.4 },
+  { name: 'Anitha George', department: 'Operations', speed: 0.9 },
+  { name: 'Sanjay Kumar', department: 'Administration', speed: 1.8 },
+  { name: 'Fathima Rasheed', department: 'HR', speed: 0.75 },
+  { name: 'Nikhil Joseph', department: 'IT', speed: 1.1 },
+  { name: 'Lakshmi Iyer', department: 'Marketing', speed: 1.25 },
+  { name: 'Arun Thomas', department: 'Facilities', speed: 0.85 },
+];
+const SAMPLE_ITEMS: { name: string; category: string; cost: number }[] = [
+  { name: 'Dell Latitude Laptops', category: 'IT Hardware', cost: 420000 },
+  { name: 'Ergonomic Office Chairs', category: 'Furniture', cost: 96000 },
+  { name: 'Microsoft 365 Licences', category: 'Software', cost: 164000 },
+  { name: '27" Monitors', category: 'IT Hardware', cost: 132000 },
+  { name: 'Conference Room Display', category: 'IT Hardware', cost: 185000 },
+  { name: 'Workstation Desks', category: 'Furniture', cost: 150000 },
+  { name: 'Wireless Headsets', category: 'IT Hardware', cost: 41000 },
+  { name: 'Antivirus Renewal', category: 'Software', cost: 58000 },
+  { name: 'Docking Stations', category: 'IT Hardware', cost: 68000 },
+  { name: 'Printer Toner Stock', category: 'Office Supplies', cost: 24000 },
+];
+const SAMPLE_VENDORS = ['Primus Technologies', 'Apex Systems', 'SecureNet', 'Featherlite'];
+const SAMPLE_LEVELS = ['Reporting Manager', 'Department Head', 'Finance Head'];
+const SAMPLE_BRANCHES = ['Kochi', 'Bengaluru', 'Chennai', 'Mumbai'];
+
+/** Small seeded generator, so the sample reads the same on every visit. */
+const seeded = (seed: number) => () => {
+  seed = (seed + 0x6D2B79F5) | 0;
+  let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+};
+/** A time in the timeline's own format ("October 19, 05:22"). */
+const stamp = (t: number) => {
+  const d = new Date(t);
+  return `${d.toLocaleString('en-US', { month: 'long' })} ${d.getDate()}, ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+
+function buildSample(companies: DashCompany[], nowMs: number): DashRequest[] {
+  const rnd = seeded(20261109);
+  const between = (lo: number, hi: number) => lo + rnd() * (hi - lo);
+  const pick = <T,>(xs: T[]) => xs[Math.floor(rnd() * xs.length)];
+  const minute = (t: number) => Math.floor(t / 60000) * 60000;
+  const live = companies.flatMap(c => c.branches);
+  const branches = live.length ? live : SAMPLE_BRANCHES;
+  const out: DashRequest[] = [];
+  let seq = 101;
+  SAMPLE_USERS.forEach((u, ui) => {
+    const location = branches[ui % branches.length];
+    const count = 4 + Math.floor(rnd() * 4);
+    for (let i = 0; i < count; i++) {
+      const item = pick(SAMPLE_ITEMS);
+      const roll = rnd();
+      const status = roll < 0.45 ? 'Paid' : roll < 0.58 ? 'PO Confirmed' : roll < 0.66 ? 'Approved' : roll < 0.72 ? 'Sourcing'
+        : roll < 0.86 ? 'Pending Approval' : roll < 0.93 ? 'Needs Clarification' : 'Rejected';
+      const nLevels = item.cost >= 150000 ? 3 : 2;
+      const levelHours = Array.from({ length: nLevels }, () => between(1.5, 26) * u.speed);
+      const ordering = between(10, 80) * u.speed, delivery = between(48, 220), payment = between(20, 150) * u.speed;
+      const done = ['Sourcing', 'Approved', 'PO Confirmed', 'Paid'].includes(status);
+      const pendingAt = done ? nLevels : Math.floor(rnd() * nLevels);
+      // Work back from today so every recorded time is in the past.
+      let total = sum(levelHours.slice(0, pendingAt), h => h);
+      if (status === 'PO Confirmed') total += ordering;
+      if (status === 'Paid') total += ordering + delivery + payment;
+      const waiting = done ? 0 : between(3, 96);
+      const start = minute(nowMs - (total + waiting) * HOUR - (status === 'Pending Approval' || status === 'Needs Clarification' ? 0 : between(1, 150) * 24 * HOUR));
+      const history: DashRequest['history'] = [{ title: 'Request Submitted', date: stamp(start), desc: `Raised by ${u.name}` }];
+      const approvalChain: NonNullable<DashRequest['approvalChain']> = [];
+      let t = start;
+      SAMPLE_LEVELS.slice(0, nLevels).forEach((designation, li) => {
+        if (li < pendingAt) {
+          t = minute(t + levelHours[li] * HOUR);
+          approvalChain.push({ order: li + 1, designation, state: 'approved', decidedOn: stamp(t) });
+          history.push({ title: `Approved · ${designation}`, date: stamp(t) });
+        } else {
+          approvalChain.push({ order: li + 1, designation, state: status === 'Rejected' && li === pendingAt ? 'rejected' : 'pending' });
+        }
+      });
+      if (status === 'Rejected') history.push({ title: 'Rejected', date: stamp(minute(t + between(2, 20) * HOUR)) });
+      if (status === 'PO Confirmed' || status === 'Paid') {
+        t = minute(t + ordering * HOUR); history.push({ title: 'Vendor Acknowledged', date: stamp(t) });
+      }
+      if (status === 'Paid') {
+        t = minute(t + delivery * HOUR); history.push({ title: 'Goods Received', date: stamp(t) });
+        t = minute(t + payment * HOUR); history.push({ title: 'Payment Cleared', date: stamp(t) });
+      }
+      out.push({
+        id: `SAMPLE-${seq++}`, productName: item.name, totalCost: Math.round(item.cost * (0.6 + rnd() * 0.8) / 100) * 100,
+        location, department: u.department, expenseCategory: item.category, status, urgency: pick(['High', 'Medium', 'Low']),
+        createdDate: new Date(start).toLocaleDateString('en-IN'), submittedAt: new Date(start).toISOString(),
+        vendor: done ? pick(SAMPLE_VENDORS) : 'Pending Sourcing', savings: 0, history, approvalChain,
+      });
+    }
+  });
+  return out;
+}
 
 /** When the first timeline entry matching `re` happened. */
 const firstEvent = (r: DashRequest, re: RegExp, from: number | null) => {
@@ -122,24 +239,40 @@ export function ManagerReports({ requests, companies, onOpenRequest }: {
   const [company, setCompany] = useState('');
   const [branch, setBranch] = useState('');
   const [open, setOpen] = useState<string | null>(null);
+  const [groupBy, setGroupBy] = useState<GroupKey>('branch');
+  // Remembered per browser, so a demo can open straight on the sample.
+  const [sample, setSampleState] = useState(() => {
+    try { return localStorage.getItem('smartspend.reports.sample') === '1'; } catch { return false; }
+  });
+  const setSample = (on: boolean) => {
+    setSampleState(on); setOpen(null);
+    try { localStorage.setItem('smartspend.reports.sample', on ? '1' : '0'); } catch { /* storage unavailable */ }
+  };
   const now = useMemo(() => new Date(), []);
   const nowMs = now.getTime();
+  const byUser = groupBy === 'user';
+
+  // Live requests, or the labelled demo sample while the switch is on.
+  const source = useMemo(() => (sample ? buildSample(companies, nowMs) : requests), [sample, requests, companies, nowMs]);
+  // Sample PRs do not exist in Odoo, so there is nothing to open.
+  const openRequest = (id: string, status: string) => { if (!sample) onOpenRequest(id, status); };
 
   const companyOf = (b: string) => companies.find(c => c.branches.some(x => x.trim().toLowerCase() === (b || '').trim().toLowerCase()));
   const companyName = (b: string) => companyOf(b)?.name ?? 'Unassigned';
   const branchOf = (r: DashRequest) => r.location || 'Unassigned';
+  const groupOf = (r: DashRequest) => (byUser ? requesterOf(r) : branchOf(r));
 
   const branchOptions = useMemo(() => {
     const set = new Set<string>();
     companies.forEach(c => { if (!company || c.name === company) c.branches.forEach(b => set.add(b)); });
-    requests.forEach(r => { if (r.location && (!company || companyName(r.location) === company)) set.add(r.location); });
+    source.forEach(r => { if (r.location && (!company || companyName(r.location) === company)) set.add(r.location); });
     return [...set].sort();
-  }, [companies, requests, company]);
+  }, [companies, source, company]);
 
   // The requests in the chosen period (by submission), company and branch.
   const scoped = useMemo(() => {
     const from = periodStart(period, now);
-    return requests.filter(r => {
+    return source.filter(r => {
       if (r.status === 'Draft') return false;
       const t = submitted(r);
       if (from !== null && (t === null || t < from)) return false;
@@ -147,7 +280,7 @@ export function ManagerReports({ requests, companies, onOpenRequest }: {
       if (branch && r.location !== branch) return false;
       return true;
     });
-  }, [requests, period, company, branch, companies]);
+  }, [source, period, company, branch, companies]);
 
   // --- Measured rows ---------------------------------------------------------
   const measured: Row[] = useMemo(() => scoped.flatMap(r => {
@@ -192,27 +325,37 @@ export function ManagerReports({ requests, companies, onOpenRequest }: {
   const partKeys = report === 'tat' ? levelKeys : CLOSING_STAGES.map(s => s.key);
   const partLabel = (k: string) => report === 'tat' ? `Level ${k.slice(1)}` : CLOSING_STAGES.find(s => s.key === k)!.label;
 
-  // --- Branch-wise ---------------------------------------------------------------
+  // --- Branch-wise or user-wise (by requester) ----------------------------------
+  /** The line under a group's name: the branch's company, or the requester's branch. */
+  const subLabel = (name: string, reqs: DashRequest[]) => {
+    if (!byUser) return companyOf(name)?.short ?? '—';
+    const counts = new Map<string, number>();
+    reqs.forEach(r => counts.set(branchOf(r), (counts.get(branchOf(r)) ?? 0) + 1));
+    const home = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+    if (!home) return '—';
+    const co = companyOf(home)?.short;
+    return `${home}${co ? ` · ${co}` : ''}${counts.size > 1 ? ` +${counts.size - 1}` : ''}`;
+  };
   const branches = useMemo(() => {
-    const names = new Set<string>([...measured.map(m => branchOf(m.r)), ...stillOpen.map(branchOf)]);
+    const names = new Set<string>([...measured.map(m => groupOf(m.r)), ...stillOpen.map(groupOf)]);
     return [...names].map(name => {
-      const rows = measured.filter(m => branchOf(m.r) === name).sort((a, b) => b.hours - a.hours);
+      const rows = measured.filter(m => groupOf(m.r) === name).sort((a, b) => b.hours - a.hours);
       const hrs = rows.map(m => m.hours);
-      const waiting = stillOpen.filter(r => branchOf(r) === name);
+      const waiting = stillOpen.filter(r => groupOf(r) === name);
       const parts: Record<string, number | null> = {};
       partKeys.forEach(k => {
         const xs = rows.map(m => m.parts[k]).filter((x): x is number => x !== null && x !== undefined);
         parts[k] = xs.length ? avg(xs) : null;
       });
       return {
-        name, company: companyOf(name)?.short ?? '—', rows, count: rows.length,
+        name, company: subLabel(name, [...rows.map(m => m.r), ...waiting]), rows, count: rows.length,
         value: sum(rows, m => m.r.totalCost),
         avg: hrs.length ? avg(hrs) : null, median: hrs.length ? median(hrs) : null,
         fastest: hrs.length ? Math.min(...hrs) : null, slowest: hrs.length ? Math.max(...hrs) : null,
         parts, waiting, waitingAvg: waiting.length ? avg(waiting.map(ageOf)) : null,
       };
     }).sort((a, b) => (b.avg ?? -1) - (a.avg ?? -1) || b.waiting.length - a.waiting.length);
-  }, [measured, stillOpen, partKeys.join(','), companies]);
+  }, [measured, stillOpen, partKeys.join(','), companies, groupBy]);
 
   const all = measured.map(m => m.hours);
   const ranked = branches.filter(b => b.avg !== null);
@@ -228,15 +371,18 @@ export function ManagerReports({ requests, companies, onOpenRequest }: {
   const doneWord = report === 'tat' ? 'approved' : 'closed';
   const openWord = report === 'tat' ? 'Waiting for approval' : 'Still open';
   const scopeLabel = branch || companies.find(c => c.name === company)?.short || 'All companies';
+  const groupWord = byUser ? 'Requester' : 'Branch';
+  const groupWise = byUser ? 'User-wise' : 'Branch-wise';
 
   const exportCsv = () => {
-    const head = ['Branch', 'Company', 'PR', 'Product', 'Value (INR)', 'Status', 'Submitted', report === 'tat' ? 'Approved' : 'Paid',
-      `${title} (hours)`, ...partKeys.map(k => `${partLabel(k)} (hours)`)];
+    const head = [groupWord, byUser ? 'Branch' : 'Company', ...(byUser ? [] : ['Requester']), 'PR', 'Product', 'Value (INR)', 'Status', 'Submitted',
+      report === 'tat' ? 'Approved' : 'Paid', `${title} (hours)`, ...partKeys.map(k => `${partLabel(k)} (hours)`)];
     const lines = branches.flatMap(b => b.rows.map(m => [
-      b.name, b.company, m.r.id, m.r.productName, Math.round(m.r.totalCost || 0), m.r.status, when(m.start), when(m.end),
+      b.name, byUser ? branchOf(m.r) : b.company, ...(byUser ? [] : [requesterOf(m.r)]),
+      m.r.id, m.r.productName, Math.round(m.r.totalCost || 0), m.r.status, when(m.start), when(m.end),
       m.hours.toFixed(2), ...partKeys.map(k => (m.parts[k] ?? null) === null ? '' : (m.parts[k] as number).toFixed(2)),
     ]));
-    download(`${report === 'tat' ? 'turn-around-time' : 'pr-closing-time'}-${new Date().toISOString().slice(0, 10)}.csv`, [head, ...lines]);
+    download(`${report === 'tat' ? 'turn-around-time' : 'pr-closing-time'}-${byUser ? 'user' : 'branch'}-wise${sample ? '-SAMPLE' : ''}-${new Date().toISOString().slice(0, 10)}.csv`, [head, ...lines]);
   };
 
   const selectCls = 'rounded-xl border border-borderTheme bg-secondary px-3 py-2 text-sm font-semibold text-textPrimary normal-case tracking-normal focus:outline-none focus:border-brand';
@@ -260,9 +406,15 @@ export function ManagerReports({ requests, companies, onOpenRequest }: {
             </span>
             <div>
               <h2 className="font-outfit text-3xl font-extrabold text-textPrimary leading-tight">Reports</h2>
-              <p className="mt-0.5 flex items-center gap-1.5 text-xs text-textFaint">
-                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                Live from Odoo · branch-wise · <b className="text-textSecondary">{scopeLabel}</b>, {PERIODS.find(p => p.key === period)?.label.toLowerCase()} (by submission date)
+              <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-textFaint">
+                {sample ? (
+                  <span className="flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700">
+                    <FlaskConical className="h-3 w-3" /> Sample data · demo only, not from Odoo
+                  </span>
+                ) : (
+                  <><span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" /> Live from Odoo</>
+                )}
+                · {groupWise.toLowerCase()} · <b className="text-textSecondary">{scopeLabel}</b>, {PERIODS.find(p => p.key === period)?.label.toLowerCase()} (by submission date)
               </p>
             </div>
           </div>
@@ -298,8 +450,26 @@ export function ManagerReports({ requests, companies, onOpenRequest }: {
               <span className={`text-[11px] font-semibold ${report === t.key ? 'text-onbrand/80' : 'text-textFaint'}`}>{t.note}</span>
             </button>
           ))}
+          <div className="ml-auto flex items-center rounded-2xl bg-secondary p-1" role="group" aria-label="Group by">
+            {([['branch', 'Branch-wise', MapPin], ['user', 'User-wise', Users]] as const).map(([k, label, Icon]) => (
+              <button key={k} type="button" onClick={() => { setGroupBy(k); setOpen(null); }}
+                      className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm font-bold transition-all ${groupBy === k
+                        ? 'bg-surface text-textPrimary shadow-sm' : 'text-textSecondary hover:text-textPrimary'}`}>
+                <Icon className="h-4 w-4" /> {label}
+              </button>
+            ))}
+          </div>
+          <button type="button" onClick={() => setSample(!sample)} aria-pressed={sample}
+                  title="Show dummy users and PRs for the demo. Nothing is written to Odoo."
+                  className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-bold transition-all ${sample
+                    ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-borderTheme text-textSecondary hover:border-amber-400 hover:text-amber-700'}`}>
+            <FlaskConical className="h-4 w-4" /> Sample data
+            <span className={`relative h-4 w-7 rounded-full transition-colors ${sample ? 'bg-amber-500' : 'bg-borderTheme'}`}>
+              <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all ${sample ? 'left-3.5' : 'left-0.5'}`} />
+            </span>
+          </button>
           <button type="button" onClick={exportCsv} disabled={!measured.length}
-                  className="ml-auto flex items-center gap-2 rounded-xl border border-borderTheme px-4 py-2 text-sm font-bold text-textSecondary hover:border-brand hover:text-brand disabled:opacity-40">
+                  className="flex items-center gap-2 rounded-xl border border-borderTheme px-4 py-2 text-sm font-bold text-textSecondary hover:border-brand hover:text-brand disabled:opacity-40">
             <Download className="h-4 w-4" /> Export CSV
           </button>
         </div>
@@ -309,9 +479,9 @@ export function ManagerReports({ requests, companies, onOpenRequest }: {
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
         <SmallStat icon={Timer} label={`Average ${title.toLowerCase()}`} value={avg(all)} format={fmtHours} color={C.indigo}
                    note={<>{plural(all.length, 'PR')} {doneWord} · median {show(all.length ? median(all) : null)}</>} />
-        <SmallStat icon={TrendingDown} label="Fastest branch" value={fastestBranch?.avg ?? 0} format={fmtHours} color={C.green}
+        <SmallStat icon={TrendingDown} label={`Fastest ${groupWord.toLowerCase()}`} value={fastestBranch?.avg ?? 0} format={fmtHours} color={C.green}
                    note={fastestBranch ? <>{fastestBranch.name} · {plural(fastestBranch.count, 'PR')}</> : 'Nothing measured yet'} />
-        <SmallStat icon={TrendingUp} label="Slowest branch" value={slowestBranch?.avg ?? 0} format={fmtHours} color={C.red}
+        <SmallStat icon={TrendingUp} label={`Slowest ${groupWord.toLowerCase()}`} value={slowestBranch?.avg ?? 0} format={fmtHours} color={C.red}
                    note={slowestBranch ? <>{slowestBranch.name} · {plural(slowestBranch.count, 'PR')}</> : 'Nothing measured yet'} />
         <SmallStat icon={Hourglass} label={openWord} value={stillOpen.length} format={n => Math.round(n).toLocaleString('en-IN')} color={C.amber}
                    note={stillOpen.length ? <>Waiting {show(avg(stillOpen.map(ageOf)))} on average so far</> : 'Nothing open'} />
@@ -319,7 +489,7 @@ export function ManagerReports({ requests, companies, onOpenRequest }: {
 
       {/* ── Chart + stage split ───────────────────────────────────────────── */}
       <div className="grid lg:grid-cols-5 gap-6">
-        <Card icon={MapPin} color={C.indigo} title={`Average ${title} by Branch`} subtitle={`Measured ${measure}`} className="lg:col-span-3">
+        <Card icon={byUser ? UserRound : MapPin} color={C.indigo} title={`Average ${title} by ${groupWord}`} subtitle={`Measured ${measure}`} className="lg:col-span-3">
           <HBars format={h => show(h)} rows={ranked.map((b, i) => ({
             name: `${b.name} · ${b.company}`, value: b.avg ?? 0, note: plural(b.count, 'PR'),
             color: b === slowestBranch && ranked.length > 1 ? C.red : b === fastestBranch && ranked.length > 1 ? C.green : [C.indigo, C.violet, C.sky, C.teal][i % 4],
@@ -344,13 +514,13 @@ export function ManagerReports({ requests, companies, onOpenRequest }: {
       </div>
 
       {/* ── Branch-wise table ─────────────────────────────────────────────── */}
-      <Card icon={FileBarChart} color={C.violet} title={`${title} — Branch-wise`}
-            subtitle={`Measured ${measure}. Click a branch to see its PRs.`}>
+      <Card icon={byUser ? Users : FileBarChart} color={C.violet} title={`${title} — ${groupWise}`}
+            subtitle={`Measured ${measure}. Click a ${byUser ? 'requester' : 'branch'} to see ${byUser ? 'their' : 'its'} PRs.${sample ? ' Sample data — demo only.' : ''}`}>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="border-b border-borderTheme text-[11px] font-bold uppercase tracking-wider text-textFaint">
-                <th className="py-2 pr-3">Branch</th>
+                <th className="py-2 pr-3">{groupWord}</th>
                 <th className="py-2 px-2 text-right">PRs {doneWord}</th>
                 <th className="py-2 px-2 text-right">Value</th>
                 <th className="py-2 px-2 text-right">Average</th>
@@ -401,11 +571,12 @@ export function ManagerReports({ requests, companies, onOpenRequest }: {
                                   </tr></thead>
                                   <tbody>
                                     {b.rows.map(m => (
-                                      <tr key={m.r.id} onClick={(e) => { e.stopPropagation(); onOpenRequest(m.r.id, m.r.status); }}
-                                          className="cursor-pointer border-t border-borderTheme/60 hover:bg-surface">
+                                      <tr key={m.r.id} onClick={(e) => { e.stopPropagation(); openRequest(m.r.id, m.r.status); }}
+                                          className={`${sample ? '' : 'cursor-pointer '}border-t border-borderTheme/60 hover:bg-surface`}>
                                         <td className="py-1.5 pr-2">
                                           <span className="font-mono font-bold text-brand">{m.r.id}</span>
                                           <span className="block truncate text-textSecondary max-w-[220px]">{m.r.productName} · {money(m.r.totalCost || 0)}</span>
+                                          <span className="block truncate text-textFaint max-w-[220px]">{byUser ? branchOf(m.r) : `by ${requesterOf(m.r)}`}</span>
                                         </td>
                                         <td className="py-1.5 px-2 text-textSecondary">{when(m.start)}</td>
                                         <td className="py-1.5 px-2 text-textSecondary">{when(m.end)}</td>
@@ -429,12 +600,12 @@ export function ManagerReports({ requests, companies, onOpenRequest }: {
                                 <ul className="space-y-1.5">
                                   {[...b.waiting].sort((x, y) => ageOf(y) - ageOf(x)).map(r => (
                                     <li key={r.id}>
-                                      <button type="button" onClick={(e) => { e.stopPropagation(); onOpenRequest(r.id, r.status); }}
+                                      <button type="button" onClick={(e) => { e.stopPropagation(); openRequest(r.id, r.status); }}
                                               className="flex w-full items-center justify-between gap-3 rounded-xl border border-borderTheme bg-surface px-3 py-2 text-left text-xs hover:border-brand">
                                         <span className="min-w-0">
                                           <span className="font-mono font-bold text-brand">{r.id}</span>
                                           <span className="ml-2 text-textSecondary">{r.productName}</span>
-                                          <span className="block text-textFaint">{r.status} · {money(r.totalCost || 0)}</span>
+                                          <span className="block text-textFaint">{r.status} · {money(r.totalCost || 0)} · {byUser ? branchOf(r) : `by ${requesterOf(r)}`}</span>
                                         </span>
                                         <span className="shrink-0 font-extrabold tabular-nums text-amber-600">{show(ageOf(r))}</span>
                                       </button>
@@ -457,7 +628,7 @@ export function ManagerReports({ requests, companies, onOpenRequest }: {
             {branches.length > 1 && (
               <tfoot>
                 <tr className="whitespace-nowrap border-t-2 border-borderTheme font-bold">
-                  <td className="py-3 pr-3 text-textPrimary">All branches</td>
+                  <td className="py-3 pr-3 text-textPrimary">{byUser ? 'All requesters' : 'All branches'}</td>
                   <td className="py-3 px-2 text-right tabular-nums">{all.length}</td>
                   <td className="py-3 px-2 text-right tabular-nums">{money(sum(measured, m => m.r.totalCost))}</td>
                   <td className="py-3 px-2 text-right tabular-nums font-extrabold">{show(all.length ? avg(all) : null)}</td>
