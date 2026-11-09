@@ -49,7 +49,7 @@ interface DemoAccount extends DemoUser {
  */
 export const DEMO_ACCOUNTS: DemoAccount[] = [
   {
-    id: 101, name: 'Demo Requester', login: 'requester@smartspend.demo',
+    id: 101, name: 'Neha Kapoor', login: 'requester@smartspend.demo',
     password: 'requester', company: 'SmartSpend Demo',
     roles: ['Employee'], defaultRole: 'Employee',
   },
@@ -70,13 +70,13 @@ export const DEMO_ACCOUNTS: DemoAccount[] = [
     roles: ['Employee'], defaultRole: 'Employee',
   },
   {
-    id: 102, name: 'Demo SCM Buyer', login: 'buyer@smartspend.demo',
+    id: 102, name: 'Sandeep Rao', login: 'buyer@smartspend.demo',
     password: 'buyer', company: 'SmartSpend Demo',
     is_buyer: true,
     roles: ['Employee', 'SCM Buyer'], defaultRole: 'SCM Buyer',
   },
   {
-    id: 103, name: 'Demo Procurement Manager', login: 'manager@smartspend.demo',
+    id: 103, name: 'Anand Krishnan', login: 'manager@smartspend.demo',
     password: 'manager', company: 'SmartSpend Demo',
     is_manager: true, is_buyer: true,
     roles: ['Employee', 'SCM Buyer', 'Manager', 'CEO'], defaultRole: 'Manager',

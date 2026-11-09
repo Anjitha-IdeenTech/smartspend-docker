@@ -13,7 +13,7 @@
     <data noupdate="1">
 
         <record id="user_demo_requester" model="res.users">
-            <field name="name">Demo Requester</field>
+            <field name="name">Neha Kapoor</field>
             <field name="login">requester@smartspend.demo</field>
             <field name="password">requester</field>
             <field name="group_ids" eval="[Command.link(ref('smartspend.group_smartspend_user'))]"/>
@@ -45,14 +45,14 @@
         </record>
 
         <record id="user_demo_buyer" model="res.users">
-            <field name="name">Demo SCM Buyer</field>
+            <field name="name">Sandeep Rao</field>
             <field name="login">buyer@smartspend.demo</field>
             <field name="password">buyer</field>
             <field name="group_ids" eval="[Command.link(ref('smartspend.group_smartspend_buyer'))]"/>
         </record>
 
         <record id="user_demo_manager" model="res.users">
-            <field name="name">Demo Procurement Manager</field>
+            <field name="name">Anand Krishnan</field>
             <field name="login">manager@smartspend.demo</field>
             <field name="password">manager</field>
             <field name="group_ids" eval="[Command.link(ref('smartspend.group_smartspend_manager'))]"/>

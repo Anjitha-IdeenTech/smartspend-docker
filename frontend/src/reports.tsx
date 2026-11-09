@@ -23,7 +23,8 @@ import {
 import type { DashCompany, DashRequest, Period } from './managerDashboard';
 
 type ReportKey = 'tat' | 'closing';
-type GroupKey = 'branch' | 'user';
+type GroupKey = 'all' | 'branch' | 'user';
+type GroupKind = 'branch' | 'user';
 
 const APPROVED = ['Sourcing', 'Approved', 'PO Confirmed', 'Paid'];
 const PENDING = ['Pending Approval', 'Needs Clarification'];
@@ -60,7 +61,7 @@ const requesterOf = (r: DashRequest) => {
 // ---------------------------------------------------------------------------
 
 const SAMPLE_USERS: { name: string; department: string; speed: number }[] = [
-  { name: 'Priya Menon', department: 'IT', speed: 0.6 },
+  { name: 'Divya Menon', department: 'IT', speed: 0.6 },
   { name: 'Rahul Varma', department: 'Finance', speed: 1.4 },
   { name: 'Anitha George', department: 'Operations', speed: 0.9 },
   { name: 'Sanjay Kumar', department: 'Administration', speed: 1.8 },
@@ -68,6 +69,14 @@ const SAMPLE_USERS: { name: string; department: string; speed: number }[] = [
   { name: 'Nikhil Joseph', department: 'IT', speed: 1.1 },
   { name: 'Lakshmi Iyer', department: 'Marketing', speed: 1.25 },
   { name: 'Arun Thomas', department: 'Facilities', speed: 0.85 },
+  { name: 'Vivek Sharma', department: 'Sales', speed: 1.05 },
+  { name: 'Pooja Reddy', department: 'Finance', speed: 0.7 },
+  { name: 'Karthik Subramanian', department: 'Engineering', speed: 1.6 },
+  { name: 'Mohammed Irfan', department: 'Operations', speed: 0.95 },
+  { name: 'Ritu Agarwal', department: 'HR', speed: 1.15 },
+  { name: 'Joseph Mathew', department: 'Facilities', speed: 1.35 },
+  { name: 'Swati Kulkarni', department: 'Marketing', speed: 0.8 },
+  { name: 'Harish Bhat', department: 'Engineering', speed: 1.2 },
 ];
 const SAMPLE_ITEMS: { name: string; category: string; cost: number }[] = [
   { name: 'Dell Latitude Laptops', category: 'IT Hardware', cost: 420000 },
@@ -109,7 +118,7 @@ function buildSample(companies: DashCompany[], nowMs: number): DashRequest[] {
   let seq = 101;
   SAMPLE_USERS.forEach((u, ui) => {
     const location = branches[ui % branches.length];
-    const count = 4 + Math.floor(rnd() * 4);
+    const count = 3 + Math.floor(rnd() * 4);
     for (let i = 0; i < count; i++) {
       const item = pick(SAMPLE_ITEMS);
       const roll = rnd();
@@ -239,28 +248,30 @@ export function ManagerReports({ requests, companies, onOpenRequest }: {
   const [company, setCompany] = useState('');
   const [branch, setBranch] = useState('');
   const [open, setOpen] = useState<string | null>(null);
-  const [groupBy, setGroupBy] = useState<GroupKey>('branch');
-  // Remembered per browser, so a demo can open straight on the sample.
+  // 'all' shows the branch-wise and the user-wise table together.
+  const [groupBy, setGroupBy] = useState<GroupKey>('all');
+  // On unless switched off in this browser (remembered).
   const [sample, setSampleState] = useState(() => {
-    try { return localStorage.getItem('smartspend.reports.sample') === '1'; } catch { return false; }
+    try { return localStorage.getItem('smartspend.reports.sample.v2') !== '0'; } catch { return true; }
   });
   const setSample = (on: boolean) => {
     setSampleState(on); setOpen(null);
-    try { localStorage.setItem('smartspend.reports.sample', on ? '1' : '0'); } catch { /* storage unavailable */ }
+    try { localStorage.setItem('smartspend.reports.sample.v2', on ? '1' : '0'); } catch { /* storage unavailable */ }
   };
   const now = useMemo(() => new Date(), []);
   const nowMs = now.getTime();
   const byUser = groupBy === 'user';
 
-  // Live requests, or the labelled demo sample while the switch is on.
-  const source = useMemo(() => (sample ? buildSample(companies, nowMs) : requests), [sample, requests, companies, nowMs]);
+  // Live requests, plus the labelled demo sample while the switch is on.
+  const source = useMemo(() => (sample ? [...requests, ...buildSample(companies, nowMs)] : requests), [sample, requests, companies, nowMs]);
   // Sample PRs do not exist in Odoo, so there is nothing to open.
-  const openRequest = (id: string, status: string) => { if (!sample) onOpenRequest(id, status); };
+  const isSample = (id: string) => id.startsWith('SAMPLE-');
+  const openRequest = (id: string, status: string) => { if (!isSample(id)) onOpenRequest(id, status); };
 
   const companyOf = (b: string) => companies.find(c => c.branches.some(x => x.trim().toLowerCase() === (b || '').trim().toLowerCase()));
   const companyName = (b: string) => companyOf(b)?.name ?? 'Unassigned';
   const branchOf = (r: DashRequest) => r.location || 'Unassigned';
-  const groupOf = (r: DashRequest) => (byUser ? requesterOf(r) : branchOf(r));
+  const groupOf = (kind: GroupKind, r: DashRequest) => (kind === 'user' ? requesterOf(r) : branchOf(r));
 
   const branchOptions = useMemo(() => {
     const set = new Set<string>();
@@ -327,8 +338,8 @@ export function ManagerReports({ requests, companies, onOpenRequest }: {
 
   // --- Branch-wise or user-wise (by requester) ----------------------------------
   /** The line under a group's name: the branch's company, or the requester's branch. */
-  const subLabel = (name: string, reqs: DashRequest[]) => {
-    if (!byUser) return companyOf(name)?.short ?? '—';
+  const subLabel = (kind: GroupKind, name: string, reqs: DashRequest[]) => {
+    if (kind === 'branch') return companyOf(name)?.short ?? '—';
     const counts = new Map<string, number>();
     reqs.forEach(r => counts.set(branchOf(r), (counts.get(branchOf(r)) ?? 0) + 1));
     const home = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
@@ -336,26 +347,30 @@ export function ManagerReports({ requests, companies, onOpenRequest }: {
     const co = companyOf(home)?.short;
     return `${home}${co ? ` · ${co}` : ''}${counts.size > 1 ? ` +${counts.size - 1}` : ''}`;
   };
-  const branches = useMemo(() => {
-    const names = new Set<string>([...measured.map(m => groupOf(m.r)), ...stillOpen.map(groupOf)]);
+  const buildGroups = (kind: GroupKind) => {
+    const names = new Set<string>([...measured.map(m => groupOf(kind, m.r)), ...stillOpen.map(r => groupOf(kind, r))]);
     return [...names].map(name => {
-      const rows = measured.filter(m => groupOf(m.r) === name).sort((a, b) => b.hours - a.hours);
+      const rows = measured.filter(m => groupOf(kind, m.r) === name).sort((a, b) => b.hours - a.hours);
       const hrs = rows.map(m => m.hours);
-      const waiting = stillOpen.filter(r => groupOf(r) === name);
+      const waiting = stillOpen.filter(r => groupOf(kind, r) === name);
       const parts: Record<string, number | null> = {};
       partKeys.forEach(k => {
         const xs = rows.map(m => m.parts[k]).filter((x): x is number => x !== null && x !== undefined);
         parts[k] = xs.length ? avg(xs) : null;
       });
       return {
-        name, company: subLabel(name, [...rows.map(m => m.r), ...waiting]), rows, count: rows.length,
+        name, company: subLabel(kind, name, [...rows.map(m => m.r), ...waiting]), rows, count: rows.length,
         value: sum(rows, m => m.r.totalCost),
         avg: hrs.length ? avg(hrs) : null, median: hrs.length ? median(hrs) : null,
         fastest: hrs.length ? Math.min(...hrs) : null, slowest: hrs.length ? Math.max(...hrs) : null,
         parts, waiting, waitingAvg: waiting.length ? avg(waiting.map(ageOf)) : null,
       };
     }).sort((a, b) => (b.avg ?? -1) - (a.avg ?? -1) || b.waiting.length - a.waiting.length);
-  }, [measured, stillOpen, partKeys.join(','), companies, groupBy]);
+  };
+  const branchGroups = useMemo(() => buildGroups('branch'), [measured, stillOpen, partKeys.join(','), companies]);
+  const userGroups = useMemo(() => buildGroups('user'), [measured, stillOpen, partKeys.join(','), companies]);
+  // The headline cards and the chart follow the chosen grouping ('all' → by branch).
+  const branches = byUser ? userGroups : branchGroups;
 
   const all = measured.map(m => m.hours);
   const ranked = branches.filter(b => b.avg !== null);
@@ -394,130 +409,17 @@ export function ManagerReports({ requests, companies, onOpenRequest }: {
     { key: 'closing', label: 'PR Closing Time', icon: Wallet, note: 'Submitted → paid' },
   ];
 
-  return (
-    <div className="max-w-7xl mx-auto space-y-6 animate-fadeIn">
-      {/* ── Title, report picker and filters ─────────────────────────────── */}
-      <div className="rounded-3xl border border-borderTheme bg-surface px-6 py-5 shadow-sm space-y-5">
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <span className="grid h-14 w-14 place-items-center rounded-2xl text-white shadow-md"
-                  style={{ background: `linear-gradient(135deg, ${C.indigo}, ${C.cyan})` }}>
-              <FileBarChart className="h-7 w-7" />
-            </span>
-            <div>
-              <h2 className="font-outfit text-3xl font-extrabold text-textPrimary leading-tight">Reports</h2>
-              <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-textFaint">
-                {sample ? (
-                  <span className="flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700">
-                    <FlaskConical className="h-3 w-3" /> Sample data · demo only, not from Odoo
-                  </span>
-                ) : (
-                  <><span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" /> Live from Odoo</>
-                )}
-                · {groupWise.toLowerCase()} · <b className="text-textSecondary">{scopeLabel}</b>, {PERIODS.find(p => p.key === period)?.label.toLowerCase()} (by submission date)
-              </p>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-end gap-3">
-            <label className="text-[11px] font-bold uppercase tracking-wider text-textFaint">Period
-              <select value={period} onChange={e => setPeriod(e.target.value as Period)} className={`${selectCls} mt-1 block`}>
-                {PERIODS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
-              </select>
-            </label>
-            <label className="text-[11px] font-bold uppercase tracking-wider text-textFaint">Company
-              <select value={company} onChange={e => { setCompany(e.target.value); setBranch(''); }} className={`${selectCls} mt-1 block`}>
-                <option value="">All companies</option>
-                {companies.map(c => <option key={c.name} value={c.name}>{c.short}</option>)}
-              </select>
-            </label>
-            <label className="text-[11px] font-bold uppercase tracking-wider text-textFaint">Branch
-              <select value={branch} onChange={e => setBranch(e.target.value)} className={`${selectCls} mt-1 block`}>
-                <option value="">All branches</option>
-                {branchOptions.map(b => <option key={b} value={b}>{b}</option>)}
-              </select>
-            </label>
-            {(company || branch || period !== 'all') && (
-              <button onClick={() => { setCompany(''); setBranch(''); setPeriod('all'); }}
-                      className="rounded-xl px-3 py-2 text-sm font-bold text-brand hover:bg-brand/10">Clear filters</button>
-            )}
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-3 border-t border-borderTheme pt-4">
-          {tabs.map(t => (
-            <button key={t.key} type="button" onClick={() => { setReport(t.key); setOpen(null); }} className={tabCls(report === t.key)}>
-              <t.icon className="h-4 w-4" />
-              <span>{t.label}</span>
-              <span className={`text-[11px] font-semibold ${report === t.key ? 'text-onbrand/80' : 'text-textFaint'}`}>{t.note}</span>
-            </button>
-          ))}
-          <div className="ml-auto flex items-center rounded-2xl bg-secondary p-1" role="group" aria-label="Group by">
-            {([['branch', 'Branch-wise', MapPin], ['user', 'User-wise', Users]] as const).map(([k, label, Icon]) => (
-              <button key={k} type="button" onClick={() => { setGroupBy(k); setOpen(null); }}
-                      className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm font-bold transition-all ${groupBy === k
-                        ? 'bg-surface text-textPrimary shadow-sm' : 'text-textSecondary hover:text-textPrimary'}`}>
-                <Icon className="h-4 w-4" /> {label}
-              </button>
-            ))}
-          </div>
-          <button type="button" onClick={() => setSample(!sample)} aria-pressed={sample}
-                  title="Show dummy users and PRs for the demo. Nothing is written to Odoo."
-                  className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-bold transition-all ${sample
-                    ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-borderTheme text-textSecondary hover:border-amber-400 hover:text-amber-700'}`}>
-            <FlaskConical className="h-4 w-4" /> Sample data
-            <span className={`relative h-4 w-7 rounded-full transition-colors ${sample ? 'bg-amber-500' : 'bg-borderTheme'}`}>
-              <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all ${sample ? 'left-3.5' : 'left-0.5'}`} />
-            </span>
-          </button>
-          <button type="button" onClick={exportCsv} disabled={!measured.length}
-                  className="flex items-center gap-2 rounded-xl border border-borderTheme px-4 py-2 text-sm font-bold text-textSecondary hover:border-brand hover:text-brand disabled:opacity-40">
-            <Download className="h-4 w-4" /> Export CSV
-          </button>
-        </div>
-      </div>
-
-      {/* ── Headline numbers ──────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
-        <SmallStat icon={Timer} label={`Average ${title.toLowerCase()}`} value={avg(all)} format={fmtHours} color={C.indigo}
-                   note={<>{plural(all.length, 'PR')} {doneWord} · median {show(all.length ? median(all) : null)}</>} />
-        <SmallStat icon={TrendingDown} label={`Fastest ${groupWord.toLowerCase()}`} value={fastestBranch?.avg ?? 0} format={fmtHours} color={C.green}
-                   note={fastestBranch ? <>{fastestBranch.name} · {plural(fastestBranch.count, 'PR')}</> : 'Nothing measured yet'} />
-        <SmallStat icon={TrendingUp} label={`Slowest ${groupWord.toLowerCase()}`} value={slowestBranch?.avg ?? 0} format={fmtHours} color={C.red}
-                   note={slowestBranch ? <>{slowestBranch.name} · {plural(slowestBranch.count, 'PR')}</> : 'Nothing measured yet'} />
-        <SmallStat icon={Hourglass} label={openWord} value={stillOpen.length} format={n => Math.round(n).toLocaleString('en-IN')} color={C.amber}
-                   note={stillOpen.length ? <>Waiting {show(avg(stillOpen.map(ageOf)))} on average so far</> : 'Nothing open'} />
-      </div>
-
-      {/* ── Chart + stage split ───────────────────────────────────────────── */}
-      <div className="grid lg:grid-cols-5 gap-6">
-        <Card icon={byUser ? UserRound : MapPin} color={C.indigo} title={`Average ${title} by ${groupWord}`} subtitle={`Measured ${measure}`} className="lg:col-span-3">
-          <HBars format={h => show(h)} rows={ranked.map((b, i) => ({
-            name: `${b.name} · ${b.company}`, value: b.avg ?? 0, note: plural(b.count, 'PR'),
-            color: b === slowestBranch && ranked.length > 1 ? C.red : b === fastestBranch && ranked.length > 1 ? C.green : [C.indigo, C.violet, C.sky, C.teal][i % 4],
-          }))} />
-        </Card>
-        <Card icon={CheckCircle2} color={C.green} title={report === 'tat' ? 'Time at Each Approval Level' : 'Where the Time Goes'}
-              subtitle={report === 'tat' ? 'Average from the previous signature (or submission) to this level\'s decision'
-                : 'Average per stage, over the PRs whose timeline records both ends'} className="lg:col-span-2">
-          {overallParts.length ? (
-            <HBars format={h => show(h)} rows={overallParts.filter(p => p.avg !== null).map((p, i) => ({
-              name: partLabel(p.key),
-              value: p.avg ?? 0, note: plural(p.n, 'PR'),
-              color: report === 'tat' ? [C.amber, C.orange, C.pink, C.violet][i % 4] : CLOSING_STAGES.find(s => s.key === p.key)!.color,
-            }))} />
-          ) : <p className="text-sm text-textFaint">No approval levels recorded for this selection.</p>}
-          {report === 'closing' && (
-            <ul className="mt-4 space-y-0.5 border-t border-borderTheme pt-3 text-[11px] text-textFaint">
-              {CLOSING_STAGES.map(s => <li key={s.key}><b className="text-textSecondary">{s.label}:</b> {s.hint}</li>)}
-            </ul>
-          )}
-        </Card>
-      </div>
-
-      {/* ── Branch-wise table ─────────────────────────────────────────────── */}
-      <Card icon={byUser ? Users : FileBarChart} color={C.violet} title={`${title} — ${groupWise}`}
-            subtitle={`Measured ${measure}. Click a ${byUser ? 'requester' : 'branch'} to see ${byUser ? 'their' : 'its'} PRs.${sample ? ' Sample data — demo only.' : ''}`}>
+  /** One grouped table: branch-wise, or user-wise (by requester). */
+  const groupTable = (kind: GroupKind) => {
+    const byUser = kind === 'user';
+    const groupWord = byUser ? 'Requester' : 'Branch';
+    const groupWise = byUser ? 'User-wise' : 'Branch-wise';
+    const branches = byUser ? userGroups : branchGroups;
+    return (
+      <Card key={kind} icon={byUser ? Users : FileBarChart} color={C.violet} title={`${title} — ${groupWise}`}
+            subtitle={`Measured ${measure}. Click a ${byUser ? 'requester' : 'branch'} to see ${byUser ? 'their' : 'its'} PRs.${sample ? ' Includes sample data — demo only.' : ''}`}>
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
+          <table className="w-full text-left text-sm [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
             <thead>
               <tr className="border-b border-borderTheme text-[11px] font-bold uppercase tracking-wider text-textFaint">
                 <th className="py-2 pr-3">{groupWord}</th>
@@ -533,10 +435,10 @@ export function ManagerReports({ requests, companies, onOpenRequest }: {
             </thead>
             <tbody>
               {branches.map(b => {
-                const isOpen = open === b.name;
+                const isOpen = open === `${kind}:${b.name}`;
                 return (
                   <Fragment key={b.name}>
-                    <tr onClick={() => setOpen(isOpen ? null : b.name)}
+                    <tr onClick={() => setOpen(isOpen ? null : `${kind}:${b.name}`)}
                         className={`cursor-pointer border-b border-borderTheme/70 hover:bg-secondary/70 ${isOpen ? 'bg-secondary/60' : ''}`}>
                       <td className="py-3 pr-3">
                         <span className="flex items-center gap-1.5 font-bold text-textPrimary">
@@ -572,7 +474,7 @@ export function ManagerReports({ requests, companies, onOpenRequest }: {
                                   <tbody>
                                     {b.rows.map(m => (
                                       <tr key={m.r.id} onClick={(e) => { e.stopPropagation(); openRequest(m.r.id, m.r.status); }}
-                                          className={`${sample ? '' : 'cursor-pointer '}border-t border-borderTheme/60 hover:bg-surface`}>
+                                          className={`${isSample(m.r.id) ? '' : 'cursor-pointer '}border-t border-borderTheme/60 hover:bg-surface`}>
                                         <td className="py-1.5 pr-2">
                                           <span className="font-mono font-bold text-brand">{m.r.id}</span>
                                           <span className="block truncate text-textSecondary max-w-[220px]">{m.r.productName} · {money(m.r.totalCost || 0)}</span>
@@ -643,6 +545,130 @@ export function ManagerReports({ requests, companies, onOpenRequest }: {
           </table>
         </div>
       </Card>
+    );
+  };
+
+  return (
+    <div className="max-w-7xl mx-auto space-y-6 animate-fadeIn">
+      {/* ── Title, report picker and filters ─────────────────────────────── */}
+      <div className="rounded-3xl border border-borderTheme bg-surface px-6 py-5 shadow-sm space-y-5">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <span className="grid h-14 w-14 place-items-center rounded-2xl text-white shadow-md"
+                  style={{ background: `linear-gradient(135deg, ${C.indigo}, ${C.cyan})` }}>
+              <FileBarChart className="h-7 w-7" />
+            </span>
+            <div>
+              <h2 className="font-outfit text-3xl font-extrabold text-textPrimary leading-tight">Reports</h2>
+              <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-textFaint">
+                {sample ? (
+                  <span className="flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-700">
+                    <FlaskConical className="h-3 w-3" /> Live from Odoo + sample data (demo only)
+                  </span>
+                ) : (
+                  <><span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" /> Live from Odoo</>
+                )}
+                · {groupBy === 'all' ? 'branch-wise & user-wise' : groupWise.toLowerCase()} · <b className="text-textSecondary">{scopeLabel}</b>, {PERIODS.find(p => p.key === period)?.label.toLowerCase()} (by submission date)
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="text-[11px] font-bold uppercase tracking-wider text-textFaint">Period
+              <select value={period} onChange={e => setPeriod(e.target.value as Period)} className={`${selectCls} mt-1 block`}>
+                {PERIODS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+              </select>
+            </label>
+            <label className="text-[11px] font-bold uppercase tracking-wider text-textFaint">Company
+              <select value={company} onChange={e => { setCompany(e.target.value); setBranch(''); }} className={`${selectCls} mt-1 block`}>
+                <option value="">All companies</option>
+                {companies.map(c => <option key={c.name} value={c.name}>{c.short}</option>)}
+              </select>
+            </label>
+            <label className="text-[11px] font-bold uppercase tracking-wider text-textFaint">Branch
+              <select value={branch} onChange={e => setBranch(e.target.value)} className={`${selectCls} mt-1 block`}>
+                <option value="">All branches</option>
+                {branchOptions.map(b => <option key={b} value={b}>{b}</option>)}
+              </select>
+            </label>
+            {(company || branch || period !== 'all') && (
+              <button onClick={() => { setCompany(''); setBranch(''); setPeriod('all'); }}
+                      className="rounded-xl px-3 py-2 text-sm font-bold text-brand hover:bg-brand/10">Clear filters</button>
+            )}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-3 border-t border-borderTheme pt-4">
+          {tabs.map(t => (
+            <button key={t.key} type="button" onClick={() => { setReport(t.key); setOpen(null); }} className={tabCls(report === t.key)}>
+              <t.icon className="h-4 w-4" />
+              <span>{t.label}</span>
+              <span className={`text-[11px] font-semibold ${report === t.key ? 'text-onbrand/80' : 'text-textFaint'}`}>{t.note}</span>
+            </button>
+          ))}
+          <div className="ml-auto flex items-center rounded-2xl bg-secondary p-1" role="group" aria-label="Group by">
+            {([['all', 'All', FileBarChart], ['branch', 'Branch-wise', MapPin], ['user', 'User-wise', Users]] as const).map(([k, label, Icon]) => (
+              <button key={k} type="button" onClick={() => { setGroupBy(k); setOpen(null); }}
+                      className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm font-bold transition-all ${groupBy === k
+                        ? 'bg-surface text-textPrimary shadow-sm' : 'text-textSecondary hover:text-textPrimary'}`}>
+                <Icon className="h-4 w-4" /> {label}
+              </button>
+            ))}
+          </div>
+          <button type="button" onClick={() => setSample(!sample)} aria-pressed={sample}
+                  title="Show dummy users and PRs for the demo. Nothing is written to Odoo."
+                  className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-bold transition-all ${sample
+                    ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-borderTheme text-textSecondary hover:border-amber-400 hover:text-amber-700'}`}>
+            <FlaskConical className="h-4 w-4" /> Sample data
+            <span className={`relative h-4 w-7 rounded-full transition-colors ${sample ? 'bg-amber-500' : 'bg-borderTheme'}`}>
+              <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all ${sample ? 'left-3.5' : 'left-0.5'}`} />
+            </span>
+          </button>
+          <button type="button" onClick={exportCsv} disabled={!measured.length}
+                  className="flex items-center gap-2 rounded-xl border border-borderTheme px-4 py-2 text-sm font-bold text-textSecondary hover:border-brand hover:text-brand disabled:opacity-40">
+            <Download className="h-4 w-4" /> Export CSV
+          </button>
+        </div>
+      </div>
+
+      {/* ── Headline numbers ──────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
+        <SmallStat icon={Timer} label={`Average ${title.toLowerCase()}`} value={avg(all)} format={fmtHours} color={C.indigo}
+                   note={<>{plural(all.length, 'PR')} {doneWord} · median {show(all.length ? median(all) : null)}</>} />
+        <SmallStat icon={TrendingDown} label={`Fastest ${groupWord.toLowerCase()}`} value={fastestBranch?.avg ?? 0} format={fmtHours} color={C.green}
+                   note={fastestBranch ? <>{fastestBranch.name} · {plural(fastestBranch.count, 'PR')}</> : 'Nothing measured yet'} />
+        <SmallStat icon={TrendingUp} label={`Slowest ${groupWord.toLowerCase()}`} value={slowestBranch?.avg ?? 0} format={fmtHours} color={C.red}
+                   note={slowestBranch ? <>{slowestBranch.name} · {plural(slowestBranch.count, 'PR')}</> : 'Nothing measured yet'} />
+        <SmallStat icon={Hourglass} label={openWord} value={stillOpen.length} format={n => Math.round(n).toLocaleString('en-IN')} color={C.amber}
+                   note={stillOpen.length ? <>Waiting {show(avg(stillOpen.map(ageOf)))} on average so far</> : 'Nothing open'} />
+      </div>
+
+      {/* ── Chart + stage split ───────────────────────────────────────────── */}
+      <div className="grid lg:grid-cols-5 gap-6">
+        <Card icon={byUser ? UserRound : MapPin} color={C.indigo} title={`Average ${title} by ${groupWord}`} subtitle={`Measured ${measure}`} className="lg:col-span-3">
+          <HBars format={h => show(h)} rows={ranked.map((b, i) => ({
+            name: `${b.name} · ${b.company}`, value: b.avg ?? 0, note: plural(b.count, 'PR'),
+            color: b === slowestBranch && ranked.length > 1 ? C.red : b === fastestBranch && ranked.length > 1 ? C.green : [C.indigo, C.violet, C.sky, C.teal][i % 4],
+          }))} />
+        </Card>
+        <Card icon={CheckCircle2} color={C.green} title={report === 'tat' ? 'Time at Each Approval Level' : 'Where the Time Goes'}
+              subtitle={report === 'tat' ? 'Average from the previous signature (or submission) to this level\'s decision'
+                : 'Average per stage, over the PRs whose timeline records both ends'} className="lg:col-span-2">
+          {overallParts.length ? (
+            <HBars format={h => show(h)} rows={overallParts.filter(p => p.avg !== null).map((p, i) => ({
+              name: partLabel(p.key),
+              value: p.avg ?? 0, note: plural(p.n, 'PR'),
+              color: report === 'tat' ? [C.amber, C.orange, C.pink, C.violet][i % 4] : CLOSING_STAGES.find(s => s.key === p.key)!.color,
+            }))} />
+          ) : <p className="text-sm text-textFaint">No approval levels recorded for this selection.</p>}
+          {report === 'closing' && (
+            <ul className="mt-4 space-y-0.5 border-t border-borderTheme pt-3 text-[11px] text-textFaint">
+              {CLOSING_STAGES.map(s => <li key={s.key}><b className="text-textSecondary">{s.label}:</b> {s.hint}</li>)}
+            </ul>
+          )}
+        </Card>
+      </div>
+
+      {/* ── Grouped tables: both by default, or the one picked ─────────────── */}
+      {(groupBy === 'all' ? (['branch', 'user'] as const) : [groupBy]).map(kind => groupTable(kind))}
     </div>
   );
 }
