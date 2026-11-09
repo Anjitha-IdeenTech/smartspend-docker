@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useId } from 'react';
 import {
-  Sparkles, Mic, FileText, Keyboard, LayoutDashboard, Send,
+  Sparkles, Scale, Mic, FileText, Keyboard, LayoutDashboard, Send,
   TrendingUp, DollarSign, ShieldAlert, Award, FileSpreadsheet,
   ArrowRight, User, Settings, CheckCircle2, ChevronRight,
   Play, RefreshCw, X, AlertTriangle, AlertCircle, Check,
@@ -22,6 +22,7 @@ import { ProductDescription } from './productDescription';
 import { PriceHistoryStrip } from './priceHistory';
 import { ContractsMaster } from './contracts';
 import { ProductCategoriesMaster } from './productCategories';
+import { FiscalPositionsMaster } from './fiscalPositions';
 import { MasterDetailPanel, DetailChips, DetailRequests } from './masterDetail';
 import { FALLBACK_METHODS, MethodSelect, methodLabel } from './fulfilment';
 import { VendorAckDialog, showDate, type Delivery } from './vendorAck';
@@ -3129,10 +3130,11 @@ export default function App() {
   // Master Data Console (#16) — which master is open, its search box, and the
   // AI draft-vendor queue. A draft only becomes a vendor when someone approves
   // it here, so the decision is held in state rather than written on discovery.
-  const [mastersTab, setMastersTab] = useState<'products' | 'categories' | 'productCategories' | 'workflow' | 'company' | 'branches' | 'vendors' | 'contracts'>('products');
+  const [mastersTab, setMastersTab] = useState<'products' | 'categories' | 'productCategories' | 'workflow' | 'company' | 'branches' | 'vendors' | 'contracts' | 'fiscalPositions'>('products');
   const [contractCount, setContractCount] = useState<number | null>(null);
   // Filled in by the Product Categories tab once Odoo has answered.
   const [productCategoryCount, setProductCategoryCount] = useState<number | null>(null);
+  const [fiscalPositionCount, setFiscalPositionCount] = useState<number | null>(null);
   const [masterSearch, setMasterSearch] = useState<string>("");
   // Tiles or rows, for the masters that render as cards.
   const [masterView, setMasterView] = useState<'grid' | 'list'>('grid');
@@ -9052,6 +9054,7 @@ export default function App() {
                         { key: 'branches', label: 'Branches', icon: Building2, count: branchRows.length },
                         { key: 'vendors', label: 'Vendors', icon: Handshake, count: vendorRows.length },
                         { key: 'contracts', label: 'Contracts', icon: FileSignature, count: contractCount ?? '…' },
+                        { key: 'fiscalPositions', label: 'Fiscal Positions', icon: Scale, count: fiscalPositionCount ?? '…' },
                       ] as const).map(t => {
                         const on = mastersTab === t.key;
                         return (
@@ -9104,7 +9107,7 @@ export default function App() {
                       )}
                       <span className="text-[11px] text-textFaint">
                         {masterData ? 'Live data' : 'Offline fallback list — server not reachable'}
-                        {['products', 'categories', 'productCategories', 'branches', 'vendors', 'contracts'].includes(mastersTab) && ' · click any record for its details'}
+                        {['products', 'categories', 'productCategories', 'branches', 'vendors', 'contracts', 'fiscalPositions'].includes(mastersTab) && ' · click any record for its details'}
                       </span>
                     </div>
                   )}
@@ -9159,6 +9162,12 @@ export default function App() {
                   {mastersTab === 'contracts' && (
                     <ContractsMaster fetcher={apiFetch} offline={offlineDemo} search={masterSearch} onCount={setContractCount}
                                      onVendor={name => { if (vendorRows.some(v => v.name === name)) setMasterDetail({ kind: 'vendors', key: name }); }} />
+                  )}
+
+                  {/* ---------- FISCAL POSITIONS (Odoo) ---------- */}
+                  {mastersTab === 'fiscalPositions' && (
+                    <FiscalPositionsMaster fetcher={apiFetch} offline={offlineDemo}
+                                           search={masterSearch} onCount={setFiscalPositionCount} />
                   )}
 
                   {mastersTab === 'productCategories' && (
