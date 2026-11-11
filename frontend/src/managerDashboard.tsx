@@ -42,6 +42,8 @@ export interface DashRequest {
   approvalChain?: { order: number; designation: string; state: string; delegatedTo?: string; decidedOn?: string }[];
   purchaseOrders?: string[];
   budgetBreach?: boolean;
+  /** The budget Odoo charges this request to, if any. */
+  budgetName?: string;
   lineItems?: { productName: string; productQty: number; targetPrice: number }[];
   /** Odoo's label, e.g. "Capital Expenditure (CapEx)". */
   expenseType?: string;

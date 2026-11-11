@@ -6,29 +6,43 @@
  *  - PR Closing Time: how long a PR takes from submission until it is paid,
  *    split into approval, ordering, delivery and payment where the timeline
  *    records both ends of the stage.
+ *  - Budget: what each of Odoo's running budgets was allocated against what
+ *    requests have committed (in flight) and ordered, with the spend split
+ *    branch-wise and by requester.
  *
  * Everything is measured from live data: the request's submission time, the
  * approval chain's decision times and the request timeline. Requests still
  * open are listed with how long they have been waiting so far.
  */
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
-  CheckCircle2, ChevronDown, ChevronRight, Download, FileBarChart, FlaskConical, Hourglass, MapPin, Timer, TrendingDown, TrendingUp,
-  UserRound, Users, Wallet,
+  AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Download, FileBarChart, FlaskConical, Hourglass, MapPin, Timer, TrendingDown, TrendingUp,
+  Landmark, PieChart, UserRound, Users, Wallet,
 } from 'lucide-react';
 import {
-  C, Card, HBars, PERIODS, SmallStat, duration, historyTime, money, periodStart, plural, submitted, sum,
+  C, Card, DonutWithLegend, HBars, PERIODS, SmallStat, duration, historyTime, money, pct, periodStart, plural, shortDate, submitted, sum,
 } from './managerDashboard';
 import type { DashCompany, DashRequest, Period } from './managerDashboard';
 
-type ReportKey = 'tat' | 'closing';
+type ReportKey = 'tat' | 'closing' | 'budget';
+type Fetcher = (path: string, init?: RequestInit) => Promise<Response>;
 type GroupKey = 'all' | 'branch' | 'user';
 type GroupKind = 'branch' | 'user';
 
 const APPROVED = ['Sourcing', 'Approved', 'PO Confirmed', 'Paid'];
 const PENDING = ['Pending Approval', 'Needs Clarification'];
 const NOT_OPEN = ['Draft', 'Rejected', 'Cancelled', 'Paid'];
+// What a budget counts, as Odoo does: requests in flight are committed, those
+// that reached a purchase order are ordered.
+const COMMITTED = ['Pending Approval', 'Needs Clarification', 'Sourcing', 'Approved'];
+const ORDERED = ['PO Confirmed', 'Paid'];
+
+/** A budget as /api/smartspend/budgets lists it (sample ones are flagged). */
+interface BudgetRow {
+  id: number; name: string; department: string; branch: string; category: string;
+  periodStart: string; periodEnd: string; allocated: number; sample?: boolean;
+}
 const HOUR = 3600000;
 
 /**
@@ -160,10 +174,41 @@ function buildSample(companies: DashCompany[], nowMs: number): DashRequest[] {
         location, department: u.department, expenseCategory: item.category, status, urgency: pick(['High', 'Medium', 'Low']),
         createdDate: new Date(start).toLocaleDateString('en-IN'), submittedAt: new Date(start).toISOString(),
         vendor: done ? pick(SAMPLE_VENDORS) : 'Pending Sourcing', savings: 0, history, approvalChain,
+        budgetName: sampleBudgetName(u.department, nowMs),
       });
     }
   });
+  // Over budget: the PRs, oldest first, that take their budget past its allocation.
+  sampleBudgets(out, nowMs).forEach(b => {
+    let used = 0;
+    out.filter(r => r.budgetName === b.name && (COMMITTED.includes(r.status) || ORDERED.includes(r.status)))
+      .sort((x, y) => (submitted(x) ?? 0) - (submitted(y) ?? 0))
+      .forEach(r => { used += r.totalCost; r.budgetBreach = used > b.allocated; });
+  });
   return out;
+}
+
+/** How generously each sample department is budgeted, against what its PRs use. */
+const SAMPLE_HEADROOM: Record<string, number> = {
+  IT: 1.25, Finance: 1.6, Operations: 0.9, Administration: 1.1, HR: 1.8,
+  Marketing: 0.96, Facilities: 1.35, Sales: 1.5, Engineering: 1.05,
+};
+// Named apart from Odoo's own budgets, so a live one is never counted twice.
+const sampleBudgetName = (department: string, nowMs: number) => `${department} — ${new Date(nowMs).getFullYear()} (sample)`;
+
+/** One sample budget per sample department, for this calendar year. */
+function sampleBudgets(prs: DashRequest[], nowMs: number): BudgetRow[] {
+  const year = new Date(nowMs).getFullYear();
+  const departments = [...new Set(SAMPLE_USERS.map(u => u.department))];
+  return departments.map((department, i) => {
+    const name = sampleBudgetName(department, nowMs);
+    const used = sum(prs.filter(r => r.budgetName === name && (COMMITTED.includes(r.status) || ORDERED.includes(r.status))), r => r.totalCost);
+    return {
+      id: -(i + 1), name, department, branch: '', category: '', sample: true,
+      periodStart: `${year}-01-01`, periodEnd: `${year}-12-31`,
+      allocated: Math.max(100000, Math.round(used * (SAMPLE_HEADROOM[department] ?? 1.2) / 50000) * 50000),
+    };
+  });
 }
 
 /** When the first timeline entry matching `re` happened. */
@@ -237,9 +282,12 @@ const download = (name: string, lines: (string | number)[][]) => {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 };
 
-export function ManagerReports({ requests, companies, onOpenRequest }: {
+export function ManagerReports({ requests, companies, onOpenRequest, fetcher, offline }: {
   requests: DashRequest[];
   companies: DashCompany[];
+  /** Reads Odoo's running budgets for the budget report. */
+  fetcher?: Fetcher;
+  offline?: boolean;
   /** Open one request (tracking, or the approval queue while it waits). */
   onOpenRequest: (id: string, status: string) => void;
 }) {
@@ -263,7 +311,22 @@ export function ManagerReports({ requests, companies, onOpenRequest }: {
   const byUser = groupBy === 'user';
 
   // Live requests, plus the labelled demo sample while the switch is on.
-  const source = useMemo(() => (sample ? [...requests, ...buildSample(companies, nowMs)] : requests), [sample, requests, companies, nowMs]);
+  const samplePRs = useMemo(() => (sample ? buildSample(companies, nowMs) : []), [sample, companies, nowMs]);
+  const source = useMemo(() => [...requests, ...samplePRs], [requests, samplePRs]);
+
+  // Odoo's running budgets, plus the sample ones while the switch is on.
+  const [liveBudgets, setLiveBudgets] = useState<BudgetRow[] | null>(null);
+  useEffect(() => {
+    if (offline || !fetcher) { setLiveBudgets([]); return; }
+    let stale = false;
+    fetcher('/api/smartspend/budgets', { method: 'GET' })
+      .then(res => (res.ok ? res.json() : []))
+      .then(rows => { if (!stale) setLiveBudgets(Array.isArray(rows) ? rows : []); })
+      .catch(() => { if (!stale) setLiveBudgets([]); });
+    return () => { stale = true; };
+  }, [offline]);
+  const budgets = useMemo(() => [...(liveBudgets ?? []), ...(sample ? sampleBudgets(samplePRs, nowMs) : [])],
+    [liveBudgets, sample, samplePRs, nowMs]);
   // Sample PRs do not exist in Odoo, so there is nothing to open.
   const isSample = (id: string) => id.startsWith('SAMPLE-');
   const openRequest = (id: string, status: string) => { if (!isSample(id)) onOpenRequest(id, status); };
@@ -407,6 +470,7 @@ export function ManagerReports({ requests, companies, onOpenRequest }: {
   const tabs: { key: ReportKey; label: string; icon: LucideIcon; note: string }[] = [
     { key: 'tat', label: 'Turn Around Time', icon: Timer, note: 'Submitted → fully approved' },
     { key: 'closing', label: 'PR Closing Time', icon: Wallet, note: 'Submitted → paid' },
+    { key: 'budget', label: 'Budget', icon: Landmark, note: 'Allocated vs used' },
   ];
 
   /** One grouped table: branch-wise, or user-wise (by requester). */
@@ -548,6 +612,295 @@ export function ManagerReports({ requests, companies, onOpenRequest }: {
     );
   };
 
+  // --- Budget ----------------------------------------------------------------
+  /** Requests in the selection that use budget: committed (in flight) or ordered. */
+  const spending = useMemo(() => scoped.filter(r => COMMITTED.includes(r.status) || ORDERED.includes(r.status)), [scoped]);
+  const budgetPRs = useMemo(() => spending.filter(r => r.budgetName), [spending]);
+  const isOrdered = (r: DashRequest) => ORDERED.includes(r.status);
+  const budgetLines = useMemo(() => {
+    const filtered = !!(company || branch || period !== 'all');
+    return budgets.map(b => {
+      const prs = budgetPRs.filter(r => r.budgetName === b.name).sort((x, y) => y.totalCost - x.totalCost);
+      const committed = sum(prs.filter(r => !isOrdered(r)), r => r.totalCost);
+      const ordered = sum(prs.filter(isOrdered), r => r.totalCost);
+      const consumed = committed + ordered;
+      return { ...b, prs, committed, ordered, consumed, available: b.allocated - consumed, used: pct(consumed, b.allocated), filtered };
+    })
+      // A budget with nothing in a filtered selection is left out, unless it is scoped to that branch.
+      .filter(b => b.prs.length || !b.filtered || (branch && b.branch === branch))
+      .sort((a, b) => b.used - a.used);
+  }, [budgets, budgetPRs, company, branch, period]);
+
+  const exportBudgetCsv = () => {
+    const head = ['Budget', 'Department', 'Period', 'Allocated (INR)', 'PR', 'Product', 'Requester', 'Branch', 'Status', 'Counted as', 'Value (INR)', 'Over budget'];
+    const lines = budgetLines.flatMap(b => b.prs.map(r => [
+      b.name, b.department || 'Any', `${b.periodStart} to ${b.periodEnd}`, Math.round(b.allocated),
+      r.id, r.productName, requesterOf(r), branchOf(r), r.status, isOrdered(r) ? 'Ordered' : 'Committed', Math.round(r.totalCost || 0), r.budgetBreach ? 'Yes' : 'No',
+    ]));
+    download(`budget-report${sample ? '-SAMPLE' : ''}-${new Date().toISOString().slice(0, 10)}.csv`, [head, ...lines]);
+  };
+
+  /** Branch-wise or user-wise: what each one's requests take from the budgets. */
+  const budgetGroups = (kind: GroupKind) => {
+    const names = new Set(spending.map(r => groupOf(kind, r)));
+    const total = sum(budgetPRs, r => r.totalCost);
+    return [...names].map(name => {
+      const mine = spending.filter(r => groupOf(kind, r) === name);
+      const charged = mine.filter(r => r.budgetName).sort((x, y) => y.totalCost - x.totalCost);
+      const committed = sum(charged.filter(r => !isOrdered(r)), r => r.totalCost);
+      const ordered = sum(charged.filter(isOrdered), r => r.totalCost);
+      return {
+        name, sub: subLabel(kind, name, mine), prs: charged, committed, ordered, consumed: committed + ordered,
+        share: pct(committed + ordered, total), budgets: new Set(charged.map(r => r.budgetName)).size,
+        over: charged.filter(r => r.budgetBreach).length,
+        unbudgeted: mine.filter(r => !r.budgetName),
+      };
+    }).sort((a, b) => b.consumed - a.consumed);
+  };
+
+  const prList = (prs: DashRequest[], showBudget: boolean, byUser: boolean) => prs.length ? (
+    <table className="w-full text-xs">
+      <thead><tr className="text-textFaint">
+        <th className="py-1 pr-2 text-left">PR</th>
+        {showBudget && <th className="py-1 px-2 text-left">Budget</th>}
+        <th className="py-1 px-2 text-left">{byUser ? 'Branch' : 'Requester'}</th>
+        <th className="py-1 px-2 text-left">Status</th>
+        <th className="py-1 pl-2 text-right">Value</th>
+      </tr></thead>
+      <tbody>
+        {prs.map(r => (
+          <tr key={r.id} onClick={(e) => { e.stopPropagation(); openRequest(r.id, r.status); }}
+              className={`${isSample(r.id) ? '' : 'cursor-pointer '}border-t border-borderTheme/60 hover:bg-surface`}>
+            <td className="py-1.5 pr-2">
+              <span className="font-mono font-bold text-brand">{r.id}</span>
+              <span className="block truncate text-textSecondary max-w-[260px]">{r.productName}</span>
+            </td>
+            {showBudget && <td className="py-1.5 px-2 text-textSecondary">{r.budgetName}</td>}
+            <td className="py-1.5 px-2 text-textSecondary">{byUser ? branchOf(r) : requesterOf(r)}</td>
+            <td className="py-1.5 px-2 text-textSecondary">{r.status} <span className="text-textFaint">· {isOrdered(r) ? 'ordered' : 'committed'}</span></td>
+            <td className="py-1.5 pl-2 text-right font-extrabold tabular-nums text-textPrimary">
+              {money(r.totalCost || 0)}
+              {r.budgetBreach && <span className="ml-1.5 rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-600">over budget</span>}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  ) : <p className="text-xs text-textFaint">No requests charged in this selection.</p>;
+
+  const usedBar = (used: number) => {
+    const tone = used > 100 ? C.red : used >= 80 ? C.amber : C.green;
+    return (
+      <span className="flex items-center justify-end gap-2">
+        <span className="h-2 w-24 overflow-hidden rounded-full bg-secondary">
+          <span className="block h-full rounded-full" style={{ width: `${Math.min(100, used)}%`, background: tone }} />
+        </span>
+        <b className="w-12 text-right tabular-nums" style={{ color: tone }}>{used.toFixed(0)}%</b>
+      </span>
+    );
+  };
+
+  const budgetGroupTable = (kind: GroupKind) => {
+    const byUser = kind === 'user';
+    const rows = budgetGroups(kind);
+    const word = byUser ? 'Requester' : 'Branch';
+    return (
+      <Card key={kind} icon={byUser ? Users : FileBarChart} color={C.violet} title={`Budget Used — ${byUser ? 'User-wise' : 'Branch-wise'}`}
+            subtitle={`What each ${byUser ? 'requester' : 'branch'}'s requests have committed and ordered against the budgets. Click one to see the PRs.${sample ? ' Includes sample data — demo only.' : ''}`}>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
+            <thead>
+              <tr className="border-b border-borderTheme text-[11px] font-bold uppercase tracking-wider text-textFaint">
+                <th className="py-2 pr-3">{word}</th>
+                <th className="py-2 px-2 text-right">PRs</th>
+                <th className="py-2 px-2 text-right">Committed</th>
+                <th className="py-2 px-2 text-right">Ordered</th>
+                <th className="py-2 px-2 text-right">Budget used</th>
+                <th className="py-2 px-2 text-right">Share</th>
+                <th className="py-2 px-2 text-right">Budgets</th>
+                <th className="py-2 px-2 text-right">Over-budget PRs</th>
+                <th className="py-2 pl-2 text-right">Not on a budget</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(g => {
+                const key = `budget-${kind}:${g.name}`;
+                const isOpen = open === key;
+                return (
+                  <Fragment key={g.name}>
+                    <tr onClick={() => setOpen(isOpen ? null : key)}
+                        className={`cursor-pointer border-b border-borderTheme/70 hover:bg-secondary/70 ${isOpen ? 'bg-secondary/60' : ''}`}>
+                      <td className="py-3 pr-3">
+                        <span className="flex items-center gap-1.5 font-bold text-textPrimary">
+                          {isOpen ? <ChevronDown className="h-4 w-4 text-brand" /> : <ChevronRight className="h-4 w-4 text-textFaint" />}
+                          {g.name}
+                        </span>
+                        <span className="ml-5 block text-xs text-textFaint">{g.sub}</span>
+                      </td>
+                      <td className="py-3 px-2 text-right tabular-nums font-semibold">{g.prs.length}</td>
+                      <td className="py-3 px-2 text-right tabular-nums">{g.committed ? money(g.committed) : '—'}</td>
+                      <td className="py-3 px-2 text-right tabular-nums">{g.ordered ? money(g.ordered) : '—'}</td>
+                      <td className="py-3 px-2 text-right tabular-nums font-extrabold text-textPrimary">{g.consumed ? money(g.consumed) : '—'}</td>
+                      <td className="py-3 px-2 text-right tabular-nums">{g.consumed ? `${g.share.toFixed(1)}%` : '—'}</td>
+                      <td className="py-3 px-2 text-right tabular-nums">{g.budgets || '—'}</td>
+                      <td className="py-3 px-2 text-right tabular-nums">{g.over ? <b className="text-red-500">{g.over}</b> : '—'}</td>
+                      <td className="py-3 pl-2 text-right tabular-nums">
+                        {g.unbudgeted.length ? <>{money(sum(g.unbudgeted, r => r.totalCost))} <span className="text-xs text-textFaint">· {plural(g.unbudgeted.length, 'PR')}</span></> : '—'}
+                      </td>
+                    </tr>
+                    {isOpen && (
+                      <tr className="border-b border-borderTheme/70 bg-secondary/30">
+                        <td colSpan={9} className="px-3 py-4">
+                          <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-textFaint">PRs charged to a budget — largest first</p>
+                          {prList(g.prs, true, byUser)}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+              {!rows.length && <tr><td colSpan={9} className="py-8 text-center text-sm text-textFaint">Nothing to report for this selection.</td></tr>}
+            </tbody>
+            {rows.length > 1 && (
+              <tfoot>
+                <tr className="border-t-2 border-borderTheme font-bold">
+                  <td className="py-3 pr-3 text-textPrimary">{byUser ? 'All requesters' : 'All branches'}</td>
+                  <td className="py-3 px-2 text-right tabular-nums">{budgetPRs.length}</td>
+                  <td className="py-3 px-2 text-right tabular-nums">{money(sum(budgetPRs.filter(r => !isOrdered(r)), r => r.totalCost))}</td>
+                  <td className="py-3 px-2 text-right tabular-nums">{money(sum(budgetPRs.filter(isOrdered), r => r.totalCost))}</td>
+                  <td className="py-3 px-2 text-right tabular-nums font-extrabold">{money(sum(budgetPRs, r => r.totalCost))}</td>
+                  <td className="py-3 px-2 text-right tabular-nums">100%</td>
+                  <td className="py-3 px-2 text-right tabular-nums">{new Set(budgetPRs.map(r => r.budgetName)).size}</td>
+                  <td className="py-3 px-2 text-right tabular-nums">{budgetPRs.filter(r => r.budgetBreach).length || '—'}</td>
+                  <td className="py-3 pl-2 text-right tabular-nums">{spending.some(r => !r.budgetName) ? money(sum(spending.filter(r => !r.budgetName), r => r.totalCost)) : '—'}</td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      </Card>
+    );
+  };
+
+  const budgetReport = () => {
+    const allocated = sum(budgetLines, b => b.allocated);
+    const committed = sum(budgetLines, b => b.committed);
+    const ordered = sum(budgetLines, b => b.ordered);
+    const consumed = committed + ordered;
+    const left = allocated - consumed;
+    const overBudgets = budgetLines.filter(b => b.available < 0);
+    const overPRs = budgetPRs.filter(r => r.budgetBreach);
+    const groups = budgetGroups(byUser ? 'user' : 'branch');
+    return (
+      <>
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
+          <SmallStat icon={Landmark} label="Allocated" value={allocated} format={money} color={C.indigo}
+                     note={<>{plural(budgetLines.length, 'budget')}{liveBudgets === null ? ' · loading…' : ''}</>} />
+          <SmallStat icon={Wallet} label="Budget used" value={consumed} format={money} color={C.violet}
+                     note={<>{pct(consumed, allocated).toFixed(0)}% · committed {money(committed)} · ordered {money(ordered)}</>} />
+          <SmallStat icon={left < 0 ? TrendingDown : TrendingUp} label={left < 0 ? 'Over budget by' : 'Available'} value={Math.abs(left)} format={money}
+                     color={left < 0 ? C.red : C.green} note={<>Across the budgets shown</>} />
+          <SmallStat icon={AlertTriangle} label="Over-budget PRs" value={overPRs.length} format={n => Math.round(n).toLocaleString('en-IN')} color={C.red}
+                     note={overBudgets.length ? <>{plural(overBudgets.length, 'budget')} past {overBudgets.length === 1 ? 'its' : 'their'} allocation</> : 'Every budget within its allocation'} />
+        </div>
+
+        <Card icon={Landmark} color={C.sky} title="Budget vs Actual"
+              subtitle={`Allocated for the budget's whole period; used = requests committed (in flight) and ordered in this selection. Click a budget to see its PRs.${sample ? ' Includes sample data — demo only.' : ''}`}>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
+              <thead>
+                <tr className="border-b border-borderTheme text-[11px] font-bold uppercase tracking-wider text-textFaint">
+                  <th className="py-2 pr-3">Budget</th>
+                  <th className="py-2 px-2">Period</th>
+                  <th className="py-2 px-2 text-right">Allocated</th>
+                  <th className="py-2 px-2 text-right">Committed</th>
+                  <th className="py-2 px-2 text-right">Ordered</th>
+                  <th className="py-2 px-2 text-right">Used</th>
+                  <th className="py-2 px-2 text-right">Available</th>
+                  <th className="py-2 pl-2 text-right">Used %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {budgetLines.map(b => {
+                  const key = `budget:${b.id}`;
+                  const isOpen = open === key;
+                  const scope = [b.department, b.branch, b.category].filter(Boolean).join(' · ') || 'Company-wide';
+                  return (
+                    <Fragment key={b.id}>
+                      <tr onClick={() => setOpen(isOpen ? null : key)}
+                          className={`cursor-pointer border-b border-borderTheme/70 hover:bg-secondary/70 ${isOpen ? 'bg-secondary/60' : ''}`}>
+                        <td className="py-3 pr-3">
+                          <span className="flex items-center gap-1.5 font-bold text-textPrimary">
+                            {isOpen ? <ChevronDown className="h-4 w-4 text-brand" /> : <ChevronRight className="h-4 w-4 text-textFaint" />}
+                            {b.name}
+                          </span>
+                          <span className="ml-5 block text-xs text-textFaint">{scope} · {plural(b.prs.length, 'PR')}</span>
+                        </td>
+                        <td className="py-3 px-2 text-xs text-textSecondary">{shortDate(b.periodStart)} – {shortDate(b.periodEnd)}</td>
+                        <td className="py-3 px-2 text-right tabular-nums font-semibold">{money(b.allocated)}</td>
+                        <td className="py-3 px-2 text-right tabular-nums">{b.committed ? money(b.committed) : '—'}</td>
+                        <td className="py-3 px-2 text-right tabular-nums">{b.ordered ? money(b.ordered) : '—'}</td>
+                        <td className="py-3 px-2 text-right tabular-nums font-extrabold text-textPrimary">{b.consumed ? money(b.consumed) : '—'}</td>
+                        <td className={`py-3 px-2 text-right tabular-nums font-bold ${b.available < 0 ? 'text-red-500' : 'text-emerald-600'}`}>
+                          {b.available < 0 ? `−${money(-b.available)}` : money(b.available)}
+                        </td>
+                        <td className="py-3 pl-2">{usedBar(b.used)}</td>
+                      </tr>
+                      {isOpen && (
+                        <tr className="border-b border-borderTheme/70 bg-secondary/30">
+                          <td colSpan={8} className="px-3 py-4">
+                            <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-textFaint">PRs charged to this budget — largest first</p>
+                            {prList(b.prs, false, false)}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+                {!budgetLines.length && (
+                  <tr><td colSpan={8} className="py-8 text-center text-sm text-textFaint">
+                    {liveBudgets === null ? 'Loading budgets…' : 'No running budgets for this selection — they are set up in Odoo under SmartSpend → Budgets.'}
+                  </td></tr>
+                )}
+              </tbody>
+              {budgetLines.length > 1 && (
+                <tfoot>
+                  <tr className="border-t-2 border-borderTheme font-bold">
+                    <td className="py-3 pr-3 text-textPrimary" colSpan={2}>All budgets</td>
+                    <td className="py-3 px-2 text-right tabular-nums">{money(allocated)}</td>
+                    <td className="py-3 px-2 text-right tabular-nums">{money(committed)}</td>
+                    <td className="py-3 px-2 text-right tabular-nums">{money(ordered)}</td>
+                    <td className="py-3 px-2 text-right tabular-nums font-extrabold">{money(consumed)}</td>
+                    <td className={`py-3 px-2 text-right tabular-nums ${left < 0 ? 'text-red-500' : 'text-emerald-600'}`}>{left < 0 ? `−${money(-left)}` : money(left)}</td>
+                    <td className="py-3 pl-2">{usedBar(pct(consumed, allocated))}</td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        </Card>
+
+        <div className="grid lg:grid-cols-5 gap-6">
+          <Card icon={byUser ? UserRound : MapPin} color={C.indigo} title={`Budget Used by ${byUser ? 'Requester' : 'Branch'}`}
+                subtitle="Committed and ordered against the budgets" className="lg:col-span-3">
+            <HBars rows={groups.filter(g => g.consumed).map((g, i) => ({
+              name: `${g.name} · ${g.sub}`, value: g.consumed, note: plural(g.prs.length, 'PR'), color: [C.indigo, C.violet, C.sky, C.teal][i % 4],
+            }))} />
+          </Card>
+          <Card icon={PieChart} color={C.green} title="Where the Budget Stands" subtitle="Across the budgets shown" className="lg:col-span-2">
+            <DonutWithLegend format={money} centerValue={`${pct(consumed, allocated).toFixed(0)}%`} centerLabel="used" parts={[
+              { label: 'Ordered', value: ordered, color: C.indigo },
+              { label: 'Committed (in flight)', value: committed, color: C.amber },
+              { label: left < 0 ? 'Over budget' : 'Available', value: Math.abs(left), color: left < 0 ? C.red : C.green },
+            ]} />
+          </Card>
+        </div>
+
+        {(groupBy === 'all' ? (['branch', 'user'] as const) : [groupBy]).map(kind => budgetGroupTable(kind))}
+      </>
+    );
+  };
+
   return (
     <div className="max-w-7xl mx-auto space-y-6 animate-fadeIn">
       {/* ── Title, report picker and filters ─────────────────────────────── */}
@@ -622,13 +975,14 @@ export function ManagerReports({ requests, companies, onOpenRequest }: {
               <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all ${sample ? 'left-3.5' : 'left-0.5'}`} />
             </span>
           </button>
-          <button type="button" onClick={exportCsv} disabled={!measured.length}
+          <button type="button" onClick={report === 'budget' ? exportBudgetCsv : exportCsv} disabled={report === 'budget' ? !budgetPRs.length : !measured.length}
                   className="flex items-center gap-2 rounded-xl border border-borderTheme px-4 py-2 text-sm font-bold text-textSecondary hover:border-brand hover:text-brand disabled:opacity-40">
             <Download className="h-4 w-4" /> Export CSV
           </button>
         </div>
       </div>
 
+      {report === 'budget' ? budgetReport() : <>
       {/* ── Headline numbers ──────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
         <SmallStat icon={Timer} label={`Average ${title.toLowerCase()}`} value={avg(all)} format={fmtHours} color={C.indigo}
@@ -669,6 +1023,7 @@ export function ManagerReports({ requests, companies, onOpenRequest }: {
 
       {/* ── Grouped tables: both by default, or the one picked ─────────────── */}
       {(groupBy === 'all' ? (['branch', 'user'] as const) : [groupBy]).map(kind => groupTable(kind))}
+      </>}
     </div>
   );
 }

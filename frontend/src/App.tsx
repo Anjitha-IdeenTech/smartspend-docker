@@ -8996,11 +8996,13 @@ export default function App() {
                 />
               )}
 
-              {/* --- SCENE 24: REPORTS (manager) — turn around time and PR closing time, branch-wise --- */}
+              {/* --- SCENE 24: REPORTS (manager) — turn around time, PR closing time and budget --- */}
               {activeScene === 24 && (
                 <ManagerReports
                   requests={requests}
                   companies={companyRows}
+                  fetcher={apiFetch}
+                  offline={offlineDemo}
                   onOpenRequest={(id, status) => {
                     setSelectedRequestId(id);
                     applyNav('Manager', MANAGER_QUEUE_STATUSES.includes(status) ? 'queue' : 'tracking');
