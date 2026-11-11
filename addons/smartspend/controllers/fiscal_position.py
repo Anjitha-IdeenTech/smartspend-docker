@@ -29,9 +29,11 @@ def _row(position):
         'name': position.name,
         'active': position.active,
         'sequence': position.sequence,
+        'companyId': position.company_id.id or False,
         'companyName': position.company_id.name or '',
         'countryId': position.country_id.id or False,
         'countryName': position.country_id.name or '',
+        'countryGroupId': position.country_group_id.id or False,
         'countryGroupName': position.country_group_id.name or '',
         'stateIds': position.state_ids.ids,
         'states': position.state_ids.mapped('name'),
@@ -47,7 +49,9 @@ def _row(position):
             'replaces': tax.original_tax_ids.mapped('name'),
         } for tax in taxes],
         'accountMap': [{
+            'fromId': line.account_src_id.id,
             'from': line.account_src_id.display_name,
+            'toId': line.account_dest_id.id,
             'to': line.account_dest_id.display_name,
         } for line in position.account_ids],
         'vendorCount': request.env['res.partner'].sudo().search_count(
@@ -78,22 +82,32 @@ class SmartSpendFiscalPosition(http.Controller):
             [('company_id', 'in', user.company_ids.ids + [False])], order='sequence, name')
         countries = env['res.country'].search([], order='name')
         states = env['res.country.state'].search([], order='country_id, name')
+        groups = env['res.country.group'].search([], order='name')
+        companies = user.company_ids
+        accounts = env['account.account'].search([
+            ('company_ids', 'in', companies.ids), ('account_type', '!=', 'off_balance')], order='code')
         return {
             'canEdit': _is_manager(user),
             'positions': [_row(position) for position in positions],
             'countries': [{'id': c.id, 'name': c.name, 'code': c.code} for c in countries],
             'states': [{'id': s.id, 'name': s.name, 'countryId': s.country_id.id} for s in states],
+            # The rest of what Odoo's own fiscal position form offers.
+            'countryGroups': [{'id': g.id, 'name': g.name} for g in groups],
+            'companies': [{'id': c.id, 'name': c.name} for c in companies],
+            'accounts': [{'id': a.id, 'name': a.display_name} for a in accounts],
         }
 
     @http.route('/api/smartspend/fiscal-positions/save', type='json2', auth='none',
                 methods=['POST'], cors='*', readonly=False)
     def save_fiscal_position(self, id=None, name=None, countryId=None, stateIds=None,
                              zipFrom=None, zipTo=None, autoApply=None, vatRequired=None,
-                             active=None, note=None, **kwargs):
+                             active=None, note=None, companyId=None, foreignVat=None,
+                             countryGroupId=None, accountMap=None, **kwargs):
         """Create a fiscal position, or change one when ``id`` is given.
 
-        Only the fields the form shows are written; tax and account mappings
-        are left as Odoo has them.
+        The same fields as Odoo's own fiscal position form. ``accountMap``
+        (``[{fromId, toId}]``), when given, replaces the account mapping; the
+        tax mapping is kept on the taxes, as in Odoo.
 
         :return: the saved fiscal position, as listed.
         """
@@ -110,7 +124,12 @@ class SmartSpendFiscalPosition(http.Controller):
             position_id = int(id) if id else False
             country_id = int(countryId) if countryId else False
             state_ids = [int(value) for value in (stateIds or [])]
-        except (TypeError, ValueError):
+            company_id = int(companyId) if companyId else False
+            group_id = int(countryGroupId) if countryGroupId else False
+            account_pairs = None if accountMap is None else [
+                (int(line['fromId']), int(line['toId'])) for line in accountMap
+                if line.get('fromId') and line.get('toId')]
+        except (TypeError, ValueError, KeyError, AttributeError):
             return _error(_("Fiscal position, country and states have to be ids."), 400)
         # The manager was checked above; fiscal positions are accounting
         # configuration a SmartSpend manager holds no write right on.
@@ -130,6 +149,23 @@ class SmartSpendFiscalPosition(http.Controller):
             'vat_required': bool(vatRequired),
             'note': (note or '').strip() or False,
         }
+        auto_apply = bool(autoApply)
+        foreign_vat = (foreignVat or '').strip()
+        # As Odoo's form: VAT required, the country group and the zip range
+        # only mean something when the position is detected automatically.
+        values.update({
+            'foreign_vat': foreign_vat or False,
+            'country_group_id': group_id if auto_apply else False,
+        })
+        if not auto_apply:
+            values.update({'vat_required': False, 'zip_from': False, 'zip_to': False})
+        if company_id:
+            if company_id not in user.company_ids.ids:
+                return _error(_("That company is not one of yours."), 400)
+            values['company_id'] = company_id
+        if account_pairs is not None:
+            values['account_ids'] = [(5, 0, 0)] + [
+                (0, 0, {'account_src_id': src, 'account_dest_id': dest}) for src, dest in account_pairs]
         if active is not None:
             values['active'] = bool(active)
         Position = env['account.fiscal.position'].with_context(active_test=False)
@@ -140,7 +176,7 @@ class SmartSpendFiscalPosition(http.Controller):
                     return _error(_("That fiscal position no longer exists."), 404)
                 position.write(values)
             else:
-                values['company_id'] = user.company_id.id
+                values.setdefault('company_id', user.company_id.id)
                 position = Position.create(values)
         except (AccessError, UserError, ValidationError) as exc:
             return _refused(exc)
