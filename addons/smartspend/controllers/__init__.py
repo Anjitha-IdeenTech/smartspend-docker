@@ -12,3 +12,4 @@ from . import report
 from . import price_history
 from . import product_master
 from . import fiscal_position
+from . import open_po

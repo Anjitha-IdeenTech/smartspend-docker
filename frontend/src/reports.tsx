@@ -6,6 +6,8 @@
  *  - PR Closing Time: how long a PR takes from submission until it is paid,
  *    split into approval, ordering, delivery and payment where the timeline
  *    records both ends of the stage.
+ *  - Open PO: confirmed purchase orders not yet fully received or billed,
+ *    with their ageing, branch-wise and by requester.
  *  - Budget: what each of Odoo's running budgets was allocated against what
  *    requests have committed (in flight) and ordered, with the spend split
  *    branch-wise and by requester.
@@ -18,14 +20,14 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
   AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Download, FileBarChart, FlaskConical, Hourglass, MapPin, Timer, TrendingDown, TrendingUp,
-  Landmark, PieChart, UserRound, Users, Wallet,
+  Landmark, PieChart, Package, Store, Truck, UserRound, Users, Wallet,
 } from 'lucide-react';
 import {
   C, Card, DonutWithLegend, HBars, PERIODS, SmallStat, duration, historyTime, money, pct, periodStart, plural, shortDate, submitted, sum,
 } from './managerDashboard';
 import type { DashCompany, DashRequest, Period } from './managerDashboard';
 
-type ReportKey = 'tat' | 'closing' | 'budget';
+type ReportKey = 'tat' | 'closing' | 'openpo' | 'budget';
 type Fetcher = (path: string, init?: RequestInit) => Promise<Response>;
 type GroupKey = 'all' | 'branch' | 'user';
 type GroupKind = 'branch' | 'user';
@@ -37,6 +39,18 @@ const NOT_OPEN = ['Draft', 'Rejected', 'Cancelled', 'Paid'];
 // that reached a purchase order are ordered.
 const COMMITTED = ['Pending Approval', 'Needs Clarification', 'Sourcing', 'Approved'];
 const ORDERED = ['PO Confirmed', 'Paid'];
+
+/** A purchase order as /api/smartspend/reports/open-po lists it. */
+interface PoRow {
+  name: string; state: string; orderDate: string; expectedDate: string; overdue: boolean; daysOpen: number;
+  vendor: string; company: string; currency: string; acknowledged: boolean;
+  requestId: string; subscription: string; origin: string; requester: string; branch: string; department: string;
+  amountUntaxed: number; amountTotal: number; orderedValue: number; receivedValue: number; billedValue: number;
+  fullyReceived: boolean; fullyBilled: boolean; billing: string; open: boolean;
+  lines: { product: string; ordered: number; received: number; billed: number; price: number; subtotal: number }[];
+}
+/** Odoo's "YYYY-MM-DD HH:MM:SS" (UTC) as a time. */
+const poTime = (s: string) => (s ? Date.parse(`${s.replace(' ', 'T')}Z`) : 0);
 
 /** A budget as /api/smartspend/budgets lists it (sample ones are flagged). */
 interface BudgetRow {
@@ -186,6 +200,37 @@ function buildSample(companies: DashCompany[], nowMs: number): DashRequest[] {
       .forEach(r => { used += r.totalCost; r.budgetBreach = used > b.allocated; });
   });
   return out;
+}
+
+/**
+ * Sample purchase orders: one for every sample PR that reached an order.
+ * Paid ones are closed (received and billed); the rest are part-way.
+ */
+function buildSamplePOs(prs: DashRequest[], nowMs: number): PoRow[] {
+  const rnd = seeded(20261111);
+  const iso = (t: number) => new Date(t).toISOString().slice(0, 19).replace('T', ' ');
+  return prs.filter(r => r.status === 'PO Confirmed' || r.status === 'Paid').map((r, i) => {
+    const ackAt = firstEvent(r, /^Vendor Acknowledged/, submitted(r)) ?? submitted(r) ?? nowMs;
+    const ordered = Math.max(Math.round((ackAt - (12 + rnd() * 30) * HOUR) / 60000) * 60000, submitted(r) ?? 0);
+    const qty = 2 + Math.floor(rnd() * 14);
+    const price = Math.round(r.totalCost / qty);
+    const paid = r.status === 'Paid';
+    const roll = rnd();
+    const received = paid || roll > 0.75 ? qty : roll > 0.4 ? Math.max(1, Math.floor(qty * (0.3 + rnd() * 0.5))) : 0;
+    const billed = paid ? qty : received === qty && rnd() > 0.5 ? Math.floor(qty / 2) : 0;
+    const expected = ordered + (7 + Math.floor(rnd() * 28)) * 24 * HOUR;
+    const acknowledged = paid || rnd() > 0.2;
+    return {
+      name: `PO-SAMPLE-${String(i + 1).padStart(3, '0')}`, state: 'purchase', orderDate: iso(ordered),
+      expectedDate: new Date(expected).toISOString().slice(0, 10), overdue: received < qty && expected < nowMs,
+      daysOpen: Math.max(0, Math.floor((nowMs - ordered) / (24 * HOUR))), vendor: r.vendor, company: '', currency: 'INR', acknowledged,
+      requestId: r.id, subscription: '', origin: r.id, requester: requesterOf(r), branch: r.location, department: r.department,
+      amountUntaxed: price * qty, amountTotal: price * qty, orderedValue: price * qty, receivedValue: price * received, billedValue: price * billed,
+      fullyReceived: received >= qty, fullyBilled: billed >= qty, billing: billed >= qty ? 'Fully billed' : received ? 'Waiting for bills' : 'Nothing to bill',
+      open: !(received >= qty && billed >= qty),
+      lines: [{ product: r.productName, ordered: qty, received, billed, price, subtotal: price * qty }],
+    };
+  });
 }
 
 /** How generously each sample department is budgeted, against what its PRs use. */
@@ -470,6 +515,7 @@ export function ManagerReports({ requests, companies, onOpenRequest, fetcher, of
   const tabs: { key: ReportKey; label: string; icon: LucideIcon; note: string }[] = [
     { key: 'tat', label: 'Turn Around Time', icon: Timer, note: 'Submitted → fully approved' },
     { key: 'closing', label: 'PR Closing Time', icon: Wallet, note: 'Submitted → paid' },
+    { key: 'openpo', label: 'Open PO', icon: Package, note: 'Not yet received or billed' },
     { key: 'budget', label: 'Budget', icon: Landmark, note: 'Allocated vs used' },
   ];
 
@@ -609,6 +655,281 @@ export function ManagerReports({ requests, companies, onOpenRequest, fetcher, of
           </table>
         </div>
       </Card>
+    );
+  };
+
+  // --- Open PO ---------------------------------------------------------------
+  const [liveOrders, setLiveOrders] = useState<PoRow[] | null>(null);
+  useEffect(() => {
+    if (report !== 'openpo' || liveOrders !== null) return;
+    if (offline || !fetcher) { setLiveOrders([]); return; }
+    let stale = false;
+    fetcher('/api/smartspend/reports/open-po', { method: 'GET' })
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => { if (!stale) setLiveOrders(Array.isArray(data?.orders) ? data.orders : []); })
+      .catch(() => { if (!stale) setLiveOrders([]); });
+    return () => { stale = true; };
+  }, [report, offline]);
+  const orders = useMemo(() => [...(liveOrders ?? []), ...(sample ? buildSamplePOs(samplePRs, nowMs) : [])],
+    [liveOrders, sample, samplePRs, nowMs]);
+  const poBranch = (o: PoRow) => o.branch || 'Not recorded';
+  const poGroup = (kind: GroupKind, o: PoRow) => (kind === 'user' ? o.requester || 'Not recorded' : poBranch(o));
+  const scopedOrders = useMemo(() => {
+    const from = periodStart(period, now);
+    return orders.filter(o => {
+      if (from !== null && poTime(o.orderDate) < from) return false;
+      if (company && companyName(poBranch(o)) !== company) return false;
+      if (branch && o.branch !== branch) return false;
+      return true;
+    });
+  }, [orders, period, company, branch, companies]);
+  const openOrders = useMemo(() => scopedOrders.filter(o => o.open).sort((a, b) => b.daysOpen - a.daysOpen), [scopedOrders]);
+  const toReceive = (o: PoRow) => Math.max(0, o.orderedValue - o.receivedValue);
+  const toBill = (o: PoRow) => Math.max(0, o.orderedValue - o.billedValue);
+  const prOf = (o: PoRow) => o.requestId || o.subscription || o.origin || '';
+  const openPr = (o: PoRow) => {
+    const live = requests.find(r => r.id === o.requestId);
+    if (live) onOpenRequest(live.id, live.status);
+  };
+
+  const exportOpenPoCsv = () => {
+    const head = ['PO', 'PR / source', 'Vendor', 'Branch', 'Department', 'Requester', 'Order date', 'Expected', 'Days open', 'Acknowledged',
+      'Product', 'Ordered qty', 'Received qty', 'Billed qty', 'Unit price', 'Line value', 'Still to receive (value)', 'Overdue'];
+    const lines = openOrders.flatMap(o => o.lines.map(l => [
+      o.name, prOf(o), o.vendor, poBranch(o), o.department, o.requester, o.orderDate.slice(0, 10), o.expectedDate, o.daysOpen, o.acknowledged ? 'Yes' : 'No',
+      l.product, l.ordered, l.received, l.billed, l.price, Math.round(l.subtotal), Math.round(Math.max(0, l.ordered - l.received) * l.price), o.overdue ? 'Yes' : 'No',
+    ]));
+    download(`open-po${sample ? '-SAMPLE' : ''}-${new Date().toISOString().slice(0, 10)}.csv`, [head, ...lines]);
+  };
+
+  /** One word for where the order stands, the most pressing first. */
+  const poChips = (o: PoRow) => {
+    const [label, cls] = o.overdue ? ['Overdue', 'bg-red-100 text-red-600']
+      : o.fullyReceived ? ['Bill awaited', 'bg-violet-100 text-violet-700']
+        : o.receivedValue ? ['Partly received', 'bg-sky-100 text-sky-700'] : ['Not received', 'bg-secondary text-textSecondary'];
+    return <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${cls}`}>{label}</span>;
+  };
+
+  const poLines = (o: PoRow) => (
+    <table className="w-full text-xs">
+      <thead><tr className="text-textFaint">
+        <th className="py-1 pr-2 text-left">Product</th><th className="py-1 px-2 text-right">Ordered</th>
+        <th className="py-1 px-2 text-right">Received</th><th className="py-1 px-2 text-right">Billed</th>
+        <th className="py-1 px-2 text-right">Unit price</th><th className="py-1 pl-2 text-right">Still to receive</th>
+      </tr></thead>
+      <tbody>
+        {o.lines.map((l, i) => (
+          <tr key={i} className="border-t border-borderTheme/60">
+            <td className="py-1.5 pr-2 text-textPrimary">{l.product}</td>
+            <td className="py-1.5 px-2 text-right tabular-nums">{l.ordered}</td>
+            <td className={`py-1.5 px-2 text-right tabular-nums ${l.received >= l.ordered ? 'text-emerald-600' : 'text-textSecondary'}`}>{l.received}</td>
+            <td className="py-1.5 px-2 text-right tabular-nums">{l.billed}</td>
+            <td className="py-1.5 px-2 text-right tabular-nums">{money(l.price)}</td>
+            <td className="py-1.5 pl-2 text-right font-bold tabular-nums">{l.received >= l.ordered ? '—' : `${l.ordered - l.received} · ${money((l.ordered - l.received) * l.price)}`}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+
+  /** The open orders as a table, each expanding to its lines. */
+  const poTable = (rows: PoRow[], keyPrefix: string, compact: boolean) => (
+    <table className="w-full text-left text-sm [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
+      <thead>
+        <tr className="border-b border-borderTheme text-[11px] font-bold uppercase tracking-wider text-textFaint">
+          <th className="py-2 pr-3">PO</th>
+          <th className="py-2 px-2">Vendor</th>
+          {!compact && <th className="py-2 px-2">Branch · Requester</th>}
+          <th className="py-2 px-2">Ordered · Expected</th>
+          <th className="py-2 px-2 text-right">Days open</th>
+          <th className="py-2 px-2 text-right">PO value</th>
+          <th className="py-2 px-2 text-right">To receive</th>
+          <th className="py-2 px-2 text-right">To bill</th>
+          <th className="py-2 pl-2 text-right">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map(o => {
+          const key = `${keyPrefix}:${o.name}`;
+          const isOpen = open === key;
+          return (
+            <Fragment key={o.name}>
+              <tr onClick={(e) => { e.stopPropagation(); setOpen(isOpen ? null : key); }}
+                  className={`cursor-pointer border-b border-borderTheme/70 hover:bg-secondary/70 ${isOpen ? 'bg-secondary/60' : ''}`}>
+                <td className="py-3 pr-3">
+                  <span className="flex items-center gap-1.5 font-mono font-bold text-textPrimary">
+                    {isOpen ? <ChevronDown className="h-4 w-4 text-brand" /> : <ChevronRight className="h-4 w-4 text-textFaint" />}
+                    {o.name}
+                  </span>
+                  <button type="button" onClick={(e) => { e.stopPropagation(); openPr(o); }}
+                          className={`ml-5 block font-mono text-xs ${requests.some(r => r.id === o.requestId) ? 'text-brand hover:underline' : 'cursor-default text-textFaint'}`}>
+                    {prOf(o) || '—'}
+                  </button>
+                </td>
+                <td className="py-3 px-2">
+                  <span className="block text-textPrimary">{o.vendor}</span>
+                  {!o.acknowledged && <span className="text-xs font-semibold text-amber-600">not acknowledged</span>}
+                </td>
+                {!compact && <td className="py-3 px-2"><span className={`block ${o.branch ? 'text-textPrimary' : 'text-textFaint'}`}>{poBranch(o)}</span><span className="text-xs text-textFaint">{o.requester || '—'}</span></td>}
+                <td className="py-3 px-2 text-xs">
+                  <span className="block text-textSecondary">{shortDate(o.orderDate.slice(0, 10))}</span>
+                  <span className={o.overdue ? 'font-bold text-red-500' : 'text-textFaint'}>{o.expectedDate ? `due ${shortDate(o.expectedDate)}` : 'no date'}</span>
+                </td>
+                <td className={`py-3 px-2 text-right tabular-nums font-bold ${o.daysOpen > 60 ? 'text-red-500' : o.daysOpen > 30 ? 'text-amber-600' : 'text-textPrimary'}`}>{o.daysOpen}</td>
+                <td className="py-3 px-2 text-right tabular-nums">{money(o.orderedValue)}</td>
+                <td className="py-3 px-2 text-right tabular-nums font-extrabold text-textPrimary">{toReceive(o) ? money(toReceive(o)) : '—'}</td>
+                <td className="py-3 px-2 text-right tabular-nums">{toBill(o) ? money(toBill(o)) : '—'}</td>
+                <td className="py-3 pl-2 text-right">{poChips(o)}</td>
+              </tr>
+              {isOpen && (
+                <tr className="border-b border-borderTheme/70 bg-secondary/30">
+                  <td colSpan={compact ? 8 : 9} className="px-3 py-4">{poLines(o)}</td>
+                </tr>
+              )}
+            </Fragment>
+          );
+        })}
+        {!rows.length && (
+          <tr><td colSpan={compact ? 8 : 9} className="py-8 text-center text-sm text-textFaint">
+            {liveOrders === null ? 'Loading purchase orders…' : 'No open purchase orders for this selection.'}
+          </td></tr>
+        )}
+      </tbody>
+    </table>
+  );
+
+  const poGroupTable = (kind: GroupKind) => {
+    const byUser = kind === 'user';
+    const names = [...new Set(openOrders.map(o => poGroup(kind, o)))];
+    const rows = names.map(name => {
+      const pos = openOrders.filter(o => poGroup(kind, o) === name);
+      const branches = new Map<string, number>();
+      pos.forEach(o => branches.set(poBranch(o), (branches.get(poBranch(o)) ?? 0) + 1));
+      const home = [...branches.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? '';
+      const sub = byUser ? `${home}${branches.size > 1 ? ` +${branches.size - 1}` : ''}` : companyOf(name)?.short ?? '—';
+      return {
+        name, sub, pos, ordered: sum(pos, o => o.orderedValue), received: sum(pos, o => o.receivedValue), billed: sum(pos, o => o.billedValue),
+        receive: sum(pos, toReceive), bill: sum(pos, toBill), overdue: pos.filter(o => o.overdue).length, oldest: Math.max(...pos.map(o => o.daysOpen)),
+      };
+    }).sort((a, b) => b.receive - a.receive || b.bill - a.bill);
+    return (
+      <Card key={kind} icon={byUser ? Users : FileBarChart} color={C.violet} title={`Open PO — ${byUser ? 'User-wise' : 'Branch-wise'}`}
+            subtitle={`Open orders by the ${byUser ? 'requester they were raised for' : 'branch they deliver to'}. Click one to see its orders.${sample ? ' Includes sample data — demo only.' : ''}`}>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
+            <thead>
+              <tr className="border-b border-borderTheme text-[11px] font-bold uppercase tracking-wider text-textFaint">
+                <th className="py-2 pr-3">{byUser ? 'Requester' : 'Branch'}</th>
+                <th className="py-2 px-2 text-right">Open POs</th>
+                <th className="py-2 px-2 text-right">PO value</th>
+                <th className="py-2 px-2 text-right">Received</th>
+                <th className="py-2 px-2 text-right">Billed</th>
+                <th className="py-2 px-2 text-right">To receive</th>
+                <th className="py-2 px-2 text-right">To bill</th>
+                <th className="py-2 px-2 text-right">Overdue</th>
+                <th className="py-2 pl-2 text-right">Oldest</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(g => {
+                const key = `po-${kind}:${g.name}`;
+                const isOpen = open === key || (open?.startsWith(`${key}/`) ?? false);
+                return (
+                  <Fragment key={g.name}>
+                    <tr onClick={() => setOpen(isOpen ? null : key)}
+                        className={`cursor-pointer border-b border-borderTheme/70 hover:bg-secondary/70 ${isOpen ? 'bg-secondary/60' : ''}`}>
+                      <td className="py-3 pr-3">
+                        <span className="flex items-center gap-1.5 font-bold text-textPrimary">
+                          {isOpen ? <ChevronDown className="h-4 w-4 text-brand" /> : <ChevronRight className="h-4 w-4 text-textFaint" />}
+                          {g.name}
+                        </span>
+                        <span className="ml-5 block text-xs text-textFaint">{g.sub}</span>
+                      </td>
+                      <td className="py-3 px-2 text-right tabular-nums font-semibold">{g.pos.length}</td>
+                      <td className="py-3 px-2 text-right tabular-nums">{money(g.ordered)}</td>
+                      <td className="py-3 px-2 text-right tabular-nums">{g.received ? money(g.received) : '—'}</td>
+                      <td className="py-3 px-2 text-right tabular-nums">{g.billed ? money(g.billed) : '—'}</td>
+                      <td className="py-3 px-2 text-right tabular-nums font-extrabold text-textPrimary">{g.receive ? money(g.receive) : '—'}</td>
+                      <td className="py-3 px-2 text-right tabular-nums">{g.bill ? money(g.bill) : '—'}</td>
+                      <td className="py-3 px-2 text-right tabular-nums">{g.overdue ? <b className="text-red-500">{g.overdue}</b> : '—'}</td>
+                      <td className="py-3 pl-2 text-right tabular-nums">{g.oldest} days</td>
+                    </tr>
+                    {isOpen && (
+                      <tr className="border-b border-borderTheme/70 bg-secondary/30">
+                        <td colSpan={9} className="px-3 py-4"><div className="overflow-x-auto">{poTable(g.pos, `${key}/`, true)}</div></td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+              {!rows.length && <tr><td colSpan={9} className="py-8 text-center text-sm text-textFaint">Nothing open for this selection.</td></tr>}
+            </tbody>
+            {rows.length > 1 && (
+              <tfoot>
+                <tr className="border-t-2 border-borderTheme font-bold">
+                  <td className="py-3 pr-3 text-textPrimary">{byUser ? 'All requesters' : 'All branches'}</td>
+                  <td className="py-3 px-2 text-right tabular-nums">{openOrders.length}</td>
+                  <td className="py-3 px-2 text-right tabular-nums">{money(sum(openOrders, o => o.orderedValue))}</td>
+                  <td className="py-3 px-2 text-right tabular-nums">{money(sum(openOrders, o => o.receivedValue))}</td>
+                  <td className="py-3 px-2 text-right tabular-nums">{money(sum(openOrders, o => o.billedValue))}</td>
+                  <td className="py-3 px-2 text-right tabular-nums font-extrabold">{money(sum(openOrders, toReceive))}</td>
+                  <td className="py-3 px-2 text-right tabular-nums">{money(sum(openOrders, toBill))}</td>
+                  <td className="py-3 px-2 text-right tabular-nums">{openOrders.filter(o => o.overdue).length || '—'}</td>
+                  <td className="py-3 pl-2 text-right tabular-nums">{Math.max(...openOrders.map(o => o.daysOpen))} days</td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      </Card>
+    );
+  };
+
+  const openPoReport = () => {
+    const waitingGoods = openOrders.filter(o => !o.fullyReceived);
+    const waitingBills = openOrders.filter(o => o.fullyReceived && !o.fullyBilled);
+    const overdue = openOrders.filter(o => o.overdue);
+    const ageing = [
+      { name: '0–15 days', lo: 0, hi: 15, color: C.green }, { name: '16–30 days', lo: 16, hi: 30, color: C.teal },
+      { name: '31–60 days', lo: 31, hi: 60, color: C.amber }, { name: '61–90 days', lo: 61, hi: 90, color: C.orange },
+      { name: 'Over 90 days', lo: 91, hi: Infinity, color: C.red },
+    ].map(b => {
+      const pos = openOrders.filter(o => o.daysOpen >= b.lo && o.daysOpen <= b.hi);
+      return { name: b.name, value: sum(pos, toBill), note: plural(pos.length, 'PO'), color: b.color };
+    });
+    const vendors = [...new Set(openOrders.map(o => o.vendor))].map((v, i) => {
+      const pos = openOrders.filter(o => o.vendor === v);
+      return { name: v, value: sum(pos, toBill), note: plural(pos.length, 'PO'), color: [C.indigo, C.violet, C.sky, C.teal][i % 4] };
+    }).sort((a, b) => b.value - a.value).slice(0, 8);
+    return (
+      <>
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
+          <SmallStat icon={Package} label="Open POs" value={openOrders.length} format={n => Math.round(n).toLocaleString('en-IN')} color={C.indigo}
+                     note={<>of {plural(scopedOrders.length, 'confirmed PO')}{liveOrders === null ? ' · loading…' : ''} · {money(sum(openOrders, toBill))} still open</>} />
+          <SmallStat icon={Truck} label="Still to receive" value={sum(openOrders, toReceive)} format={money} color={C.sky}
+                     note={<>{plural(waitingGoods.length, 'PO')} waiting for goods</>} />
+          <SmallStat icon={Wallet} label="Still to bill" value={sum(openOrders, toBill)} format={money} color={C.violet}
+                     note={<>{plural(openOrders.filter(o => !o.fullyBilled).length, 'PO')} not fully billed · {waitingBills.length} received, bill awaited</>} />
+          <SmallStat icon={AlertTriangle} label="Overdue deliveries" value={overdue.length} format={n => Math.round(n).toLocaleString('en-IN')} color={C.red}
+                     note={overdue.length ? <>{money(sum(overdue, toReceive))} past the expected date</> : 'Nothing past its expected date'} />
+        </div>
+
+        <div className="grid lg:grid-cols-5 gap-6">
+          <Card icon={Hourglass} color={C.amber} title="Ageing" subtitle="Open POs by days since the order, by value still open" className="lg:col-span-2">
+            <HBars rows={ageing} />
+          </Card>
+          <Card icon={Store} color={C.indigo} title="Open Value by Vendor" subtitle="Value not yet billed, largest first" className="lg:col-span-3">
+            <HBars rows={vendors} />
+          </Card>
+        </div>
+
+        <Card icon={Package} color={C.sky} title="Open Purchase Orders"
+              subtitle={`Confirmed orders not yet fully received or not yet fully billed, oldest first. Click one to see its lines.${sample ? ' Includes sample data — demo only.' : ''}`}>
+          <div className="overflow-x-auto">{poTable(openOrders, 'po', false)}</div>
+        </Card>
+
+        {(groupBy === 'all' ? (['branch', 'user'] as const) : [groupBy]).map(kind => poGroupTable(kind))}
+      </>
     );
   };
 
@@ -921,7 +1242,7 @@ export function ManagerReports({ requests, companies, onOpenRequest, fetcher, of
                 ) : (
                   <><span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" /> Live from Odoo</>
                 )}
-                · {groupBy === 'all' ? 'branch-wise & user-wise' : groupWise.toLowerCase()} · <b className="text-textSecondary">{scopeLabel}</b>, {PERIODS.find(p => p.key === period)?.label.toLowerCase()} (by submission date)
+                · {groupBy === 'all' ? 'branch-wise & user-wise' : groupWise.toLowerCase()} · <b className="text-textSecondary">{scopeLabel}</b>, {PERIODS.find(p => p.key === period)?.label.toLowerCase()} {report === 'openpo' ? '(by order date)' : '(by submission date)'}
               </p>
             </div>
           </div>
@@ -975,14 +1296,15 @@ export function ManagerReports({ requests, companies, onOpenRequest, fetcher, of
               <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all ${sample ? 'left-3.5' : 'left-0.5'}`} />
             </span>
           </button>
-          <button type="button" onClick={report === 'budget' ? exportBudgetCsv : exportCsv} disabled={report === 'budget' ? !budgetPRs.length : !measured.length}
+          <button type="button" onClick={report === 'budget' ? exportBudgetCsv : report === 'openpo' ? exportOpenPoCsv : exportCsv}
+                  disabled={report === 'budget' ? !budgetPRs.length : report === 'openpo' ? !openOrders.length : !measured.length}
                   className="flex items-center gap-2 rounded-xl border border-borderTheme px-4 py-2 text-sm font-bold text-textSecondary hover:border-brand hover:text-brand disabled:opacity-40">
             <Download className="h-4 w-4" /> Export CSV
           </button>
         </div>
       </div>
 
-      {report === 'budget' ? budgetReport() : <>
+      {report === 'budget' ? budgetReport() : report === 'openpo' ? openPoReport() : <>
       {/* ── Headline numbers ──────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
         <SmallStat icon={Timer} label={`Average ${title.toLowerCase()}`} value={avg(all)} format={fmtHours} color={C.indigo}
